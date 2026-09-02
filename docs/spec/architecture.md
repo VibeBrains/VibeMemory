@@ -1,0 +1,144 @@
+# Архитектура VibeMemory
+
+Целевая схема на 2026-09-02. Основа — схема-победитель судейства
+([knowledge/research/synthesisReport.md](../knowledge/research/synthesisReport.md)) с решениями
+владельца: свой хост как remote, одновременная работа на машинах — норма, память как записи,
+MCP-доступ для любых агентов. Каждое утверждение о поведении Claude Code/Desktop подтверждено в
+[knowledge/](../knowledge/README.md); ограничения, которые движок не имеет права нарушать, —
+[knowledge/design/engineConstraints.md](../knowledge/design/engineConstraints.md).
+
+## 1. Вердикт
+
+Транспорт — **git с приватным remote** и движок `vibememory` (хуки + фоновый тик). Не облачная
+папка: OneDrive дегидрирует, плодит конфликт-копии, расплющивает ссылки и ставит `+R`; Desktop
+на недоступном транскрипте навсегда стирает привязку. Не Syncthing: для «закрыл крышку — открыл
+другую» нужны оба узла онлайн. Не нативно: у Anthropic переноса сессии между машинами нет.
+Git даёт то, чего облачная папка не даёт принципиально: детерминированное слияние append-only
+JSONL по `uuid`, полную историю, отсутствие reparse-точек и запись только там, где разрешено.
+
+## 2. Что общее, что локальное
+
+| Сущность | Где | Режим |
+|---|---|---|
+| `projects/<name>/<sid>.jsonl`, `<sid>/{tool-results,subagents,workflows,custom-title.json}` | стор (git) | union по `uuid`; строки без `uuid` — побайтно; стабильная сортировка по `timestamp`; файлы ≥ 45 МБ не коммитятся (производные, для resume не нужны) |
+| `projects/<name>/memory/**` | стор | **записи** (§6); проекция в markdown; конфликт — keep-both в карантин + `additionalContext` «сведи», никогда LWW |
+| `projects/<name>/.keep` | стор | защита от rmdir-свипера пустых каталогов |
+| `config/{CLAUDE.md,settings.json}`, `config/skills/` | стор | skills — ссылка; CLAUDE.md/settings.json — управляемые копии с 3-way по last-synced-хешам |
+| `machines/<id>/live.json` (sid → heartbeat, cwd), `tails.json` (sid → lastUuid, lines, at) | стор, пишет только владелец | межмашинная живость и свежесть — **основной** механизм при одновременной работе |
+| `machines/<id>/links.json` (enc ↔ name ↔ cwd), `history.jsonl` (project как `{ROOT}/rel`), `tasks/<sid>/N.json`, `desktop/<acct>/<org>/local_*.json` + `deleted_*` | стор, пишет только владелец | outbox: читают все, конфликтов нет по построению |
+| `~/.claude/.claude.json*`, `backups/`, Keychain / `.credentials.json`, `sessions/*.json`+`*.key`, `session-env/`, `shell-snapshots/`, `telemetry/`, `debug/`, `cache/`, `plugins/`, `todos/`, `ide/`, `mcp-needs-auth-cache.json`, `policy-limits.json`, `remote-settings.json`, `stats-cache.json`, `.last-*` | локально | никогда не покидают машину: защитный `.gitignore` + белый список экспорта + тест |
+| `~/.claude/projects/<enc>` | локально | только ссылки (symlink / junction) в `~/.vibememory/store/projects/<name>` |
+| `~/.claude/history.jsonl`, `~/.claude/tasks/` | локально | живые файлы CLI; реплика через outbox |
+| Desktop-стор `claude-code-sessions/` | локально, **реальный** каталог | Desktop не терпит reparse-точек под своим корнем; реплика через outbox с guard'ом |
+| `~/.vibememory/{config.json,state.json,lock,quarantine/,log/,last-hook.json}` | локально | корни путей машины, хеши, лок с pid-владельцем |
+
+`.claude.json` не засевается ничем (trust и прочее): переносимого там нет, история порчи есть.
+
+## 3. Стор и remote
+
+- Клон стора — `~/.vibememory/store` на загрузочном томе (не OneDrive, не съёмный диск).
+- `origin` — bare-репо на **своём хосте** по SSH. Хост зеркалит в приватный GitHub
+  (`post-receive` → `git push --mirror`): бэкап не зависит от того, чья машина пушила последней.
+- Git-конфиг ставит `install`: `core.autocrlf=false`, `core.filemode=false`,
+  `core.symlinks=false`, `core.longpaths=true` (Win), `core.precomposeunicode=true` (Mac),
+  `core.fsmonitor=true`, `core.untrackedCache=true`. LFS не используется.
+- `.gitattributes`: `* -text`, `* merge=vibememory-keepboth`, `**/*.jsonl merge=vibememory-jsonl`.
+  Оба драйвера детерминированы, маркеров `<<<<` не бывает; исключение в драйвере →
+  `git merge --abort`, запись в лог, `additionalContext` на следующем старте. При `MERGE_HEAD`
+  движок никогда не коммитит.
+- **Имя стора**: `git rev-parse --path-format=absolute --git-common-dir` →
+  `basename(dirname(commondir))` (worktree и подкаталоги → репо; сабмодуль `.git/modules/<x>` →
+  `<x>`); вне git — `basename(cwd)`; `nameOverrides` в `config.json` для коллизий одноимённых.
+- **Игнор**: список cwd/шаблонов в `config.json`, для которых движок не делает ничего
+  (раннер VibeDub — cwd `/`). Такие сессии пишутся локально в реальный каталог CLI.
+
+## 4. Хуки (в общем `config/settings.json`; на Windows — через Git Bash, `$HOME`=`%USERPROFILE%`)
+
+- **SessionStart** (все matcher, timeout 10, **без сети**): (a) `enc = basename(dirname(transcript_path))` — кодировку не переизобретаем; (b) `projects/<enc>` отсутствует → стор + `.keep` + ссылка; ссылка на другую цель → починить; **реальный каталог** → copy-import по uuid, а rename в ссылку только при `source=startup`, когда `<session_id>.jsonl` там ещё нет и в `live.json` всех машин нет живого sid с этим cwd; иначе pending для тика; (c) `links.json`; (d) heartbeat; (e) `exit 0` всегда, stdout — только `additionalContext` при проблеме. Транскрипт рождается после выхода хука (измерено для `-p` и stream-json; интерактивный TTY — открытый пункт).
+- **UserPromptSubmit** (timeout 15) — гейт свежести: на первом промпте и далее раз в 5 мин `git fetch` (5 с; офлайн → пропуск с пометкой). Если `origin/main` меняет `projects/*/<sid>.jsonl` этой сессии или `live.json` другой машины показывает этот sid живым (heartbeat < 30 мин) → union на диске + **блок промпта**: «сессию продолжили на `<машина>` в `<время>`: закрой и открой заново — транскрипт обновлён». Единственное место, где допустим ритуал, и только в гонке.
+- **Stop** (`async`): **commit сразу** (снимок до последнего `\n`; неразбираемые строки отбрасывает драйвер), heartbeat, `tails.json`, экспорт outbox, push с дебаунсом 20 с. «Закрыл крышку» теряет секунды, не ходы.
+- **SessionEnd** (timeout 60): commit синхронно, снятие heartbeat, push отсоединённым процессом.
+
+## 5. Тик
+
+Mac — LaunchAgent (`RunAtLoad` + `StartInterval 120`; во сне интервал пропускается, лаг после
+пробуждения ≤ 2 мин). Windows — Task Scheduler: при входе, при разблокировке, каждые 2 мин.
+Шаги: (1) `fetch`; (2) `merge origin/main`, только если входящий diff не трогает файлы сессий,
+живых **на этой машине** (fail-closed); (3) push, если dirty; (4) реконсилер: для каждого
+`machines/*/links.json` × локальные корни из `config.json` — если переведённый cwd существует,
+гарантировать ссылку `projects/<enc(local cwd)>` (фолбэк-сканы CLI и Desktop ссылок не видят —
+ссылка обязана существовать заранее); (5) импорт outbox: `tasks/` для неживых sid, `history`
+под mkdir-локом CLI, дескрипторы Desktop (§7); (6) push-guard: удалённые в рабочей копии
+файлы `projects/**` восстанавливаются, удаление только через `vibememory forget <sid>`;
+(7) стейл-локи снимаются по проверке живости владельца (pid + procStart — Windows
+переиспользует pid).
+
+## 6. Память как записи и MCP
+
+Первоисточник памяти — **записи** в сторе: `{id, type, project, agent, createdAt, updatedAt,
+title, body, links[]}` (append-only журнал + материализованное состояние). Markdown Claude Code
+(`memory/MEMORY.md` + `memory/*.md`) — проекция: движок генерирует файлы из записей и
+импортирует правки файлов обратно в записи (Claude пишет файлы, как привык). Конфликт правок
+одной записи — keep-both.
+
+MCP-сервер `vibememory-mcp` (stdio локально; HTTP с bearer-токеном на хосте — для агентов без
+локального стора): `memory_search` (индекс: id, тип, дата, превью), `memory_get` (полный текст
+по id), `memory_save`, `memory_update`, `memory_delete` (в карантин, не навсегда),
+`history_search` (полнотекстовый поиск по транскриптам всех агентов — читать, не продолжать).
+Подключение: Claude/Claude Code (`mcpServers`), Codex, Gemini CLI, Cursor, Zed, Cline — одна
+и та же память у всех.
+
+## 7. Desktop
+
+Стор дескрипторов — реальный локальный каталог. Экспорт в outbox с **guard'ом**: дескриптор,
+потерявший `cliSessionId` или получивший `transcriptUnavailable` относительно последней
+экспортированной версии, не экспортируется, а локально чинится из outbox (shadow
+`cliSessionId`). Импорт чужих дескрипторов — только когда переведённый cwd существует,
+транскрипт в сторе есть и ссылка создана; cwd переписывается в локальную форму. Перечитывает
+ли Desktop стор без рестарта — открытый пункт; если нет, карточки другой машины появляются
+после перезапуска Desktop.
+
+## 8. Известные провалы и как закрыты
+
+- **Конфликт-копии `.claude.json`** — файл не покидает машину. Единственный shared-write формат — транскрипты и записи памяти; всё остальное — outbox одного писателя.
+- **Расплющивание ссылок** — облачной папки нет; ссылки живут в `~/.claude` (снаружи репо), `core.symlinks=false`, в репо ссылок нет.
+- **Разъезд транскрипта при перелинковке живой сессии** — ссылка никогда не переключается под живой сессией; merge не трогает файлы живых локальных сессий; вилка «продолжили на B, ввели на A» блокируется гейтом; в оставшемся случае union сохраняет обе ветви, а `additionalContext` честно говорит, что CLI покажет цепочку от листа с max(timestamp) (`/rewind`).
+- **Пустые каталоги и retention** — `.keep`; `cleanupPeriodDays: 3650` в общем settings.json; doctor валидирует settings.json (невалидный → дефолт 30 дней); git-история; push-guard.
+- **Windows на старой схеме** — `CLAUDE_CONFIG_DIR=%USERPROFILE%\.claude`, `.claude.json` локально, `.credentials.json` из облака удаляется (relogin), junction Desktop-стора снимается, `projects/D--…` — junction без привилегий.
+- **Порча дескрипторов Desktop** — guard на экспорт (§7).
+
+## 9. Формат `config.json` (`~/.vibememory/config.json`)
+
+```jsonc
+{
+  "machineId": "mac-main",                       // уникально на машину, попадает в имена outbox
+  "remote": "ssh://git@host/vibememory/store.git",
+  "roots": { "PROJECTS": "/Volumes/Storage/Projects", "HOME_PROJECTS": "/Users/borodatych/Projects" },
+  "nameOverrides": { "/Volumes/Storage/Projects/VibeCode/VibeSweep": "VibeSweep" },
+  "ignoreCwd": ["/"],                             // сессии раннера VibeDub — локально
+  "desktopStore": "auto"                         // или явный путь (MSIX / Squirrel)
+}
+```
+
+Спека формата для модели и мануал «как начать» — в `docs/manuals/` вместе с кодом
+(правило: фича с форматом обязана иметь спеку и образец).
+
+## 10. Реализация
+
+Rust workspace: `vibememory-core` — чистая логика (имена, кодировка, слияние JSONL, keep-both,
+модель записей, guard дескрипторов) без I/O, тестируется на фикстурах реального формата;
+`vibememory-cli` — бинарь (`install / doctor / status / tick / migrate / forget / hook …`,
+merge-драйверы, LaunchAgent / Task Scheduler); `vibememory-mcp` — сервер памяти. Сборки под
+`aarch64-apple-darwin` и `x86_64-pc-windows-msvc`; на целевой машине ноль зависимостей кроме
+git и (для хуков на Windows) Git Bash, который Claude Code и так требует.
+
+## 11. Остаточные риски
+
+Формат JSONL и дескрипторов объявлен внутренним — драйвер под тест-гейтом, при неразборе
+байтовый режим, при исключении abort. Офлайн-resume на двух машинах по очереди даёт вилку:
+union сохранит обе ветви, CLI покажет одну. Открытая вкладка Desktop неделями: heartbeat
+протухнет, защита остаётся у гейта по `tails.json`. Идентичность по basename для не-git
+каталогов — `nameOverrides`. Политика Desktop про ссылки под корнем конфига может ужесточиться —
+doctor следит за `PlantDetectedError`, запасной план для CLI — `CLAUDE_CODE_PROJECT_DIR_NAME`
+через обёртку. Транскрипты на remote открытым текстом — приватность = приватность хоста и
+ключей; секреты в выводе инструментов уезжают туда же.

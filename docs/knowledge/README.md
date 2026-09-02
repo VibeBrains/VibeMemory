@@ -1,0 +1,35 @@
+# База знаний
+
+Проверенные факты и грабли про Claude Code, Claude Desktop и облачные папки, добытые исследованием
+2026-09-02 и сверенные по живой машине и бинарям. Запись без строки в этом индексе не существует —
+добавили файл, добавьте и строку. Архитектурные решения живут в [spec/architecture.md](../spec/architecture.md):
+здесь «как оно себя ведёт на самом деле», там «что мы поэтому выбрали».
+
+Каждая запись прошла верификатора: утверждение, не найденное в первоисточниках и не подтверждённое
+машиной, удалено или помечено «не проверено». Метки исследователей `[verified]/[likely]/[unverified]`
+перенесены смыслом.
+
+## claudeCode — поведение CLI
+
+- [nativeCrossDevice.md](claudeCode/nativeCrossDevice.md) — нативного переноса локальной сессии Claude Code/Desktop на другую машину нет (проверено 2026-09-02: CLI 2.1.232, Desktop 1.40609.1 с CLI 2.1.255, CHANGELOG до 2.1.258): Remote Control — окно в живой процесс, Continue in Web/--teleport — сводка через облако, /desktop — та же машина, экспорт/импорт Desktop — в коде за фиче-флагом с неизвестным статусом; reconnection record RC живёт в самом транскрипте и .claude.json; CLAUDE_CODE_PROJECT_DIR_NAME — одно имя на запуск; issues #22648/#28791/#73639 без ответа Anthropic
+- [configDirLayout.md](claudeCode/configDirLayout.md) — раскладка `~/.claude` на 2026-09-02 (CLI 2.1.232 / Desktop-CLI 2.1.255), сверенная по бинарю и живой машине: инвентарь по классам горячее/общее/path-keyed/runtime; `.claude.json` — 57 KB кешей, ноль переносимых полей, переписывается поминутно, seedTrust туда нельзя; Keychain и `.credentials.json` ключуются `CLAUDE_CONFIG_DIR` и недокументированной `CLAUDE_SECURESTORAGE_CONFIG_DIR`; зашитый в бинарь список machine-local (`rOE`); симлинки `projects/<enc>` работают по основному пути, но слепы для фолбэк-сканов (первая сессия в новом cwd создаёт реальный каталог); два свипа-удалителя; стор Desktop и порча дескрипторов.
+- [transcriptFormat.md](claudeCode/transcriptFormat.md) — формат JSONL-транскрипта CLI 2.1.219/2.1.232/2.1.255 (проверено live 2026-09-02): кодировка `projects/<enc(cwd)>`, рождение файла после SessionStart (+16 мс после хука), запись open/append/close без удержанного fd, четверть–треть строк без `uuid` (состояние, не сообщения), выбор листа по max `timestamp` при resume, штатные немонотонности и сироты в одномашинных файлах, сайдкары, размеры (логический ≠ на диске), правила слияния
+- [hooksLifecycle.md](claudeCode/hooksLifecycle.md) — жизненный цикл хуков Claude Code для синка (2.1.232/2.1.255, проверено на живой машине 2026-09-02): SessionStart завершается до рождения транскрипта (+16–34 мс stream-json, ~4 с в -p), stdin/env хука, таймаут SessionStart и SessionEnd (1500/60000 мс + failsafe +5000/+3500), UserPromptSubmit как единственный гейт ввода, Desktop спавнит CLI с user-настройками и белым списком env, CLAUDE_CODE_SKIP_PROMPT_HISTORY (хуку не передаётся), retention- и rmdir-свипы (#86952, #41458), реестр sessions/ и dead-owner; Windows-часть и сценарии судей помечены как непроверенные
+
+## claudeDesktop — приложение и его стор сессий
+
+- [sessionStore.md](claudeDesktop/sessionStore.md) — стор карточек Claude Desktop (`claude-code-sessions/<acct>/<org>/local_*.json`, Mac — симлинк в OneDrive): поля дескриптора и их «горячесть», загрузка/дедуп конфликт-копий, сопоставление с транскриптом по `cliSessionId` через спавн встроенного CLI `--resume`, слепота сканов к симлинкам и правило единственности id, порча карточек (`transcriptUnavailable`, `clearStaleResumeHandle`), bring-home-копии, запрет симлинков под конфиг-корнем, junction в MSIX на Windows; цифры стора на 2026-09-02 (165→166 карточек, 67/353 дегидрированных транскриптов), сверены верификатором по живой машине и бандлам.
+
+## cloudSync — облачные папки как транспорт
+
+- [oneDriveFailureModes.md](cloudSync/oneDriveFailureModes.md) — почему OneDrive не транспорт для стора Claude Code (проверено на живом сторе 2026-09-02): плейсхолдеры Files On-Demand (932/1766 jsonl, 67/353 транскриптов, чтение = сетевая докачка), конфликт-копии вместо слияния (12 сейчас, 8 разобраны 30.07), symlink'и уезжают текстовыми файлами, нельзя исключить файл, `+R`/reparse → `EEXIST` у Bun и MSIX-Desktop на Windows, rmdir- и retention-свипы CLI, `.credentials.json` с 8 mcpOAuth-токенами в облаке; список машинно-локального `rOE` из бинаря, changelog/issues Anthropic без ответа, практика сообщества и готовые инструменты
+
+## design — ограничения движка
+
+- [engineConstraints.md](design/engineConstraints.md) — что движок обязан и чего никогда не делает: 64 фатальные находки трёх судейских панелей (cloud-first 19, local-hot 24, git 21), сведённые в правила с «почему и откуда»; перепроверено на живой машине 2026-09-02 (ссылки и реальный каталог в projects/, живые pid и lsof, транскрипт, git-края worktree/сабмодуль/подкаталог, строки бинарей 2.1.232/2.1.255, доки hooks/CHANGELOG), спорное помечено «не проверено»/«[likely]», противоречия (#41458 vs fail-closed) оставлены обеими версиями.
+
+## research — первоисточники
+
+- [researchReport.md](research/researchReport.md) — сырой отчёт четырёх исследователей (native / community / layout / desktop) с метками достоверности и ссылками; 138K, читать через поиск
+- [synthesisReport.md](research/synthesisReport.md) — сырой синтез схемы-победителя до решений владельца; основа `spec/architecture.md`
+- [judgeFindings.md](research/judgeFindings.md) — 64 фатальные находки девяти судей по трём дизайнам; дистиллят — `design/engineConstraints.md`
