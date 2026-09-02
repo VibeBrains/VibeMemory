@@ -1,0 +1,185 @@
+{
+  "description": "enc_from_transcript_path: basename(dirname(transcript_path)) validated against the layout <config>/projects/<enc>/<sid>.jsonl.",
+  "cases": [
+    {
+      "id": "macObserved",
+      "provenance": "observed",
+      "note": "Real layout of this machine (CLI 2.1.255 under Claude Desktop, 2026-09-02); session id replaced by a synthetic UUID.",
+      "input": {
+        "transcriptPath": "/Users/borodatych/.claude/projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/11111111-1111-4111-8111-111111111111.jsonl",
+        "syntax": "posix"
+      },
+      "expect": {
+        "ok": "-Volumes-Storage-Projects-VibeCode-VibeMemory"
+      }
+    },
+    {
+      "id": "rootEnc",
+      "provenance": "observed",
+      "note": "The store `-` (cwd `/`, VibeDub runner, 109 transcripts) exists on this machine; the slug `-` is valid. Recorded 2026-09-02.",
+      "input": {
+        "transcriptPath": "/Users/borodatych/.claude/projects/-/11111111-1111-4111-8111-111111111111.jsonl",
+        "syntax": "posix"
+      },
+      "expect": {
+        "ok": "-"
+      }
+    },
+    {
+      "id": "isolatedNfdObserved",
+      "provenance": "observed",
+      "note": "CLI 2.1.232 run 2026-09-02 with an isolated CLAUDE_CONFIG_DIR from an NFD directory `cafe<U+0301>`: the real transcript_path from the hook's stdin (session scratchpad path, real session id of a throwaway session) already carries the NFC-derived slug `\u2026-caf-`.",
+      "input": {
+        "transcriptPath": "/private/tmp/claude-501/-Volumes-Storage-Projects-VibeCode-VibeMemory/c059da60-7900-46be-aa3b-266797c17c05/scratchpad/cliNfc/cfg/projects/-private-tmp-claude-501--Volumes-Storage-Projects-VibeCode-VibeMemory-c059da60-7900-46be-aa3b-266797c17c05-scratchpad-cliNfc-work-caf-/2be6acec-ce46-43e1-ad50-5aaf6f704ee8.jsonl",
+        "syntax": "posix"
+      },
+      "expect": {
+        "ok": "-private-tmp-claude-501--Volumes-Storage-Projects-VibeCode-VibeMemory-c059da60-7900-46be-aa3b-266797c17c05-scratchpad-cliNfc-work-caf-"
+      }
+    },
+    {
+      "id": "projectDirNameEnv",
+      "provenance": "observed",
+      "note": "CLI 2.1.255 run 2026-09-02 with CLAUDE_CODE_PROJECT_DIR_NAME=my_name-1: the real transcript_path from the hook's stdin lands in projects/my_name-1/ (underscore allowed).",
+      "input": {
+        "transcriptPath": "/private/tmp/claude-501/-Volumes-Storage-Projects-VibeCode-VibeMemory/c059da60-7900-46be-aa3b-266797c17c05/scratchpad/cli255/cfg/projects/my_name-1/90768e37-8550-41dc-a159-386a48f1d9a1.jsonl",
+        "syntax": "posix"
+      },
+      "expect": {
+        "ok": "my_name-1"
+      }
+    },
+    {
+      "id": "winBackslash",
+      "provenance": "unverified",
+      "note": "Expected shape of transcript_path from a Windows CLI (stage 4 verifies).",
+      "input": {
+        "transcriptPath": "C:\\Users\\borodatych\\.claude\\projects\\D--Projects-VibeCode-VibeIDE\\11111111-1111-4111-8111-111111111111.jsonl",
+        "syntax": "windows"
+      },
+      "expect": {
+        "ok": "D--Projects-VibeCode-VibeIDE"
+      }
+    },
+    {
+      "id": "winForwardSlash",
+      "provenance": "unverified",
+      "note": "Same path as Git Bash would render it; the Windows parser accepts both separators.",
+      "input": {
+        "transcriptPath": "C:/Users/borodatych/.claude/projects/D--Projects-VibeCode-VibeIDE/11111111-1111-4111-8111-111111111111.jsonl",
+        "syntax": "windows"
+      },
+      "expect": {
+        "ok": "D--Projects-VibeCode-VibeIDE"
+      }
+    },
+    {
+      "id": "noProjectsSegment",
+      "provenance": "computed",
+      "note": "The parent of the enc directory must be `projects`.",
+      "input": {
+        "transcriptPath": "/Users/borodatych/.claude/sessions/-Volumes-x/11111111-1111-4111-8111-111111111111.jsonl",
+        "syntax": "posix"
+      },
+      "expect": {
+        "error": "malformedTranscriptPath"
+      }
+    },
+    {
+      "id": "notJsonl",
+      "provenance": "computed",
+      "note": "Only `.jsonl` transcripts.",
+      "input": {
+        "transcriptPath": "/Users/borodatych/.claude/projects/-Volumes-x/11111111-1111-4111-8111-111111111111.txt",
+        "syntax": "posix"
+      },
+      "expect": {
+        "error": "malformedTranscriptPath"
+      }
+    },
+    {
+      "id": "emptyStem",
+      "provenance": "computed",
+      "note": "A file named `.jsonl` has no session id.",
+      "input": {
+        "transcriptPath": "/Users/borodatych/.claude/projects/-Volumes-x/.jsonl",
+        "syntax": "posix"
+      },
+      "expect": {
+        "error": "malformedTranscriptPath"
+      }
+    },
+    {
+      "id": "relativePath",
+      "provenance": "computed",
+      "note": "transcript_path must be absolute.",
+      "input": {
+        "transcriptPath": "projects/-Volumes-x/11111111-1111-4111-8111-111111111111.jsonl",
+        "syntax": "posix"
+      },
+      "expect": {
+        "error": "malformedTranscriptPath"
+      }
+    },
+    {
+      "id": "tooShort",
+      "provenance": "computed",
+      "note": "Needs at least `projects`, the enc directory and the file.",
+      "input": {
+        "transcriptPath": "/projects/x.jsonl",
+        "syntax": "posix"
+      },
+      "expect": {
+        "error": "malformedTranscriptPath"
+      }
+    },
+    {
+      "id": "dotDotRemovesProjects",
+      "provenance": "computed",
+      "note": "Lexical resolution of `..` removes the `projects` segment, so the layout no longer matches.",
+      "input": {
+        "transcriptPath": "/Users/borodatych/.claude/projects/../-Volumes-x/11111111-1111-4111-8111-111111111111.jsonl",
+        "syntax": "posix"
+      },
+      "expect": {
+        "error": "malformedTranscriptPath"
+      }
+    },
+    {
+      "id": "slugWithSpace",
+      "provenance": "computed",
+      "note": "The CLI never produces a slug outside [A-Za-z0-9_-]; CLAUDE_CODE_PROJECT_DIR_NAME rejects such values (2.1.255 strings + live run).",
+      "input": {
+        "transcriptPath": "/Users/borodatych/.claude/projects/my name/11111111-1111-4111-8111-111111111111.jsonl",
+        "syntax": "posix"
+      },
+      "expect": {
+        "error": "invalidEncSlug"
+      }
+    },
+    {
+      "id": "slugWithDot",
+      "provenance": "computed",
+      "note": "Dots are outside the CLI slug alphabet.",
+      "input": {
+        "transcriptPath": "/Users/borodatych/.claude/projects/a.b/11111111-1111-4111-8111-111111111111.jsonl",
+        "syntax": "posix"
+      },
+      "expect": {
+        "error": "invalidEncSlug"
+      }
+    },
+    {
+      "id": "slugNonAscii",
+      "provenance": "computed",
+      "note": "Non-ASCII is outside the CLI slug alphabet.",
+      "input": {
+        "transcriptPath": "/Users/borodatych/.claude/projects/caf\u00e9/11111111-1111-4111-8111-111111111111.jsonl",
+        "syntax": "posix"
+      },
+      "expect": {
+        "error": "invalidEncSlug"
+      }
+    }
+  ]
+}

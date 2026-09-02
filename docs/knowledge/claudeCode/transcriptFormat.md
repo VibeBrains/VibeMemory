@@ -19,11 +19,12 @@ these files directly can break on any release»
 `function k(e){return e.replace(/[^a-zA-Z0-9]/g,"-")}`; длиннее 200 символов — обрезка до 200
 плюс `-` и base36-хэш полного пути (2.1.224 чинил коллизию длинных путей). Примеры из стора:
 `/Volumes/Storage/Projects/VibeCode/VibeSweep` → `-Volumes-Storage-Projects-VibeCode-VibeSweep`,
-`D:\Projects\VibeCode\VibeIDE` → `D--Projects-VibeCode-VibeIDE`, `cwd=/` → `-`. Ключ — cwd как
-запущен, не realpath: `claude project purge` проверяет оба варианта (`resolve` и `realpath`), а
-2.1.50 чинил «resumed sessions could be invisible when the working directory involved symlinks».
-Desktop нормализует cwd в NFC перед той же заменой (`cliSanitizeCwdSimple` в бандле; хелперы путей
-Desktop делают `normalize('NFC')` только на darwin). Единственный штатный способ уйти от
+`D:\Projects\VibeCode\VibeIDE` → `D--Projects-VibeCode-VibeIDE`, `cwd=/` → `-`. Ключ —
+`NFC(realpath(cwd))`: и CLI (2.1.232 `ZI`/`Vu`, 2.1.255 `Ws`), и Desktop нормализуют cwd в NFC и
+разворачивают симлинки перед заменой — измерено 2026-09-02 (NFD-каталог → NFC в stdin хука и в
+имени каталога); `claude project purge` проверяет оба варианта (`resolve` и `realpath`), а 2.1.50
+чинил «resumed sessions could be invisible when the working directory involved symlinks». Точная
+формула, хэш и эталоны — [projectDirEncoding.md](projectDirEncoding.md). Единственный штатный способ уйти от
 привязки к пути — `CLAUDE_CODE_PROJECT_DIR_NAME` (2.1.234+): одно имя на запуск, требует
 `CLAUDE_CONFIG_DIR`, читается только из окружения процесса.
 

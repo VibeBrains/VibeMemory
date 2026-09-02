@@ -1,0 +1,4 @@
+# Same bytes on macOS and Windows: cargo fmt --check and fixtures must agree across machines.
+* text=auto eol=lf
+# Fixtures are byte-exact recordings of real formats (JSONL with truncated lines, CRLF inside); never normalized.
+fixtures/** -text

@@ -1,0 +1,441 @@
+{
+  "description": "NamingConfig::from_raw: validation of nameOverrides and ignoreCwd. `ok: true` means the configuration loads.",
+  "cases": [
+    {
+      "id": "empty",
+      "provenance": "computed",
+      "note": "No rules at all.",
+      "input": {
+        "config": {}
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "id": "ownerConfig",
+      "provenance": "computed",
+      "note": "The owner's planned config.json (architecture \u00a79): one exact override, `/` ignored.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "/Volumes/Storage/Projects/VibeCode/VibeSweep": "VibeSweep"
+          },
+          "ignoreCwd": [
+            "/"
+          ]
+        }
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "id": "overrideSubtree",
+      "provenance": "computed",
+      "note": "A subtree override needs an explicit `/**`.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "/Volumes/Storage/Projects/VibeCode/VibeSweep/**": "VibeSweep"
+          }
+        }
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "id": "overrideWindowsKey",
+      "provenance": "computed",
+      "note": "Windows patterns use `/` and a drive prefix.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "D:/Projects/VibeCode/VibeIDE": "VibeIDE"
+          }
+        }
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "id": "ignoreGlob",
+      "provenance": "computed",
+      "note": "Globs are allowed in ignoreCwd.",
+      "input": {
+        "config": {
+          "ignoreCwd": [
+            "/private/tmp/**",
+            "D:/Runners/*"
+          ]
+        }
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "id": "unknownFieldIgnored",
+      "provenance": "computed",
+      "note": "Other config.json keys are not this type's business (the full config type of the CLI rejects unknown keys).",
+      "input": {
+        "config": {
+          "unknownKey": 1,
+          "ignoreCwd": [
+            "/"
+          ]
+        }
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "id": "overrideEscapedBracket",
+      "provenance": "computed",
+      "note": "A directory literally named `[work]` is written with the bracket in a class.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "/x/[[]work]/foo": "W"
+          }
+        }
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "id": "ignoreTrailingSlash",
+      "provenance": "computed",
+      "note": "A trailing separator is tolerated: the pattern is canonicalized like the cwd.",
+      "input": {
+        "config": {
+          "ignoreCwd": [
+            "/private/tmp/"
+          ]
+        }
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "id": "ignoreUncRootWithoutSlash",
+      "provenance": "computed",
+      "note": "A UNC share root with or without a trailing slash is the same root.",
+      "input": {
+        "config": {
+          "ignoreCwd": [
+            "//server/share"
+          ]
+        }
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "id": "overrideDuplicateExactKey",
+      "provenance": "computed",
+      "note": "The same key twice in the JSON object: kept by the parser, rejected by validation.",
+      "input": {
+        "config": {
+          "nameOverrides": { "/a/b": "X", "/a/b": "Y" }
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "overrideDotSegments",
+      "provenance": "computed",
+      "note": "`/./**` resolves to `/**`: no literal component.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "/./**": "all"
+          }
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "overrideParentSegments",
+      "provenance": "computed",
+      "note": "`/a/../**` resolves to `/**`: no literal component.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "/a/../**": "all"
+          }
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "overrideRootPosix",
+      "provenance": "computed",
+      "note": "`/` alone has no literal component: it would name the root, which is never linked.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "/": "root"
+          }
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "overrideRootSubtree",
+      "provenance": "computed",
+      "note": "`/**` would capture every project of the machine.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "/**": "all"
+          }
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "overrideDriveSubtree",
+      "provenance": "computed",
+      "note": "`D:/**` would capture every project on the drive.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "D:/**": "all"
+          }
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "overrideUncSubtree",
+      "provenance": "computed",
+      "note": "`//server/share/**`: host and share are the prefix, not literal components.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "//server/share/**": "all"
+          }
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "overrideRelativeKey",
+      "provenance": "computed",
+      "note": "Rendered working directories are absolute; a relative pattern can never match.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "relative/x": "X"
+          }
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "overrideDriveRelativeKey",
+      "provenance": "computed",
+      "note": "`D:foo` is drive-relative, not absolute.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "D:foo": "X"
+          }
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "overrideBackslash",
+      "provenance": "computed",
+      "note": "Backslashes are rejected: in a glob they would be escapes, and `/` is the only separator.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "D:\\Projects\\X": "X"
+          }
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "overrideInvalidName",
+      "provenance": "computed",
+      "note": "The value must be a valid store name (colon is forbidden on NTFS).",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "/a/b": "bad:name"
+          }
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "overrideReservedName",
+      "provenance": "computed",
+      "note": "`CON` cannot be a directory on Windows.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "/a/b": "CON"
+          }
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "overrideDotGitName",
+      "provenance": "computed",
+      "note": "`projects/.git/` would break the store repository.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "/a/b": ".git"
+          }
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "overrideDuplicateWindowsCase",
+      "provenance": "computed",
+      "note": "Windows patterns compare without regard to case: these two are one pattern listed twice.",
+      "input": {
+        "config": {
+          "nameOverrides": {
+            "D:/Projects/X": "A",
+            "d:/projects/x": "B"
+          }
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "ignoreBackslash",
+      "provenance": "computed",
+      "note": "A Windows path copied from Explorer would silently never match; reject it loudly.",
+      "input": {
+        "config": {
+          "ignoreCwd": [
+            "D:\\Runners\\*"
+          ]
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "ignoreEmpty",
+      "provenance": "computed",
+      "note": "An empty pattern is a mistake, not a rule.",
+      "input": {
+        "config": {
+          "ignoreCwd": [
+            ""
+          ]
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "ignoreWhitespace",
+      "provenance": "computed",
+      "note": "Whitespace-only pattern.",
+      "input": {
+        "config": {
+          "ignoreCwd": [
+            "   "
+          ]
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "ignoreRelative",
+      "provenance": "computed",
+      "note": "Relative ignore pattern can never match.",
+      "input": {
+        "config": {
+          "ignoreCwd": [
+            "tmp/**"
+          ]
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "ignoreDuplicate",
+      "provenance": "computed",
+      "note": "The same pattern twice.",
+      "input": {
+        "config": {
+          "ignoreCwd": [
+            "/",
+            "/"
+          ]
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    },
+    {
+      "id": "ignoreBadGlob",
+      "provenance": "computed",
+      "note": "An unterminated character class is a glob syntax error.",
+      "input": {
+        "config": {
+          "ignoreCwd": [
+            "/a/["
+          ]
+        }
+      },
+      "expect": {
+        "error": "configInvalid"
+      }
+    }
+  ]
+}

@@ -46,15 +46,30 @@ JSONL по `uuid`, полную историю, отсутствие reparse-т�
   Оба драйвера детерминированы, маркеров `<<<<` не бывает; исключение в драйвере →
   `git merge --abort`, запись в лог, `additionalContext` на следующем старте. При `MERGE_HEAD`
   движок никогда не коммитит.
-- **Имя стора**: `git rev-parse --path-format=absolute --git-common-dir` →
-  `basename(dirname(commondir))` (worktree и подкаталоги → репо; сабмодуль `.git/modules/<x>` →
-  `<x>`); вне git — `basename(cwd)`; `nameOverrides` в `config.json` для коллизий одноимённых.
-- **Игнор**: список cwd/шаблонов в `config.json`, для которых движок не делает ничего
-  (раннер VibeDub — cwd `/`). Такие сессии пишутся локально в реальный каталог CLI.
+- **Имя стора** (ядро `naming`, порядок: относительный cwd → ошибка; `ignoreCwd`; корень →
+  ошибка; `nameOverrides` → git → имя каталога): хук один раз канонизирует cwd (realpath; git
+  печатает физические пути), CLI спавнит `git rev-parse --path-format=absolute --git-common-dir`
+  со снятым окружением `GIT_*` (кроме `GIT_EXEC_PATH`) и **всегда** ищет ближайшую запись `.git` над cwd (git молча проходит сквозь
+  битый или пустой вложенный `.git` к внешнему репо — [knowledge/git/repoLayoutEdges.md](../knowledge/git/repoLayoutEdges.md)).
+  Commondir принимается, только если он объясняет эту запись; `<repo>/.git` → `basename(repo)`
+  (репо, подкаталог, linked worktree); `<super>/.git/modules/<path>` → последний компонент (имя
+  сабмодуля; standalone-клон того же репозитория — отдельный стор, объединение — `nameOverrides`);
+  bare, `--separate-git-dir`, утёкший `GIT_DIR` → ошибка, не имя. git отказал, а `.git` — файл-указатель
+  (worktree с другой машины) → имя из `gitdir:`; `.git` — каталог → ошибка; `.git` нет → `basename(cwd)`.
+  Корень ФС — ошибка `rootCwd`, лечение только `ignoreCwd` (стора `root` не бывает: `/` Mac и `D:\`
+  Windows ничего не объединяет). Имя валидируется для APFS/NTFS/git; выведенные из путей имена —
+  в NFC (git печатает форму на диске, CLI — NFC); идентичность — NFC + свёртка регистра,
+  существующее написание переиспользуется (`existing` — имена из дерева стора, не readdir:
+  APFS схлопывает регистр). Ошибка — конечное состояние: ни ссылки, ни
+  стора, `additionalContext` с кодом. Полные правила — [knowledge/design/engineConstraints.md](../knowledge/design/engineConstraints.md).
+- **`nameOverrides` и `ignoreCwd`** — один glob-диалект (`/` как разделитель, литерал = точное
+  совпадение, поддерево — явным `/**`, Windows-шаблоны без учёта регистра); неоднозначный override —
+  ошибка; игнор сильнее override; для игнорируемого cwd (раннер VibeDub — `/`) движок не делает
+  ничего, сессия пишется в реальный каталог CLI. Спека — [manuals/configSpec.md](../manuals/configSpec.md).
 
 ## 4. Хуки (в общем `config/settings.json`; на Windows — через Git Bash, `$HOME`=`%USERPROFILE%`)
 
-- **SessionStart** (все matcher, timeout 10, **без сети**): (a) `enc = basename(dirname(transcript_path))` — кодировку не переизобретаем; (b) `projects/<enc>` отсутствует → стор + `.keep` + ссылка; ссылка на другую цель → починить; **реальный каталог** → copy-import по uuid, а rename в ссылку только при `source=startup`, когда `<session_id>.jsonl` там ещё нет и в `live.json` всех машин нет живого sid с этим cwd; иначе pending для тика; (c) `links.json`; (d) heartbeat; (e) `exit 0` всегда, stdout — только `additionalContext` при проблеме. Транскрипт рождается после выхода хука (измерено для `-p` и stream-json; интерактивный TTY — открытый пункт).
+- **SessionStart** (все matcher, timeout 10, **без сети**): (a) `enc = basename(dirname(transcript_path))` — кодировку не переизобретаем; (b) `projects/<enc>` отсутствует → стор + `.keep` + ссылка; ссылка на другую цель → **не трогать** (никакой автоматической перелинковки: `additionalContext` + `vibememory relink`, допустимый только без живого sid с этим enc в `live.json` всех машин); **реальный каталог** → copy-import по uuid, а rename в ссылку только при `source=startup`, когда `<session_id>.jsonl` там ещё нет и в `live.json` всех машин нет живого sid с этим cwd; иначе pending для тика; (c) `links.json`; (d) heartbeat; (e) `exit 0` всегда, stdout — только `additionalContext` при проблеме. Транскрипт рождается после выхода хука (измерено для `-p` и stream-json; интерактивный TTY — открытый пункт).
 - **UserPromptSubmit** (timeout 15) — гейт свежести: на первом промпте и далее раз в 5 мин `git fetch` (5 с; офлайн → пропуск с пометкой). Если `origin/main` меняет `projects/*/<sid>.jsonl` этой сессии или `live.json` другой машины показывает этот sid живым (heartbeat < 30 мин) → union на диске + **блок промпта**: «сессию продолжили на `<машина>` в `<время>`: закрой и открой заново — транскрипт обновлён». Единственное место, где допустим ритуал, и только в гонке.
 - **Stop** (`async`): **commit сразу** (снимок до последнего `\n`; неразбираемые строки отбрасывает драйвер), heartbeat, `tails.json`, экспорт outbox, push с дебаунсом 20 с. «Закрыл крышку» теряет секунды, не ходы.
 - **SessionEnd** (timeout 60): commit синхронно, снятие heartbeat, push отсоединённым процессом.
@@ -65,9 +80,13 @@ Mac — LaunchAgent (`RunAtLoad` + `StartInterval 120`; во сне интерв
 пробуждения ≤ 2 мин). Windows — Task Scheduler: при входе, при разблокировке, каждые 2 мин.
 Шаги: (1) `fetch`; (2) `merge origin/main`, только если входящий diff не трогает файлы сессий,
 живых **на этой машине** (fail-closed); (3) push, если dirty; (4) реконсилер: для каждого
-`machines/*/links.json` × локальные корни из `config.json` — если переведённый cwd существует,
-гарантировать ссылку `projects/<enc(local cwd)>` (фолбэк-сканы CLI и Desktop ссылок не видят —
-ссылка обязана существовать заранее); (5) импорт outbox: `tasks/` для неживых sid, `history`
+`machines/*/links.json` × локальные корни из `config.json` — если переведённый cwd существует и
+локальное разрешение имени совпадает с именем из `links.json` (иначе — запись `nameDisagreement`
+для doctor), гарантировать ссылку `projects/<enc>` с `enc = encode_cwd(NFC(realpath(cwd)))`
+(фолбэк-сканы CLI и Desktop ссылок не видят — ссылка обязана существовать заранее); такая ссылка
+помечена в `links.json` как `predicted`, при первом SessionStart сверяется с `transcript_path`
+(расхождение → вторая ссылка под реальным enc) и **никогда не удаляется**; существующая ссылка
+никогда не перенацеливается; (5) импорт outbox: `tasks/` для неживых sid, `history`
 под mkdir-локом CLI, дескрипторы Desktop (§7); (6) push-guard: удалённые в рабочей копии
 файлы `projects/**` восстанавливаются, удаление только через `vibememory forget <sid>`;
 (7) стейл-локи снимаются по проверке живости владельца (pid + procStart — Windows
@@ -94,7 +113,8 @@ MCP-сервер `vibememory-mcp` (stdio локально; HTTP с bearer-ток
 потерявший `cliSessionId` или получивший `transcriptUnavailable` относительно последней
 экспортированной версии, не экспортируется, а локально чинится из outbox (shadow
 `cliSessionId`). Импорт чужих дескрипторов — только когда переведённый cwd существует,
-транскрипт в сторе есть и ссылка создана; cwd переписывается в локальную форму. Перечитывает
+транскрипт в сторе есть и ссылка создана **и подтверждена** `transcript_path` этой машины
+(предсказанная реконсилером ссылка гейт не проходит: Desktop на промахе резюме стирает `cliSessionId`); cwd переписывается в локальную форму. Перечитывает
 ли Desktop стор без рестарта — открытый пункт; если нет, карточки другой машины появляются
 после перезапуска Desktop.
 
@@ -114,14 +134,15 @@ MCP-сервер `vibememory-mcp` (stdio локально; HTTP с bearer-ток
   "machineId": "mac-main",                       // уникально на машину, попадает в имена outbox
   "remote": "ssh://git@host/vibememory/store.git",
   "roots": { "PROJECTS": "/Volumes/Storage/Projects", "HOME_PROJECTS": "/Users/borodatych/Projects" },
-  "nameOverrides": { "/Volumes/Storage/Projects/VibeCode/VibeSweep": "VibeSweep" },
+  "nameOverrides": { "/Volumes/Storage/Projects/VibeCode/VibeSweep": "VibeSweep" },  // литерал = точное совпадение, поддерево — «/**»
   "ignoreCwd": ["/"],                             // сессии раннера VibeDub — локально
   "desktopStore": "auto"                         // или явный путь (MSIX / Squirrel)
 }
 ```
 
-Спека формата для модели и мануал «как начать» — в `docs/manuals/` вместе с кодом
-(правило: фича с форматом обязана иметь спеку и образец).
+Спека формата для модели — [manuals/configSpec.md](../manuals/configSpec.md) (`nameOverrides` и
+`ignoreCwd` — полностью, остальные ключи — с `install`); мануал «как начать» и засев образца —
+вместе с `install` (правило: фича с форматом обязана иметь спеку и образец).
 
 ## 10. Реализация
 
@@ -138,7 +159,8 @@ git и (для хуков на Windows) Git Bash, который Claude Code и 
 байтовый режим, при исключении abort. Офлайн-resume на двух машинах по очереди даёт вилку:
 union сохранит обе ветви, CLI покажет одну. Открытая вкладка Desktop неделями: heartbeat
 протухнет, защита остаётся у гейта по `tails.json`. Идентичность по basename для не-git
-каталогов — `nameOverrides`. Политика Desktop про ссылки под корнем конфига может ужесточиться —
+каталогов и для сабмодулей (сабмодуль VibeIDEA — репозиторий `VibeBrains`: как standalone-клон он
+получит стор `VibeBrains`, как сабмодуль — `vibeDefaults`) — `nameOverrides`. Политика Desktop про ссылки под корнем конфига может ужесточиться —
 doctor следит за `PlantDetectedError`, запасной план для CLI — `CLAUDE_CODE_PROJECT_DIR_NAME`
 через обёртку. Транскрипты на remote открытым текстом — приватность = приватность хоста и
 ключей; секреты в выводе инструментов уезжают туда же.

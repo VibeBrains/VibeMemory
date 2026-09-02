@@ -1,0 +1,2056 @@
+{
+  "description": "resolve_store_name: ignoreCwd -> cwd shape -> nameOverrides -> git -> directory name -> validation -> existing names -> CLAUDE_CODE_PROJECT_DIR_NAME. A case without `git` asserts that git is not consulted.",
+  "cases": [
+    {
+      "id": "repoRoot",
+      "provenance": "observed",
+      "note": "git rev-parse --path-format=absolute --git-common-dir in this repository (git 2.50.1, 2026-09-02).",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeMemory",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeMemory",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "repoSubdir",
+      "provenance": "observed",
+      "note": "VibeDub/server -> VibeDub/.git; matches the real link pair -Volumes-\u2026-VibeDub-server -> VibeDub. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeDub/server",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/Volumes/Storage/Projects/VibeCode/VibeDub/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeDub/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeDub",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "repoSubdirAboveSubmodule",
+      "provenance": "observed",
+      "note": "VibeIDEA/vibe-plugins/vibe-agent is a plain subdirectory of the superproject (real link pair -> VibeIDEA); the submodule lives deeper. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDEA/vibe-plugins/vibe-agent",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/Volumes/Storage/Projects/VibeCode/VibeIDEA/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeIDEA/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeIDEA",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "submodule",
+      "provenance": "observed",
+      "note": "Absorbed submodule of VibeIDEA (.gitmodules path = vibe-plugins/vibe-agent/resources/vibeDefaults, upstream VibeBrains): common dir under .git/modules/, pointer file is relative. Name = last component; a standalone clone of the same upstream would be `VibeBrains`. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDEA/vibe-plugins/vibe-agent/resources/vibeDefaults",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/Volumes/Storage/Projects/VibeCode/VibeIDEA/.git/modules/vibe-plugins/vibe-agent/resources/vibeDefaults",
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeIDEA/vibe-plugins/vibe-agent/resources/vibeDefaults/.git",
+                  "content": "gitdir: ../../../../.git/modules/vibe-plugins/vibe-agent/resources/vibeDefaults\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "vibeDefaults",
+            "source": "submodule"
+          }
+        }
+      }
+    },
+    {
+      "id": "submoduleSubdir",
+      "provenance": "observed",
+      "note": "Subdirectory `design/` of the submodule: same common dir, nearest .git is the submodule's pointer file found above. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDEA/vibe-plugins/vibe-agent/resources/vibeDefaults/design",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/Volumes/Storage/Projects/VibeCode/VibeIDEA/.git/modules/vibe-plugins/vibe-agent/resources/vibeDefaults",
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeIDEA/vibe-plugins/vibe-agent/resources/vibeDefaults/.git",
+                  "content": "gitdir: ../../../../.git/modules/vibe-plugins/vibe-agent/resources/vibeDefaults\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "vibeDefaults",
+            "source": "submodule"
+          }
+        }
+      }
+    },
+    {
+      "id": "linkedWorktree",
+      "provenance": "observed",
+      "note": "git worktree add ../linked-wt: common dir is the main repository's .git; the pointer names .git/worktrees/linked-wt. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/private/tmp/scratch/wt-probe/linked-wt",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/private/tmp/scratch/wt-probe/main-repo/.git",
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/private/tmp/scratch/wt-probe/linked-wt/.git",
+                  "content": "gitdir: /private/tmp/scratch/wt-probe/main-repo/.git/worktrees/linked-wt\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "main-repo",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "linkedWorktreeSubdir",
+      "provenance": "observed",
+      "note": "Subdirectory of the linked worktree: identical outcome. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/private/tmp/scratch/wt-probe/linked-wt/sub/dir",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/private/tmp/scratch/wt-probe/main-repo/.git",
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/private/tmp/scratch/wt-probe/linked-wt/.git",
+                  "content": "gitdir: /private/tmp/scratch/wt-probe/main-repo/.git/worktrees/linked-wt\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "main-repo",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "relativeWorktreePointer",
+      "provenance": "observed",
+      "note": "git worktree add --relative-paths (git 2.48+): the pointer is relative to the worktree. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/private/tmp/scratch/gitEdges/wtrel",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/private/tmp/scratch/gitEdges/main/.git",
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/private/tmp/scratch/gitEdges/wtrel/.git",
+                  "content": "gitdir: ../main/.git/worktrees/wtrel\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "main",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "submoduleWorktree",
+      "provenance": "observed",
+      "note": "A worktree created from inside a submodule: gitdir ends with modules/libs/foo/worktrees/subwt; dropping the worktrees pair yields the submodule's git dir. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/private/tmp/scratch/gitEdges/subwt",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/private/tmp/scratch/gitEdges/super/.git/modules/libs/foo",
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/private/tmp/scratch/gitEdges/subwt/.git",
+                  "content": "gitdir: /private/tmp/scratch/gitEdges/super/.git/modules/libs/foo/worktrees/subwt\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "foo",
+            "source": "submodule"
+          }
+        }
+      }
+    },
+    {
+      "id": "foreignWorktreeWin",
+      "provenance": "observed",
+      "note": "Worktree created on the Windows machine, opened on macOS: git fails (not a git repository), but the pointer file names the repository. Real file content, 2026-09-02.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE/.claude/worktrees/recursing-cannon-5da42a",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeIDE/.claude/worktrees/recursing-cannon-5da42a/.git",
+                  "content": "gitdir: D:/Projects/VibeCode/VibeIDE/.git/worktrees/recursing-cannon-5da42a\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeIDE",
+            "source": "dotGitFile"
+          }
+        }
+      }
+    },
+    {
+      "id": "foreignWorktreeSubdir",
+      "provenance": "observed",
+      "note": "Subdirectory of that worktree: the pointer is found above. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE/.claude/worktrees/recursing-cannon-5da42a/src",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeIDE/.claude/worktrees/recursing-cannon-5da42a/.git",
+                  "content": "gitdir: D:/Projects/VibeCode/VibeIDE/.git/worktrees/recursing-cannon-5da42a\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeIDE",
+            "source": "dotGitFile"
+          }
+        }
+      }
+    },
+    {
+      "id": "submodulePointerWhenGitRefuses",
+      "provenance": "computed",
+      "note": "If git refused the submodule, its relative pointer still names it (real pointer content).",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDEA/vibe-plugins/vibe-agent/resources/vibeDefaults",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeIDEA/vibe-plugins/vibe-agent/resources/vibeDefaults/.git",
+                  "content": "gitdir: ../../../../.git/modules/vibe-plugins/vibe-agent/resources/vibeDefaults\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "vibeDefaults",
+            "source": "dotGitFile"
+          }
+        }
+      }
+    },
+    {
+      "id": "dotGitFileMalformed",
+      "provenance": "computed",
+      "note": "A pointer file without a gitdir: line.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/X",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/X/.git",
+                  "content": "garbage\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "error": "malformedDotGitFile"
+      }
+    },
+    {
+      "id": "dotGitFileEmptyTarget",
+      "provenance": "computed",
+      "note": "`gitdir:` with nothing after it.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/X",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/X/.git",
+                  "content": "gitdir:   \n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "error": "malformedDotGitFile"
+      }
+    },
+    {
+      "id": "separateGitDir",
+      "provenance": "observed",
+      "note": "git init --separate-git-dir: the pointer and the common dir name a directory that is neither .git nor under .git/modules. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/private/tmp/scratch/gitEdges/sepwt",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/private/tmp/scratch/gitEdges/sepgit",
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/private/tmp/scratch/gitEdges/sepwt/.git",
+                  "content": "gitdir: /private/tmp/scratch/gitEdges/sepgit\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "error": "unrecognizedGitLayout"
+      }
+    },
+    {
+      "id": "separateGitDirPointerOnly",
+      "provenance": "computed",
+      "note": "Same pointer with git refusing: still not a recognizable layout.",
+      "input": {
+        "cwd": "/private/tmp/scratch/gitEdges/sepwt",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/private/tmp/scratch/gitEdges/sepwt/.git",
+                  "content": "gitdir: /private/tmp/scratch/gitEdges/sepgit\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "error": "unrecognizedGitLayout"
+      }
+    },
+    {
+      "id": "bareRepo",
+      "provenance": "observed",
+      "note": "Inside a bare repository the common dir is the repository itself. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/private/tmp/scratch/gitEdges/store.git",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/private/tmp/scratch/gitEdges/store.git",
+            "dotGit": "notFound"
+          }
+        }
+      },
+      "expect": {
+        "error": "unrecognizedGitLayout"
+      }
+    },
+    {
+      "id": "brokenNestedHead",
+      "provenance": "observed",
+      "note": "inner/.git/HEAD contains garbage: git 2.50.1 silently resolves the OUTER repository with exit 0. The nearest .git disagrees, so no name. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/private/tmp/scratch/gitEdges/outer/inner/sub",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/private/tmp/scratch/gitEdges/outer/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/private/tmp/scratch/gitEdges/outer/inner/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "error": "gitLayoutMismatch"
+      }
+    },
+    {
+      "id": "emptyNestedDotGit",
+      "provenance": "observed",
+      "note": "An empty .git directory is skipped by git discovery the same way. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/private/tmp/scratch/gitEdges/outer/tpl",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/private/tmp/scratch/gitEdges/outer/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/private/tmp/scratch/gitEdges/outer/tpl/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "error": "gitLayoutMismatch"
+      }
+    },
+    {
+      "id": "gitDirLeak",
+      "provenance": "observed",
+      "note": "GIT_DIR pointing elsewhere makes git answer with a foreign repository (the CLI strips GIT_* before spawning; the core still refuses). `lone/.git` is an empty directory; without any `.git` the answer is the same and the core still refuses (commonDirWithoutDotGit). Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/private/tmp/scratch/gitEdges/lone",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/private/tmp/scratch/gitEdges/main/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/private/tmp/scratch/gitEdges/lone/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "error": "gitLayoutMismatch"
+      }
+    },
+    {
+      "id": "logicalCwdVsPhysicalCommonDir",
+      "provenance": "computed",
+      "note": "Contract: the core does not resolve symlinks. git prints physical paths, so a logical cwd (`/tmp`, not `/private/tmp`) mismatches; the hook resolves cwd once before everything.",
+      "input": {
+        "cwd": "/tmp/x",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/private/tmp/x/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/tmp/x/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "error": "gitLayoutMismatch"
+      }
+    },
+    {
+      "id": "nfdCommonDirVsNfcWalk",
+      "provenance": "observed",
+      "note": "Directory created as NFD `cafe<U+0301>`, entered through its NFC spelling: git 2.50.1 prints the NFD form (also with core.precomposeunicode=true) while the CLI reports cwd in NFC. Components compare after NFC, the name is NFC. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/private/tmp/claude-501/-Volumes-Storage-Projects-VibeCode-VibeMemory/c059da60-7900-46be-aa3b-266797c17c05/scratchpad/nfdGit/caf\u00e9",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/private/tmp/claude-501/-Volumes-Storage-Projects-VibeCode-VibeMemory/c059da60-7900-46be-aa3b-266797c17c05/scratchpad/nfdGit/cafe\u0301/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/private/tmp/claude-501/-Volumes-Storage-Projects-VibeCode-VibeMemory/c059da60-7900-46be-aa3b-266797c17c05/scratchpad/nfdGit/caf\u00e9/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "caf\u00e9",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "submodulePathUnderWorktreesDir",
+      "provenance": "computed",
+      "note": "A submodule whose path in the superproject ends in `worktrees/<name>`: the pointer is read both ways and the reading that equals git's common dir wins.",
+      "input": {
+        "cwd": "/x/S/worktrees/foo",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/x/S/.git/modules/worktrees/foo",
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/x/S/worktrees/foo/.git",
+                  "content": "gitdir: ../../.git/modules/worktrees/foo\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "foo",
+            "source": "submodule"
+          }
+        }
+      }
+    },
+    {
+      "id": "commonDirWithoutDotGit",
+      "provenance": "computed",
+      "note": "git answered but no .git entry exists above cwd: the answer cannot be explained.",
+      "input": {
+        "cwd": "/x/proj/sub",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/x/main/.git",
+            "dotGit": "notFound"
+          }
+        }
+      },
+      "expect": {
+        "error": "gitLayoutMismatch"
+      }
+    },
+    {
+      "id": "dotGitDirRefused",
+      "provenance": "computed",
+      "note": "A .git directory exists but git failed (dubious ownership, corruption): never fall back to the directory name.",
+      "input": {
+        "cwd": "/x/Repo/sub",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/x/Repo/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "error": "gitRefused"
+      }
+    },
+    {
+      "id": "gitUnavailable",
+      "provenance": "computed",
+      "note": "git could not be run: no transport without git, no naming either.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeMemory",
+        "syntax": "posix",
+        "git": {
+          "unavailable": {
+            "reason": "timeout after 5s"
+          }
+        }
+      },
+      "expect": {
+        "error": "gitUnavailable"
+      }
+    },
+    {
+      "id": "dotGitProbeUnknown",
+      "provenance": "computed",
+      "note": "The .git walk did not complete: never treat as 'no repository'.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeMemory",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git",
+            "dotGit": {
+              "unknown": {
+                "reason": "EACCES on /Volumes/Storage"
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "error": "dotGitProbeFailed"
+      }
+    },
+    {
+      "id": "commonDirTrailingCr",
+      "provenance": "computed",
+      "note": "A wrapper leaving CR/LF or spaces in stdout must not change the layout.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeMemory",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git\r\n",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeMemory",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "repoAtVolumeRoot",
+      "provenance": "computed",
+      "note": "A repository whose root is the filesystem root has no name.",
+      "input": {
+        "cwd": "/sub",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "error": "emptyRepoName"
+      }
+    },
+    {
+      "id": "notGit",
+      "provenance": "observed",
+      "note": "VibeSweep is not a repository: exit 128, no .git above (discovery stops at the /Volumes mount). Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeSweep",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeSweep",
+            "source": "plainDir"
+          }
+        }
+      }
+    },
+    {
+      "id": "notGitTrailingSlash",
+      "provenance": "computed",
+      "note": "A trailing separator does not change the name.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeSweep/",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeSweep",
+            "source": "plainDir"
+          }
+        }
+      }
+    },
+    {
+      "id": "rootCwd",
+      "provenance": "observed",
+      "note": "cwd `/` (VibeDub runner) without an ignore rule: an error, never a store named root. git is not consulted. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/",
+        "syntax": "posix"
+      },
+      "expect": {
+        "error": "rootCwd"
+      }
+    },
+    {
+      "id": "rootCwdIgnored",
+      "provenance": "computed",
+      "note": "The owner's rule for the runner (architecture \u00a79): `/` is ignored before the root check.",
+      "input": {
+        "cwd": "/",
+        "syntax": "posix",
+        "config": {
+          "ignoreCwd": [
+            "/"
+          ]
+        }
+      },
+      "expect": {
+        "ok": {
+          "ignored": {
+            "pattern": "/"
+          }
+        }
+      }
+    },
+    {
+      "id": "winRootCwdIgnored",
+      "provenance": "unverified",
+      "note": "Drive root ignored by its `/`-form literal.",
+      "input": {
+        "cwd": "D:\\",
+        "syntax": "windows",
+        "config": {
+          "ignoreCwd": [
+            "D:/"
+          ]
+        }
+      },
+      "expect": {
+        "ok": {
+          "ignored": {
+            "pattern": "D:/"
+          }
+        }
+      }
+    },
+    {
+      "id": "uncRootCwdIgnored",
+      "provenance": "unverified",
+      "note": "UNC share root ignored; the pattern is written with `/` separators.",
+      "input": {
+        "cwd": "\\\\server\\share",
+        "syntax": "windows",
+        "config": {
+          "ignoreCwd": [
+            "//server/share/"
+          ]
+        }
+      },
+      "expect": {
+        "ok": {
+          "ignored": {
+            "pattern": "//server/share/"
+          }
+        }
+      }
+    },
+    {
+      "id": "uncRootCwdIgnoredWithoutSlash",
+      "provenance": "unverified",
+      "note": "The same root without a trailing slash in the pattern: patterns are canonicalized like the cwd.",
+      "input": {
+        "cwd": "\\\\server\\share",
+        "syntax": "windows",
+        "config": {
+          "ignoreCwd": [
+            "//server/share"
+          ]
+        }
+      },
+      "expect": {
+        "ok": {
+          "ignored": {
+            "pattern": "//server/share"
+          }
+        }
+      }
+    },
+    {
+      "id": "emptyCwd",
+      "provenance": "computed",
+      "note": "An empty cwd is relative, not a root.",
+      "input": {
+        "cwd": "",
+        "syntax": "posix"
+      },
+      "expect": {
+        "error": "relativeCwd"
+      }
+    },
+    {
+      "id": "dotCwd",
+      "provenance": "computed",
+      "note": "`.` is relative.",
+      "input": {
+        "cwd": ".",
+        "syntax": "posix"
+      },
+      "expect": {
+        "error": "relativeCwd"
+      }
+    },
+    {
+      "id": "driveOnlyCwd",
+      "provenance": "unverified",
+      "note": "`D:` without a root is drive-relative.",
+      "input": {
+        "cwd": "D:",
+        "syntax": "windows"
+      },
+      "expect": {
+        "error": "relativeCwd"
+      }
+    },
+    {
+      "id": "driveRelativeNotIgnored",
+      "provenance": "unverified",
+      "note": "A drive-relative cwd is rejected before ignore patterns are consulted and renders without `/`, so an absolute pattern cannot match it.",
+      "input": {
+        "cwd": "D:foo",
+        "syntax": "windows",
+        "config": {
+          "ignoreCwd": [
+            "D:/foo"
+          ]
+        }
+      },
+      "expect": {
+        "error": "relativeCwd"
+      }
+    },
+    {
+      "id": "winRootCwd",
+      "provenance": "unverified",
+      "note": "Drive root on Windows.",
+      "input": {
+        "cwd": "D:\\",
+        "syntax": "windows"
+      },
+      "expect": {
+        "error": "rootCwd"
+      }
+    },
+    {
+      "id": "uncRootCwd",
+      "provenance": "unverified",
+      "note": "UNC share root without trailing separator (typed-path reports it as not absolute; the prefix alone anchors it).",
+      "input": {
+        "cwd": "\\\\server\\share",
+        "syntax": "windows"
+      },
+      "expect": {
+        "error": "rootCwd"
+      }
+    },
+    {
+      "id": "relativeCwd",
+      "provenance": "computed",
+      "note": "Relative cwd.",
+      "input": {
+        "cwd": "relative/x",
+        "syntax": "posix"
+      },
+      "expect": {
+        "error": "relativeCwd"
+      }
+    },
+    {
+      "id": "driveRelativeCwd",
+      "provenance": "unverified",
+      "note": "`D:foo` is relative to the drive's current directory.",
+      "input": {
+        "cwd": "D:foo",
+        "syntax": "windows"
+      },
+      "expect": {
+        "error": "relativeCwd"
+      }
+    },
+    {
+      "id": "winRepoForwardSlashCommonDir",
+      "provenance": "unverified",
+      "note": "Git for Windows prints forward slashes; the .git walk reports backslashes; both name one location.",
+      "input": {
+        "cwd": "D:\\Projects\\VibeCode\\VibeIDE",
+        "syntax": "windows",
+        "git": {
+          "ran": {
+            "commonDir": "D:/Projects/VibeCode/VibeIDE/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "D:\\Projects\\VibeCode\\VibeIDE\\.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeIDE",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "winRepoBackslashCommonDir",
+      "provenance": "unverified",
+      "note": "Backslashes in the git output as well.",
+      "input": {
+        "cwd": "D:\\Projects\\VibeCode\\VibeIDE",
+        "syntax": "windows",
+        "git": {
+          "ran": {
+            "commonDir": "D:\\Projects\\VibeCode\\VibeIDE\\.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "D:\\Projects\\VibeCode\\VibeIDE\\.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeIDE",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "winCaseDifference",
+      "provenance": "unverified",
+      "note": "cwd typed in lower case, git answers in canonical case: locations compare without regard to case, the name follows git.",
+      "input": {
+        "cwd": "d:\\projects\\vibecode\\vibeide",
+        "syntax": "windows",
+        "git": {
+          "ran": {
+            "commonDir": "D:/Projects/VibeCode/VibeIDE/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "d:\\projects\\vibecode\\vibeide\\.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeIDE",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "submoduleWin",
+      "provenance": "unverified",
+      "note": "Submodule layout on Windows.",
+      "input": {
+        "cwd": "D:\\Projects\\X\\vendor\\lib",
+        "syntax": "windows",
+        "git": {
+          "ran": {
+            "commonDir": "D:/Projects/X/.git/modules/vendor/lib",
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "D:\\Projects\\X\\vendor\\lib\\.git",
+                  "content": "gitdir: ../../.git/modules/vendor/lib\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "lib",
+            "source": "submodule"
+          }
+        }
+      }
+    },
+    {
+      "id": "nestedSubmodule",
+      "provenance": "unverified",
+      "note": "A submodule inside a submodule keeps git's literal `modules` segments; the name is still the last component.",
+      "input": {
+        "cwd": "/x/Super/a/b",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/x/Super/.git/modules/a/modules/b",
+            "dotGit": {
+              "found": {
+                "file": {
+                  "path": "/x/Super/a/b/.git",
+                  "content": "gitdir: ../../.git/modules/a/modules/b\n"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "b",
+            "source": "submodule"
+          }
+        }
+      }
+    },
+    {
+      "id": "overrideExact",
+      "provenance": "computed",
+      "note": "A literal pattern matches exactly; git is not consulted.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeSweep",
+        "syntax": "posix",
+        "config": {
+          "nameOverrides": {
+            "/Volumes/Storage/Projects/VibeCode/VibeSweep": "VibeSweepMac"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeSweepMac",
+            "source": "override"
+          }
+        }
+      }
+    },
+    {
+      "id": "overrideSubtree",
+      "provenance": "computed",
+      "note": "`/**` matches descendants.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeSweep/sub/dir",
+        "syntax": "posix",
+        "config": {
+          "nameOverrides": {
+            "/Volumes/Storage/Projects/VibeCode/VibeSweep/**": "VibeSweepMac"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeSweepMac",
+            "source": "override"
+          }
+        }
+      }
+    },
+    {
+      "id": "overrideSubtreeDoesNotMatchBase",
+      "provenance": "computed",
+      "note": "`foo/**` does not match `foo` itself (globset semantics): the base needs its own literal pattern.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeSweep",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        },
+        "config": {
+          "nameOverrides": {
+            "/Volumes/Storage/Projects/VibeCode/VibeSweep/**": "VibeSweepMac"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeSweep",
+            "source": "plainDir"
+          }
+        }
+      }
+    },
+    {
+      "id": "overrideNoPartialComponent",
+      "provenance": "computed",
+      "note": "`/a/b` does not match `/a/bc`.",
+      "input": {
+        "cwd": "/a/bc",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        },
+        "config": {
+          "nameOverrides": {
+            "/a/b": "X"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "bc",
+            "source": "plainDir"
+          }
+        }
+      }
+    },
+    {
+      "id": "overrideBeatsGit",
+      "provenance": "computed",
+      "note": "An override wins over a repository; git is not consulted.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeMemory",
+        "syntax": "posix",
+        "config": {
+          "nameOverrides": {
+            "/Volumes/Storage/Projects/VibeCode/VibeMemory": "MemoryEngine"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "MemoryEngine",
+            "source": "override"
+          }
+        }
+      }
+    },
+    {
+      "id": "overrideAmbiguous",
+      "provenance": "computed",
+      "note": "Two overrides matching one cwd: an error, not 'longest wins'.",
+      "input": {
+        "cwd": "/a/b/c",
+        "syntax": "posix",
+        "config": {
+          "nameOverrides": {
+            "/a/**": "X",
+            "/a/b/**": "Y"
+          }
+        }
+      },
+      "expect": {
+        "error": "ambiguousOverride"
+      }
+    },
+    {
+      "id": "overrideWinCaseInsensitive",
+      "provenance": "unverified",
+      "note": "Windows patterns match without regard to case.",
+      "input": {
+        "cwd": "d:\\projects\\vibecode\\vibeide",
+        "syntax": "windows",
+        "config": {
+          "nameOverrides": {
+            "D:/Projects/VibeCode/VibeIDE": "VibeIDE"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeIDE",
+            "source": "override"
+          }
+        }
+      }
+    },
+    {
+      "id": "overridePosixCaseSensitive",
+      "provenance": "computed",
+      "note": "POSIX patterns are byte-exact: the lower-case key does not match, git decides.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeMemory",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git"
+                }
+              }
+            }
+          }
+        },
+        "config": {
+          "nameOverrides": {
+            "/volumes/storage/projects/vibecode/vibememory": "wrong"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeMemory",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "overrideSyntaxMismatch",
+      "provenance": "unverified",
+      "note": "A POSIX pattern never matches a Windows cwd.",
+      "input": {
+        "cwd": "D:\\Projects\\VibeCode\\VibeIDE",
+        "syntax": "windows",
+        "git": {
+          "ran": {
+            "commonDir": "D:/Projects/VibeCode/VibeIDE/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "D:\\Projects\\VibeCode\\VibeIDE\\.git"
+                }
+              }
+            }
+          }
+        },
+        "config": {
+          "nameOverrides": {
+            "/Volumes/Storage/Projects/VibeCode/VibeIDE": "wrong"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeIDE",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "ignoreGlobDoubleStar",
+      "provenance": "computed",
+      "note": "`/**` ignores a subtree.",
+      "input": {
+        "cwd": "/private/tmp/x/y",
+        "syntax": "posix",
+        "config": {
+          "ignoreCwd": [
+            "/private/tmp/**"
+          ]
+        }
+      },
+      "expect": {
+        "ok": {
+          "ignored": {
+            "pattern": "/private/tmp/**"
+          }
+        }
+      }
+    },
+    {
+      "id": "ignoreGlobNoCrossSeparator",
+      "provenance": "computed",
+      "note": "`*` does not cross `/` (literal_separator).",
+      "input": {
+        "cwd": "/private/tmp/x",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        },
+        "config": {
+          "ignoreCwd": [
+            "/private/*"
+          ]
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "x",
+            "source": "plainDir"
+          }
+        }
+      }
+    },
+    {
+      "id": "ignoreLiteralNoPrefix",
+      "provenance": "computed",
+      "note": "A literal pattern is not a prefix.",
+      "input": {
+        "cwd": "/private/tmpx",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        },
+        "config": {
+          "ignoreCwd": [
+            "/private/tmp"
+          ]
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "tmpx",
+            "source": "plainDir"
+          }
+        }
+      }
+    },
+    {
+      "id": "ignoreTrailingSlashCwd",
+      "provenance": "computed",
+      "note": "The cwd is rendered without its trailing separator before matching.",
+      "input": {
+        "cwd": "/private/tmp/",
+        "syntax": "posix",
+        "config": {
+          "ignoreCwd": [
+            "/private/tmp"
+          ]
+        }
+      },
+      "expect": {
+        "ok": {
+          "ignored": {
+            "pattern": "/private/tmp"
+          }
+        }
+      }
+    },
+    {
+      "id": "ignoreWinCaseInsensitive",
+      "provenance": "unverified",
+      "note": "Windows pattern vs lower-case backslash cwd.",
+      "input": {
+        "cwd": "d:\\runners\\one",
+        "syntax": "windows",
+        "config": {
+          "ignoreCwd": [
+            "D:/Runners/*"
+          ]
+        }
+      },
+      "expect": {
+        "ok": {
+          "ignored": {
+            "pattern": "D:/Runners/*"
+          }
+        }
+      }
+    },
+    {
+      "id": "ignoreBeatsOverride",
+      "provenance": "computed",
+      "note": "When both match, ignore wins: a contradictory config does nothing.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeSweep",
+        "syntax": "posix",
+        "config": {
+          "ignoreCwd": [
+            "/Volumes/Storage/Projects/VibeCode/VibeSweep"
+          ],
+          "nameOverrides": {
+            "/Volumes/Storage/Projects/VibeCode/VibeSweep": "X"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "ignored": {
+            "pattern": "/Volumes/Storage/Projects/VibeCode/VibeSweep"
+          }
+        }
+      }
+    },
+    {
+      "id": "ignoreFirstMatchWins",
+      "provenance": "computed",
+      "note": "The reported pattern is the first match in file order.",
+      "input": {
+        "cwd": "/a/b/c",
+        "syntax": "posix",
+        "config": {
+          "ignoreCwd": [
+            "/a/**",
+            "/a/b/**"
+          ]
+        }
+      },
+      "expect": {
+        "ok": {
+          "ignored": {
+            "pattern": "/a/**"
+          }
+        }
+      }
+    },
+    {
+      "id": "storeNameReservedWin",
+      "provenance": "computed",
+      "note": "A directory named CON cannot be checked out on Windows.",
+      "input": {
+        "cwd": "/tmp/CON",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        }
+      },
+      "expect": {
+        "error": "invalidStoreName"
+      }
+    },
+    {
+      "id": "storeNameReservedWithExtension",
+      "provenance": "computed",
+      "note": "Windows reserves the stem before the first dot: aux.js.",
+      "input": {
+        "cwd": "/tmp/aux.js",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        }
+      },
+      "expect": {
+        "error": "invalidStoreName"
+      }
+    },
+    {
+      "id": "storeNameDotGit",
+      "provenance": "computed",
+      "note": "A project directory literally named .git.",
+      "input": {
+        "cwd": "/tmp/.git",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        }
+      },
+      "expect": {
+        "error": "invalidStoreName"
+      }
+    },
+    {
+      "id": "storeNameTrailingDot",
+      "provenance": "computed",
+      "note": "NTFS drops trailing dots.",
+      "input": {
+        "cwd": "/tmp/proj.",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        }
+      },
+      "expect": {
+        "error": "invalidStoreName"
+      }
+    },
+    {
+      "id": "storeNameColon",
+      "provenance": "computed",
+      "note": "Colon is forbidden on NTFS.",
+      "input": {
+        "cwd": "/tmp/a:b",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        }
+      },
+      "expect": {
+        "error": "invalidStoreName"
+      }
+    },
+    {
+      "id": "existingSpellingWins",
+      "provenance": "computed",
+      "note": "An existing store differing only by case is the same store: its spelling is reused.",
+      "input": {
+        "cwd": "/tmp/vibeide",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        },
+        "existing": [
+          "VibeIDE",
+          "Promed"
+        ]
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeIDE",
+            "source": "plainDir"
+          }
+        }
+      }
+    },
+    {
+      "id": "existingCollision",
+      "provenance": "computed",
+      "note": "Two existing spellings of one key: the store is already broken; refuse.",
+      "input": {
+        "cwd": "/tmp/VibeIDE",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        },
+        "existing": [
+          "VibeIDE",
+          "vibeide"
+        ]
+      },
+      "expect": {
+        "error": "storeNameCollision"
+      }
+    },
+    {
+      "id": "existingNfcMatch",
+      "provenance": "computed",
+      "note": "NFD name vs existing NFC store: one store.",
+      "input": {
+        "cwd": "/tmp/cafe\u0301",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        },
+        "existing": [
+          "caf\u00e9"
+        ]
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "caf\u00e9",
+            "source": "plainDir"
+          }
+        }
+      }
+    },
+    {
+      "id": "nfdPlainDirNormalized",
+      "provenance": "computed",
+      "note": "Names derived from paths are NFC: the same directory yields one spelling whichever machine derives it first.",
+      "input": {
+        "cwd": "/tmp/cafe\u0301",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "caf\u00e9",
+            "source": "plainDir"
+          }
+        }
+      }
+    },
+    {
+      "id": "existingExactDuplicate",
+      "provenance": "computed",
+      "note": "The same spelling listed twice (tree plus working copy) is not a collision.",
+      "input": {
+        "cwd": "/tmp/VibeIDE",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        },
+        "existing": [
+          "VibeIDE",
+          "VibeIDE"
+        ]
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeIDE",
+            "source": "plainDir"
+          }
+        }
+      }
+    },
+    {
+      "id": "storeNameReservedSuperscript",
+      "provenance": "unverified",
+      "note": "Windows also reserves COM\u00b9 (superscript digit) per Microsoft documentation.",
+      "input": {
+        "cwd": "/tmp/COM\u00b9",
+        "syntax": "posix",
+        "git": {
+          "ran": {
+            "commonDir": null,
+            "dotGit": "notFound"
+          }
+        }
+      },
+      "expect": {
+        "error": "invalidStoreName"
+      }
+    },
+    {
+      "id": "ignoreTrailingSlashPattern",
+      "provenance": "computed",
+      "note": "A pattern with a trailing separator matches the cwd without it; the reported pattern is the text as written.",
+      "input": {
+        "cwd": "/private/tmp",
+        "syntax": "posix",
+        "config": {
+          "ignoreCwd": [
+            "/private/tmp/"
+          ]
+        }
+      },
+      "expect": {
+        "ok": {
+          "ignored": {
+            "pattern": "/private/tmp/"
+          }
+        }
+      }
+    },
+    {
+      "id": "overrideTrailingSlashPattern",
+      "provenance": "computed",
+      "note": "Same tolerance for overrides.",
+      "input": {
+        "cwd": "/x/proj",
+        "syntax": "posix",
+        "config": {
+          "nameOverrides": {
+            "/x/proj/": "P"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "P",
+            "source": "override"
+          }
+        }
+      }
+    },
+    {
+      "id": "overrideEscapedBracket",
+      "provenance": "computed",
+      "note": "A literal `[work]` component is matched through a character class.",
+      "input": {
+        "cwd": "/x/[work]/foo",
+        "syntax": "posix",
+        "config": {
+          "nameOverrides": {
+            "/x/[[]work]/foo": "W"
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "W",
+            "source": "override"
+          }
+        }
+      }
+    },
+    {
+      "id": "overrideExistingSpelling",
+      "provenance": "computed",
+      "note": "Overrides are reconciled with existing names too.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeSweep",
+        "syntax": "posix",
+        "config": {
+          "nameOverrides": {
+            "/Volumes/Storage/Projects/VibeCode/VibeSweep": "vibesweepmac"
+          }
+        },
+        "existing": [
+          "VibeSweepMac"
+        ]
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeSweepMac",
+            "source": "override"
+          }
+        }
+      }
+    },
+    {
+      "id": "projectDirNameForeign",
+      "provenance": "observed",
+      "note": "Desktop sets CLAUDE_CODE_PROJECT_DIR_NAME=session for 3p sessions (hooksLifecycle): the project directory is shared by every cwd, so nothing is linked. Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeMemory",
+        "syntax": "posix",
+        "projectDirName": "session",
+        "git": {
+          "ran": {
+            "commonDir": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "ignored": {
+            "projectDirName": "session"
+          }
+        }
+      }
+    },
+    {
+      "id": "projectDirNameEqualsStore",
+      "provenance": "computed",
+      "note": "Plan B: the variable equals the store name, so projects/<name> can be linked directly.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeMemory",
+        "syntax": "posix",
+        "projectDirName": "VibeMemory",
+        "git": {
+          "ran": {
+            "commonDir": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeMemory",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "projectDirNameCaseOnly",
+      "provenance": "computed",
+      "note": "Equality with the store is by identity key (case-folded): projects/vibememory -> store VibeMemory is still plan B.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeMemory",
+        "syntax": "posix",
+        "projectDirName": "vibememory",
+        "git": {
+          "ran": {
+            "commonDir": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeMemory",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "projectDirNameInvalidSpace",
+      "provenance": "observed",
+      "note": "CLI 2.1.255 silently ignores a value outside [A-Za-z0-9_-]{1,64} (run 2026-09-02: `Weird Name.x` -> directory by the formula), so the engine ignores it too and links normally.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeMemory",
+        "syntax": "posix",
+        "projectDirName": "Weird Name.x",
+        "git": {
+          "ran": {
+            "commonDir": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeMemory",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "projectDirNameInvalidDevice",
+      "provenance": "observed",
+      "note": "CLI 2.1.255 silently ignores a reserved device name (run 2026-09-02: `aux`).",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeMemory",
+        "syntax": "posix",
+        "projectDirName": "aux",
+        "git": {
+          "ran": {
+            "commonDir": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeMemory",
+            "source": "repo"
+          }
+        }
+      }
+    },
+    {
+      "id": "projectDirNameTooLong",
+      "provenance": "computed",
+      "note": "65 characters exceed the CLI's {1,64} rule (2.1.255 strings).",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeMemory",
+        "syntax": "posix",
+        "projectDirName": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "git": {
+          "ran": {
+            "commonDir": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git",
+            "dotGit": {
+              "found": {
+                "dir": {
+                  "path": "/Volumes/Storage/Projects/VibeCode/VibeMemory/.git"
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "ok": {
+          "named": {
+            "name": "VibeMemory",
+            "source": "repo"
+          }
+        }
+      }
+    }
+  ]
+}

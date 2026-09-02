@@ -42,6 +42,21 @@ Rust workspace: `crates/vibememory-core` (стор, имена, слияние �
 слияния — только через фикстуры реального формата JSONL (`fixtures/`). Тесты не запускать при
 ошибках компиляции.
 
+Гейт «ядро без I/O» — `disallowed-methods`/`disallowed-types`/`disallowed-macros` в корневом
+`clippy.toml`; крейт, который делает I/O по замыслу, отключает его одной строкой
+`#![allow(clippy::disallowed_methods, clippy::disallowed_types, clippy::disallowed_macros)]`
+в своём `lib.rs`/`main.rs`.
+
+## Правила кода (следствия `clippy::pedantic` под `-D warnings`)
+
+- Имена и кодировка — только через `fixtures/naming/*.json` ([manuals/namingFixtures.md](docs/manuals/namingFixtures.md)):
+  новых unit-тестов с литеральными путями не заводить.
+- В `tests/*.rs` нет `pub`-элементов (`missing_docs`), а хелперы теста разрешают panic/unwrap
+  файловым `#![allow(...)]` (ключи `allow-*-in-tests` их не видят).
+- Не-ASCII в Rust-литералах — только `\u{…}` (`unicode_not_nfc`); идентификаторы и CamelCase в
+  doc-комментариях — в бэктиках (`doc_markdown`).
+- Грабли крейтов и тулчейна — [knowledge/rust/crossPlatformPaths.md](docs/knowledge/rust/crossPlatformPaths.md).
+
 ## Ветки
 
 `next` — повседневная; `main` — только выпущенное.

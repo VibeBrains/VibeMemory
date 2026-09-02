@@ -28,8 +28,8 @@ https://code.claude.com/docs/en/claude-directory.
 - Кодировку каталога проекта переизобретать не нужно: `enc = basename(dirname(transcript_path))`.
   Сама кодировка — NFC-нормализация (в коде Desktop `cliSanitizeCwdSimple`; в CLI 2.1.232 сам
   кодировщик `yTo` — только regex, NFC делает обёртка realpath `ZI`) + `[^a-zA-Z0-9]`→`-`, при длине
-  >200 усечение до 200 + `-` + хэш (base36 — по коду Desktop; в CLI хэш `xAy` не разбирался;
-  фикс 2.1.224).
+  >200 усечение до 200 + `-` + хэш (разобран — [projectDirEncoding.md](projectDirEncoding.md);
+  фикс 2.1.224). Прогон 2026-09-02: `cwd` в stdin хука уже в NFC.
 - Грабли пути в истории релизов: 2.1.72 — `transcript_path` не в тот каталог для resumed/forked;
   2.1.141 — несуществующий `transcript_path` после EnterWorktree; 2.1.73 — SessionStart стрелял
   дважды на resume. При `--continue`/`--resume` без явного id `CLAUDE_CODE_SESSION_ID` в

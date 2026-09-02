@@ -1,0 +1,19 @@
+[package]
+name = "vibememory-core"
+description = "VibeMemory core: store naming, transcript merge, memory records — pure logic without I/O"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+globset.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+typed-path.workspace = true
+unicode-normalization.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

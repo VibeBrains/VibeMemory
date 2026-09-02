@@ -1,0 +1,163 @@
+{
+  "description": "encode_cwd: the CLI project-directory formula (NFC, [^a-zA-Z0-9] -> '-', >200 -> 200 + '-' + base36(|hash|)). `observed` pairs are real cwd -> real directory name; `computed` values come from encodeCwdOracle.js; error cases follow core rules.",
+  "cliVersions": [
+    "2.1.232",
+    "2.1.255"
+  ],
+  "cases": [
+    {
+      "id": "macRepo",
+      "provenance": "observed",
+      "note": "Directory name under ~/.claude/projects for this repository (real transcript, 2026-09-02).",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeMemory"
+      },
+      "expect": {
+        "ok": "-Volumes-Storage-Projects-VibeCode-VibeMemory"
+      }
+    },
+    {
+      "id": "winRepoBackslash",
+      "provenance": "observed",
+      "note": "Directory `D--Projects-VibeCode-VibeIDE` exists in the owner's store; its cwd form `D:\\Projects\\VibeCode\\VibeIDE` is recorded in Desktop descriptors (knowledge: sessionStore.md). Recorded 2026-09-02.",
+      "input": {
+        "cwd": "D:\\Projects\\VibeCode\\VibeIDE"
+      },
+      "expect": {
+        "ok": "D--Projects-VibeCode-VibeIDE"
+      }
+    },
+    {
+      "id": "winRepoForwardSlash",
+      "provenance": "computed",
+      "note": "Both separators map to '-': the slug cannot tell the two spellings apart (lossy by design).",
+      "input": {
+        "cwd": "D:/Projects/VibeCode/VibeIDE"
+      },
+      "expect": {
+        "ok": "D--Projects-VibeCode-VibeIDE"
+      }
+    },
+    {
+      "id": "root",
+      "provenance": "observed",
+      "note": "cwd `/` -> `-` (the runner store on this machine). Recorded 2026-09-02.",
+      "input": {
+        "cwd": "/"
+      },
+      "expect": {
+        "ok": "-"
+      }
+    },
+    {
+      "id": "winRoot",
+      "provenance": "computed",
+      "note": "Drive root: three units, none alphanumeric.",
+      "input": {
+        "cwd": "D:\\"
+      },
+      "expect": {
+        "ok": "D--"
+      }
+    },
+    {
+      "id": "nfc",
+      "provenance": "computed",
+      "note": "NFC `caf\\u00e9`: one unit for U+00E9 -> one dash. Oracle value; the NFC behaviour itself is the observed case `isolatedNfdObserved`.",
+      "input": {
+        "cwd": "/Users/borodatych/Projects/caf\u00e9"
+      },
+      "expect": {
+        "ok": "-Users-borodatych-Projects-caf-"
+      }
+    },
+    {
+      "id": "nfd",
+      "provenance": "computed",
+      "note": "NFD `cafe\\u0301` as macOS returns it from getcwd: the CLI normalizes to NFC first, so the result equals the NFC case. Oracle value derived from the observed run `isolatedNfdObserved`.",
+      "input": {
+        "cwd": "/Users/borodatych/Projects/cafe\u0301"
+      },
+      "expect": {
+        "ok": "-Users-borodatych-Projects-caf-"
+      }
+    },
+    {
+      "id": "isolatedNfdObserved",
+      "provenance": "observed",
+      "note": "The exact cwd of the 2026-09-02 isolated CLI 2.1.232 run (NFD on disk, session scratchpad path, not shortened) and the directory the CLI created under projects/.",
+      "input": {
+        "cwd": "/private/tmp/claude-501/-Volumes-Storage-Projects-VibeCode-VibeMemory/c059da60-7900-46be-aa3b-266797c17c05/scratchpad/cliNfc/work/cafe\u0301"
+      },
+      "expect": {
+        "ok": "-private-tmp-claude-501--Volumes-Storage-Projects-VibeCode-VibeMemory-c059da60-7900-46be-aa3b-266797c17c05-scratchpad-cliNfc-work-caf-"
+      }
+    },
+    {
+      "id": "nonBmp",
+      "provenance": "computed",
+      "note": "U+1F680 is a surrogate pair in UTF-16: two units -> two dashes.",
+      "input": {
+        "cwd": "/tmp/\ud83d\ude80"
+      },
+      "expect": {
+        "ok": "-tmp---"
+      }
+    },
+    {
+      "id": "exactly200",
+      "provenance": "computed",
+      "note": "Boundary: a 200-character slug is kept whole.",
+      "input": {
+        "cwd": "/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "expect": {
+        "ok": "-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "id": "exactly201",
+      "provenance": "computed",
+      "note": "Boundary: 201 characters -> first 200 + '-' + base36(|hash|); hash of the full string is -786901713.",
+      "input": {
+        "cwd": "/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "expect": {
+        "ok": "-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-d0i18x"
+      }
+    },
+    {
+      "id": "long273",
+      "provenance": "computed",
+      "note": "A realistic long path: the hash covers the full original string, not the truncated slug.",
+      "input": {
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDEA/vibe-plugins/vibe-agent/resources/vibeDefaults/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "expect": {
+        "ok": "-Volumes-Storage-Projects-VibeCode-VibeIDEA-vibe-plugins-vibe-agent-resources-vibeDefaults-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-w0sdqo"
+      }
+    },
+    {
+      "id": "trailingSlash",
+      "provenance": "computed",
+      "note": "The formula does not trim: a trailing separator becomes a trailing dash (the CLI passes getcwd, which has none).",
+      "input": {
+        "cwd": "/Volumes/x/"
+      },
+      "expect": {
+        "ok": "-Volumes-x-"
+      }
+    },
+    {
+      "id": "emptyCwd",
+      "provenance": "computed",
+      "note": "Core rule, not the CLI formula: the formula yields an empty name, EncSlug::parse rejects it.",
+      "input": {
+        "cwd": ""
+      },
+      "expect": {
+        "error": "invalidEncSlug"
+      }
+    }
+  ]
+}

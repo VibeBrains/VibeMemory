@@ -33,6 +33,15 @@ git-transport («ClaudeSync», рабочее имя движка, ставше�
   Почему: формула уже менялась (2.1.224: >200 символов → усечение + base36-хэш, NFC), а Windows-CLI
   ключует по `realpathSync` без разворота junction/subst, тогда как Desktop/VS Code — по native realpath
   (#71224, #78461 открыты) — ссылка нужна под тем слагом, который вычислил именно этот CLI.
+  Уточнение 2026-09-02 (реализация ядра): формула воспроизведена в `vibememory-core` по strings
+  обоих бинарей и пришпилена оракулом `fixtures/naming/encodeCwdOracle.js` — но допустима ровно в
+  одном месте, реконсилере тика, как **предсказание** для cwd с другой машины, где `transcript_path`
+  нет по определению; предсказанная ссылка сверяется с `transcript_path` на первом SessionStart,
+  никогда не удаляется и не считается подтверждённой для гейта Desktop. Факты: CLI сам подаёт в
+  формулу `NFC(realpath(cwd))` (2.1.232 — прогон, 2.1.255 — strings и прогон верификатора), поэтому
+  ядро делает NFC, а realpath — CLI; `CLAUDE_CODE_PROJECT_DIR_NAME` принимает только
+  `[A-Za-z0-9_-]{1,64}` минус device-имена и молча откатывается на формулу, значит enc всегда
+  `[A-Za-z0-9_-]+` — [claudeCode/projectDirEncoding.md](../claudeCode/projectDirEncoding.md).
 
 ## Живая сессия: никогда не перелинковывать
 
@@ -171,8 +180,12 @@ git-transport («ClaudeSync», рабочее имя движка, ставше�
 ## Имя стора
 
 - **Обязан** выводить имя от `git rev-parse --path-format=absolute --git-common-dir`:
-  `basename(dirname(commondir))` для репо, worktree и подкаталогов; сабмодуль — по пути после
-  `.git/modules/`; вне git — `basename(cwd)`; `cwd=/` → `root`; коллизии — `nameOverrides` в
+  `basename(dirname(commondir))` для репо, worktree и подкаталогов; сабмодуль — последний компонент
+  пути после `.git/modules/` (имя сабмодуля; standalone-клон того же репозитория — отдельный стор);
+  вне git — `basename(cwd)`; корень ФС — ошибка `rootCwd`, лечение только `ignoreCwd` (реализация
+  2026-09-02 заменила унаследованное от git-дизайна `cwd=/ → root`: у строки не было своего «почему»,
+  а стор `root` слил бы `/` Mac, `D:\` и UNC-корни всех машин в одну память; единственный реальный
+  корень — раннер VibeDub — владелец игнорирует); коллизии — `nameOverrides` в
   `config.json`. Почему: `--show-toplevel` в linked worktree возвращает сам worktree → отдельные сторы
   `.claude/worktrees/<name>`, невидимые с другой машины (перепроверено: 6 дескрипторов с cwd под
   `.claude/worktrees/` — 5 VibeIDE, 1 Undercut, у всех `originCwd` = корень репо; researchReport насчитал
@@ -184,10 +197,38 @@ git-transport («ClaudeSync», рабочее имя движка, ставше�
 - Край, найденный при проверке (в источниках его нет; перепроверено 2026-09-02): `VibeIDE/.claude/worktrees/
   recursing-cannon-5da42a/.git` = `gitdir: D:/Projects/VibeCode/VibeIDE/.git/worktrees/…` — worktree создан
   на Windows, на Mac `git rev-parse` в нём падает с `fatal: not a git repository`, и фолбэк `basename(cwd)`
-  даст стор `recursing-cannon-5da42a`. Фикстурный тест на worktree/подкаталог/сабмодуль/не-git
-  обязателен — без него «гарантированный тихий форк».
-- Остаточный риск: одноимённые не-git каталоги на двух машинах сливаются в один стор и одну память
-  (VibeSweep — не git, проверено); `nameOverrides` — ручной предохранитель.
+  дал бы стор `recursing-cannon-5da42a`. **Закрыт правилом** (2026-09-02): при отказе git `.git`-файл
+  разбирается в ядре — `gitdir:` (относительный — от каталога файла), хвостовая пара `worktrees/<id>`
+  отбрасывается, далее те же правила commondir → `VibeIDE`; `.git`-каталог при отказе git → ошибка
+  `gitRefused`, никогда basename. Фикстурный тест на worktree/подкаталог/сабмодуль/не-git —
+  `fixtures/naming/resolveStoreName.json`.
+- **Обязан** принимать commondir от git, только если он объясняет ближайшую запись `.git` над cwd
+  (каталог равен commondir, либо gitdir из файла после отбрасывания `worktrees/<id>` равен
+  commondir); иначе — ошибка `gitLayoutMismatch`. Почему: git 2.50.1 молча проходит сквозь битый
+  (`HEAD` = мусор) или пустой вложенный `.git` к внешнему репо с exit 0 и слушается утёкшего
+  `GIT_DIR` — проекты уехали бы в чужой стор ([git/repoLayoutEdges.md](../git/repoLayoutEdges.md)).
+  CLI спавнит git со снятым окружением `GIT_*` (кроме `GIT_EXEC_PATH`) и `GIT_CONFIG_*`. Bare,
+  `--separate-git-dir` → `unrecognizedGitLayout`; git не запустился → `gitUnavailable`; обход `.git`
+  не завершился → `dotGitProbeFailed` — всё ошибки, не basename.
+- **Обязан** сравнивать компоненты путей после NFC (git печатает форму на диске — NFD на APFS,
+  CLI отдаёт NFC; байтовое сравнение даёт ложный `gitLayoutMismatch` на любом не-ASCII пути) и
+  выводить имена сторов в NFC. **Обязан** считать имена, равные после NFC и свёртки регистра,
+  одним стором и переиспользовать существующее написание (список существующих — из дерева git,
+  не readdir: APFS схлопывает регистр); два существующих написания одного ключа →
+  `storeNameCollision`. Почему:
+  `VibeIDE` и `vibeide` сливаются в дереве git без конфликта, а на APFS/NTFS ложатся в один
+  каталог — `MEMORY.md` перезаписан, `git add -A` навсегда падает на file alias (прогон
+  верификатора). Имя валидируется для APFS/NTFS/git (`.git`, `CON`, `aux.js`, хвостовая точка,
+  255 байт) — невалидное имя падает здесь, а не ломает клон на второй машине.
+- `nameOverrides` и `ignoreCwd` — один glob-диалект (литерал = точное совпадение, поддерево —
+  явным `/**`); override без литерального компонента (`/`, `/**`, `D:/**`) и `\` в шаблоне →
+  `configInvalid`; два override на один cwd → `ambiguousOverride`. Почему: префиксная семантика с
+  приоритетом над git превращала бы опечатку в одном ключе в ложное слияние всех проектов машины.
+- `CLAUDE_CODE_PROJECT_DIR_NAME`, не равная имени стора, → ничего не линковать (`Ignored`):
+  Desktop ставит `session` для 3p-сессий — один каталог на все cwd.
+- Остаточный риск: одноимённые не-git каталоги и одноимённые сабмодули разных суперпроектов на
+  двух машинах сливаются в один стор и одну память (VibeSweep — не git, проверено); `nameOverrides` —
+  ручной предохранитель; doctor предупреждает о сабмодуле, питаемом разными суперпроектами (этап 2).
 - **Никогда** не переписывает содержимое транскриптов; перевод путей `{ROOT}/rel` — только в данных
   outbox (`history.project`, `cwd/originCwd` дескрипторов).
 

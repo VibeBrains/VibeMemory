@@ -149,7 +149,8 @@ file-history, history.jsonl, ide, logs, backups, .session_ingress_token}` плю
 ## `projects/<enc>`: основной путь видит ссылки, фолбэк-сканы — нет
 
 Кодирование: `yTo(e)=e.replace(/[^a-zA-Z0-9]/g,"-")`, при >200 символов — обрез до 200 + `-` +
-base36-хеш (fix 2.1.224); Desktop перед этим делает NFC. Локально 28 симлинков →
+base36-хеш (fix 2.1.224); CLI и Desktop перед этим делают `NFC(realpath)` — формула и эталоны в
+[projectDirEncoding.md](projectDirEncoding.md). Локально 28 симлинков →
 `~/OneDrive/.claude/projects/-ALL-/<repo>` (353 транскрипта; du 493 MB в research, 913 MB на 12:50 —
 зависит от гидрации OneDrive, 67 файлов всё ещё blocks=0), реальных каталогов 0 на момент research — в
 12:39 появился один: `-Volumes-Storage-Projects-VibeCode-VibeMemory` (jsonl + `<sid>/` + `memory/`) от

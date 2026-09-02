@@ -25,8 +25,24 @@
 
 ## Этап 1 — ядро (`vibememory-core`, чистая логика)
 
-- [ ] Кодировка имени проекта и имя стора: `enc` из `transcript_path`, `--git-common-dir`
-  (worktree, подкаталоги, сабмодули), `nameOverrides`, `ignoreCwd`.
+- [x] **Каркас Rust workspace** — ✅ (2026-09-02, next) `Cargo.toml` (members `crates/*`, edition
+  2024, workspace.lints), `Cargo.lock`, пин `rust-toolchain.toml` 1.97.1, `clippy.toml` с гейтом
+  «ядро без I/O» (`disallowed-methods`/`-types`), `.gitattributes` (`eol=lf`, `fixtures/** -text`),
+  крейт `vibememory-core`; `cli` и `mcp` появятся со своими чекбоксами. Грабли тулчейна —
+  [knowledge/rust/crossPlatformPaths.md](knowledge/rust/crossPlatformPaths.md).
+- [x] **Кодировка имени проекта и имя стора** — ✅ (2026-09-02, next) модуль `naming`: `enc` из
+  `transcript_path` с алфавитом `[A-Za-z0-9_-]`; `encode_cwd` по точной формуле CLI (NFC, UTF-16,
+  хэш) как предсказание для реконсилера; имя стора от commondir (репо / подкаталог / linked
+  worktree / сабмодуль = последний компонент) с проверкой, что commondir объясняет ближайший
+  `.git`; `.git`-указатель при отказе git (закрыт край Windows-worktree); корень → `rootCwd`;
+  `nameOverrides`/`ignoreCwd` в одном glob-диалекте; идентичность имени NFC+регистр;
+  `CLAUDE_CODE_PROJECT_DIR_NAME`. 144 кейса в `fixtures/naming/` (observed / computed /
+  unverified), спека — [manuals/configSpec.md](manuals/configSpec.md), мануал —
+  [manuals/namingFixtures.md](manuals/namingFixtures.md), факты —
+  [knowledge/claudeCode/projectDirEncoding.md](knowledge/claudeCode/projectDirEncoding.md),
+  [knowledge/git/repoLayoutEdges.md](knowledge/git/repoLayoutEdges.md). Изменены решения
+  architecture §3/§4/§5/§7 и engineConstraints «Имя стора» (root → ошибка; ссылка никогда не
+  перенацеливается автоматически).
 - [ ] Слияние JSONL: union по `uuid`, побайтный режим для строк без `uuid`, стабильная
   сортировка по `timestamp`, обрезка оборванной последней строки. Фикстуры реального формата
   2.1.255: `queue-operation`, `bridge-session`, `custom-title`, `summary` без uuid,
@@ -43,14 +59,34 @@
 - [ ] `install / doctor / status`: git-конфиг, `.gitattributes`, ссылки по `links.json`, копии
   `CLAUDE.md`/`settings.json`, skills-ссылка, LaunchAgent тика.
 - [ ] Хук `SessionStart`: ссылка первым шагом и без сети; copy-import реального каталога;
-  правило «не перелинковывать под живой сессией».
+  правило «не перелинковывать под живой сессией»; существующая ссылка на другую цель не
+  перенацеливается автоматически (`additionalContext` + `vibememory relink` только без живого sid);
+  `hookInputInvalid` при неразборе stdin; `CLAUDE_CODE_PROJECT_DIR_NAME` из окружения хука.
+- [ ] Спавн git для имени стора: `env_remove` всех `GIT_*` (кроме `GIT_EXEC_PATH`), таймаут →
+  `Unavailable`; обязательный обход `.git` вверх до корня тома с таймаутом → `Unknown`.
+- [ ] Канонизация cwd в хуке и реконсилере — одна функция, один раз, до всего (обход `.git`,
+  `current_dir` спавна git, `NamingInput.cwd`, `links.json`, `encode_cwd`): Mac — realpath;
+  Windows — снять `\\?\` (verbatim ломает и слаг, и сверку), junction/subst не разворачивать
+  (как `fs.realpathSync` Node, которым ключует Windows-CLI); проверка — этап 4.
+- [ ] `existing` для идентичности имён — `git ls-tree -d --name-only HEAD:projects` ∪ readdir с
+  дедупликацией (readdir на APFS не видит коллизию регистра); имена, не проходящие
+  `StoreName::parse`, пропускаются с предупреждением doctor, а не валят хук.
+- [ ] Тип `LinkRecord` для `links.json` в ядре (`enc`, `name`, `cwd` как `{ROOT}/rel` + синтаксис,
+  `source`, `predicted`, `confirmedBy`) с `Serialize`/`Deserialize` и фикстурой реального файла;
+  сравнение имён — по `StoreName::key()`.
 - [ ] Хуки `Stop` (commit сразу, push с дебаунсом), `SessionEnd`, `UserPromptSubmit`-гейт
   свежести с блоком промпта; heartbeat `live.json`, `tails.json`.
 - [ ] Merge-драйверы как подкоманды; `merge --abort` при сбое; никогда commit при `MERGE_HEAD`.
-- [ ] Тик: fetch → merge (только неживые здесь сессии) → push → реконсилер ссылок → импорт
+- [ ] Тик: fetch → merge (только неживые здесь сессии; fail-closed при коллизии ключа имён
+  `projects/*`) → push → реконсилер ссылок (только при совпадении локального разрешения с
+  `links.json`, иначе `nameDisagreement`; предсказанные ссылки помечены и не удаляются) → импорт
   outbox → push-guard → стейл-локи.
 - [ ] Outbox: `history.jsonl` под mkdir-локом CLI, `tasks/`, дескрипторы Desktop.
-- [ ] Спека `config.json` и мануал «как начать» в `docs/manuals/` + закомментированный образец.
+- [ ] Спека `config.json` (дописать `machineId`, `remote`, `roots`, `desktopStore` в
+  [manuals/configSpec.md](manuals/configSpec.md)); полный тип конфига в CLI с
+  `deny_unknown_fields` и `#[serde(flatten)] RawNamingConfig` (опечатка в ключе → `configInvalid`,
+  не «правил нет»); мануал «как начать» + засев закомментированного образца; doctor: git ≥ 2.31 (`--path-format`; по памяти, сверить по RelNotes), предупреждение о
+  сабмодуле, питаемом разными суперпроектами, список предсказанных ссылок без подтверждения.
 - [ ] Измерить гонку SessionStart ↔ первая запись в интерактивном TTY (сейчас измерено только
   `-p` и stream-json).
 
@@ -60,7 +96,8 @@
 - [ ] `migrate --from ~/OneDrive/.claude`: dry-run, sha256-манифест 100 % (иначе стоп),
   `-ALL-/<repo>` → `projects/<repo>`, конфликт-копии (`*-MacMini.jsonl`, `*-GPD-WIN-MAX2.*`,
   `MEMORY-GPD-WIN-MAX2.md`) сводятся по uuid / keep-both, дескрипторы → outbox с починкой
-  `cliSessionId`, конфиги → `config/`. Перед этим — пин OneDrive-папки (932 файла
+  `cliSessionId`, конфиги → `config/`; стор `-` (cwd `/`, сессии раннера) не импортируется —
+  остаётся в архиве, `/` в `ignoreCwd`. Перед этим — пин OneDrive-папки (932 файла
   дегидрированы).
 - [ ] Перевод 28 ссылок в стор, Desktop-стор из симлинка в реальный каталог, проверка resume в
   терминале и Desktop.
