@@ -49,8 +49,10 @@ Rust workspace: `crates/vibememory-core` (стор, имена, слияние �
 
 ## Правила кода (следствия `clippy::pedantic` под `-D warnings`)
 
-- Имена и кодировка — только через `fixtures/naming/*.json` ([manuals/namingFixtures.md](docs/manuals/namingFixtures.md)):
-  новых unit-тестов с литеральными путями не заводить.
+- Имена и кодировка — только через `fixtures/naming/*.json` ([manuals/namingFixtures.md](docs/manuals/namingFixtures.md)),
+  слияние — только через `fixtures/merge/mergeScenarios.json` ([manuals/mergeFixtures.md](docs/manuals/mergeFixtures.md)):
+  новых unit-тестов с литеральными путями и строками транскрипта не заводить. Транскрипт-фикстуры
+  попадают в репозиторий только через `fixtures/merge/scrubTranscript.js`.
 - В `tests/*.rs` нет `pub`-элементов (`missing_docs`), а хелперы теста разрешают panic/unwrap
   файловым `#![allow(...)]` (ключи `allow-*-in-tests` их не видят).
 - Не-ASCII в Rust-литералах — только `\u{…}` (`unicode_not_nfc`); идентификаторы и CamelCase в

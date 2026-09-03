@@ -29,7 +29,7 @@
 | `plugins/` (6,4 MB, GCS-снимок official marketplace без `.git`; `installed_plugins.json` нет) | горячее + path-keyed (`installLocation`) | автопереустановка (`officialMarketplaceAutoInstalled=true`); активные плагины — `@inline` через claude.ai | нет | вредно: гонка записи `known_marketplaces.json` (changelog); корень `plugins/` переопределяет документированная `CLAUDE_CODE_PLUGIN_CACHE_DIR` |
 | `downloads/` (пусто), `todos/` (4×`[]`, legacy) | горячее | не пишутся | да | нет |
 | `projects/<enc(cwd)>/` | path-keyed имя | CLI при первом промпте (не при SessionStart) | — | имя — нет, содержимое — да |
-| `projects/…/<sid>.jsonl`, `<sid>/{tool-results,subagents,workflows,custom-title.json}` | общее, append-only | оба клиента, open/append/close (`lsof` живых pid: 0 открытых `.jsonl`) | да, uuid | максимальная: это и есть `--resume`; вред только живому файлу (прецедент 08.08) |
+| `projects/…/<sid>.jsonl`, `<sid>/{tool-results,subagents,workflows,custom-title.json}` | общее, дозапись + редкие удаления записей самим CLI | оба клиента, open/append/close (`lsof` живых pid: 0 открытых `.jsonl`) | да, uuid | максимальная: это и есть `--resume`; вред только живому файлу (прецедент 08.08) |
 | `projects/…/memory/` (`MEMORY.md`, темы, `sessions/*.md`) | общее | модель в каждой сессии | нет | ценно; официально «machine-local»; в VibeIDE уже `MEMORY-GPD-WIN-MAX2.md` |
 | `tasks/<sid>/N.json` (584 KB, 11 сессий, 1…22 файла) | общее | CLI при TaskList; подметает cleanupPeriodDays | да | умеренно: нужен `--resume` той сессии |
 | `tasks/<sid>/.lock` (0 B), `history.jsonl.lock` (mkdir-лок, stale 10 с) | lock | advisory | да / нет | нет |

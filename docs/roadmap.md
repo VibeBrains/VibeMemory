@@ -43,11 +43,22 @@
   [knowledge/git/repoLayoutEdges.md](knowledge/git/repoLayoutEdges.md). Изменены решения
   architecture §3/§4/§5/§7 и engineConstraints «Имя стора» (root → ошибка; ссылка никогда не
   перенацеливается автоматически).
-- [ ] Слияние JSONL: union по `uuid`, побайтный режим для строк без `uuid`, стабильная
-  сортировка по `timestamp`, обрезка оборванной последней строки. Фикстуры реального формата
-  2.1.255: `queue-operation`, `bridge-session`, `custom-title`, `summary` без uuid,
-  `journal.jsonl`, обрывок строки. Гейт: слияние двух чистых одномашинных транскриптов не
-  отклоняется (немонотонные timestamp и осиротевшие `parentUuid` — норма).
+- [x] **Слияние JSONL** — ✅ (2026-09-03, next) модуль `merge::jsonl`: ключ строки
+  `(uuid | байты, номер копии)`, база решает членство (удаление уважается, кроме предков выживших
+  записей), локальный файл — хребет, чужие строки вставляются после последней общей записи с
+  `uuid` и чередуются по `timestamp`, отбрасывается только хвост без `\n`, целые неразбираемые
+  строки сохраняются; двойная правка одной записи — keep-both; постусловие проверяется в ядре
+  (единственная ошибка драйвера); отчёт для лога и `additionalContext` (`fork.visible` по правилу
+  читателя, `beforeBoundary`, `resurrected`, `absent`). 50 кейсов в `fixtures/merge/` на пяти
+  записанных транскриптах (2.1.232, 2.1.255, сайдчейн, журнал), скраббер `scrubTranscript.js`,
+  спека — [manuals/mergeFixtures.md](manuals/mergeFixtures.md). Ожидания сверены с независимой
+  эталонной реализацией (Python): 50/50 совпали побайтно; её фаззинг (9000 троек) нашёл
+  предусловие «закона второй машины». Замеры: 28 МБ — 190 мс, строка 64 МиБ — 87 мс. Исправлены
+  факты и решения в transcriptFormat («лист по max timestamp» → ветвь последнего `last-prompt`;
+  неразбираемые строки не отбрасываются; таблица версий 2.1.232/255/258), engineConstraints
+  («Слияние», «Свежесть», «Часы»), architecture §1/§2/§3/§4/§8/§11, idea.md, hooksLifecycle,
+  configDirLayout; новые записи [knowledge/git/mergeDriverInvocation.md](knowledge/git/mergeDriverInvocation.md)
+  и [knowledge/design/jsonlMergeInvariants.md](knowledge/design/jsonlMergeInvariants.md).
 - [ ] Keep-both для `memory/*.md` с карантином и текстом подсказки.
 - [ ] Модель записей памяти и проекция в markdown (туда и обратно).
 - [ ] Guard дескрипторов Desktop (не понижать `cliSessionId`, не экспортировать
@@ -75,8 +86,26 @@
   `source`, `predicted`, `confirmedBy`) с `Serialize`/`Deserialize` и фикстурой реального файла;
   сравнение имён — по `StoreName::key()`.
 - [ ] Хуки `Stop` (commit сразу, push с дебаунсом), `SessionEnd`, `UserPromptSubmit`-гейт
-  свежести с блоком промпта; heartbeat `live.json`, `tails.json`.
-- [ ] Merge-драйверы как подкоманды; `merge --abort` при сбое; никогда commit при `MERGE_HEAD`.
+  свежести с блоком промпта; heartbeat `live.json`, `tails.json`. Снимок живого транскрипта —
+  `snapshot_boundary` ядра и `git hash-object -w --stdin`, никакого `git add` живого файла и
+  `git add -A`; «грязно» меряется индексом против HEAD.
+- [ ] Relocation транскрипта при `cd` (2.1.258 создаёт **реальный** каталог `projects/<enc>` и
+  переносит файл с сайдкарами): проверить на живой сессии и решить, что делает хук и тик.
+- [ ] Merge-драйверы как подкоманды: `vibememory merge-driver %O %A %B` → `merge_jsonl`, результат
+  в `%A`, exit 0; ошибка постусловия → `%A` не трогать, exit 1 → `git merge --abort`;
+  `merge.*.recursive` не задавать; `merge --abort` при сбое; никогда commit при `MERGE_HEAD`.
+  Отчёт слияния — строкой в лог, `fork.visible`/`beforeBoundary` — в `additionalContext`,
+  `dropped`/`resurrected`/`opaque`/`conflicts`/`truncated`/`absent` — предупреждения doctor.
+- [ ] `forget <sid>` против дописи на другой машине даёт конфликт дерева **мимо** драйвера
+  (`DU`/`UD`): тик обязан abort'ить, удаление — через outbox-tombstone, не через слияние.
+- [ ] Проверить вживую: показывает ли список resume вторую ветвь после слияния вилки; поведение
+  драйвера под Git Bash на Windows (CRLF в `%O`/`%A`/`%B` при `* -text`); criss-cross с
+  виртуальным предком через наш драйвер.
+- [ ] `tails.json` (`lastUuid`, число строк) и текст `additionalContext` берут разбор головы и
+  правило листа из ядра — вынести `merge::jsonl` наружу одной функцией тогда же, чтобы правило
+  «лист = последний `last-prompt`» не было реализовано дважды.
+- [ ] Doctor: fail-closed проверка `core.autocrlf=false` и `* -text` в `.gitattributes` стора —
+  иначе редактор с CRLF задваивает блок состояния (ключ строки без `uuid` — её байты).
 - [ ] Тик: fetch → merge (только неживые здесь сессии; fail-closed при коллизии ключа имён
   `projects/*`) → push → реконсилер ссылок (только при совпадении локального разрешения с
   `links.json`, иначе `nameDisagreement`; предсказанные ссылки помечены и не удаляются) → импорт
@@ -100,7 +129,8 @@
   остаётся в архиве, `/` в `ignoreCwd`. Перед этим — пин OneDrive-папки (932 файла
   дегидрированы).
 - [ ] Перевод 28 ссылок в стор, Desktop-стор из симлинка в реальный каталог, проверка resume в
-  терминале и Desktop.
+  терминале и Desktop; искусственная вилка одной сессии на двух клонах → resume в терминале
+  (2.1.232) и в Desktop: видима ли ветвь последнего `last-prompt`, сверить с `fork.visible`.
 - [ ] Гигиена OneDrive: `.credentials.json` удалить (+корзина, +версии), отозвать гранты;
   `~/OneDrive/.claude` → архив read-only, снести через 30 дней после Windows.
 - [ ] Вывод `init.sh` / `sync-repo`: раскопки → замысел в knowledge → удаление; скилл

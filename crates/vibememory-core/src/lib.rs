@@ -5,4 +5,5 @@
 //! I/O and feeds the results in; the fixtures under `fixtures/` are recordings of real formats
 //! and real tool output.
 
+pub mod merge;
 pub mod naming;

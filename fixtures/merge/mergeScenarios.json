@@ -1,0 +1,3777 @@
+{
+  "description": "Three-way merge scenarios for Claude Code JSONL transcripts. Inputs are windows of the recorded fixtures in this directory, optionally patched by the listed ops; expectations were produced by the reference implementation and checked against the merge postcondition and the four algebraic laws.",
+  "cliVersions": [
+    "2.1.232",
+    "2.1.255",
+    "2.1.258"
+  ],
+  "transcripts": {
+    "cli255Session.jsonl": {
+      "cliVersion": "2.1.255",
+      "recordedAt": "2026-09-02",
+      "lines": 272
+    },
+    "cli255Isolated.jsonl": {
+      "cliVersion": "2.1.255",
+      "recordedAt": "2026-09-02",
+      "lines": 10
+    },
+    "cli232Isolated.jsonl": {
+      "cliVersion": "2.1.232",
+      "recordedAt": "2026-09-02",
+      "lines": 8
+    },
+    "cli255Subagent.jsonl": {
+      "cliVersion": "2.1.255",
+      "recordedAt": "2026-09-02",
+      "lines": 12
+    },
+    "cli255Journal.jsonl": {
+      "cliVersion": "2.1.255",
+      "recordedAt": "2026-09-02",
+      "lines": 16
+    }
+  },
+  "cases": [
+    {
+      "id": "identicalSession",
+      "provenance": "observed",
+      "note": "Merging cli255Session.jsonl (272 lines of a real Desktop session) with itself returns the file untouched: the merge is the identity on an unchanged tree.",
+      "input": {
+        "base": {
+          "file": "cli255Session.jsonl"
+        },
+        "ours": {
+          "file": "cli255Session.jsonl"
+        },
+        "theirs": {
+          "file": "cli255Session.jsonl"
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              272
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "identicalIsolated255",
+      "provenance": "observed",
+      "note": "Merging cli255Isolated.jsonl (10 lines written by CLI 2.1.255) with itself returns the file untouched: the merge is the identity on an unchanged tree.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl"
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl"
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl"
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              10
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "identicalIsolated232",
+      "provenance": "observed",
+      "note": "Merging cli232Isolated.jsonl (8 lines written by CLI 2.1.232) with itself returns the file untouched: the merge is the identity on an unchanged tree.",
+      "input": {
+        "base": {
+          "file": "cli232Isolated.jsonl"
+        },
+        "ours": {
+          "file": "cli232Isolated.jsonl"
+        },
+        "theirs": {
+          "file": "cli232Isolated.jsonl"
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              8
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "identicalSubagent",
+      "provenance": "observed",
+      "note": "Merging cli255Subagent.jsonl (12 sidechain lines) with itself returns the file untouched: the merge is the identity on an unchanged tree.",
+      "input": {
+        "base": {
+          "file": "cli255Subagent.jsonl"
+        },
+        "ours": {
+          "file": "cli255Subagent.jsonl"
+        },
+        "theirs": {
+          "file": "cli255Subagent.jsonl"
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              12
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "identicalJournal",
+      "provenance": "observed",
+      "note": "Merging cli255Journal.jsonl (16 journal lines that carry neither uuid nor timestamp) with itself returns the file untouched: the merge is the identity on an unchanged tree.",
+      "input": {
+        "base": {
+          "file": "cli255Journal.jsonl"
+        },
+        "ours": {
+          "file": "cli255Journal.jsonl"
+        },
+        "theirs": {
+          "file": "cli255Journal.jsonl"
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              16
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "oursSuperset",
+      "provenance": "observed",
+      "note": "Ours kept writing while theirs stayed at line 29 of cli255Session: every line ours added is new to base, so the result is ours byte for byte.",
+      "input": {
+        "base": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            29
+          ]
+        },
+        "ours": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ]
+        },
+        "theirs": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            29
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              52
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 23,
+            "addedUuid": 17,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "theirsSuperset",
+      "provenance": "observed",
+      "note": "The mirror of oursSuperset: theirs holds lines 29..51 of cli255Session that ours never saw, and they are appended after the shared spine.",
+      "input": {
+        "base": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            29
+          ]
+        },
+        "ours": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            29
+          ]
+        },
+        "theirs": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              29
+            ]
+          },
+          {
+            "from": "theirs",
+            "lines": [
+              29,
+              52
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 23,
+            "addedUuid": 17,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "reconstructTails",
+      "provenance": "computed",
+      "note": "The roadmap gate. base is cli255Session[0,37), ours advanced to line 45, theirs advanced to line 51 without ever seeing lines 37..44; the merge must rebuild the original window [0,51) exactly.",
+      "input": {
+        "base": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            37
+          ]
+        },
+        "ours": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            45
+          ]
+        },
+        "theirs": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            51
+          ],
+          "ops": [
+            {
+              "dropLines": [
+                37,
+                38,
+                39,
+                40,
+                41,
+                42,
+                43,
+                44
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              45
+            ]
+          },
+          {
+            "from": "theirs",
+            "lines": [
+              37,
+              43
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 8,
+            "addedUuid": 8,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 6,
+            "addedUuid": 6,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": {
+            "tailSide": "theirs",
+            "visible": null
+          }
+        }
+      }
+    },
+    {
+      "id": "reconstructTailsInterleaved",
+      "provenance": "computed",
+      "note": "reconstructTails with the tails swapped between the machines: the later tail is on ours, so theirs' lines 37..44 have to be spliced in ahead of it by timestamp and the original window [0,51) still comes out.",
+      "input": {
+        "base": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            37
+          ]
+        },
+        "ours": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            51
+          ],
+          "ops": [
+            {
+              "dropLines": [
+                37,
+                38,
+                39,
+                40,
+                41,
+                42,
+                43,
+                44
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            45
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              37
+            ]
+          },
+          {
+            "from": "theirs",
+            "lines": [
+              37,
+              45
+            ]
+          },
+          {
+            "from": "ours",
+            "lines": [
+              37,
+              43
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 6,
+            "addedUuid": 6,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 8,
+            "addedUuid": 8,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": {
+            "tailSide": "ours",
+            "visible": null
+          }
+        }
+      }
+    },
+    {
+      "id": "splitNonMonotonicPair",
+      "provenance": "computed",
+      "note": "cli255Session lines 147 (queue-operation at 10:49:05.366) and 148 (system/stop_hook_summary stamped 10:13:52.463, half an hour earlier) land on different machines; head merge sorts by timestamp, so 148 is emitted before 146 and 147 and the recorded pair order is not preserved.",
+      "input": {
+        "base": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            144,
+            147
+          ]
+        },
+        "ours": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            144,
+            148
+          ]
+        },
+        "theirs": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            144,
+            151
+          ],
+          "ops": [
+            {
+              "dropLines": [
+                3
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              2
+            ]
+          },
+          {
+            "from": "theirs",
+            "pick": [
+              3
+            ]
+          },
+          {
+            "from": "ours",
+            "lines": [
+              2,
+              4
+            ]
+          },
+          {
+            "from": "theirs",
+            "lines": [
+              4,
+              6
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 3,
+            "addedUuid": 2,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "forkInterleavedPrompts",
+      "provenance": "computed",
+      "note": "Both machines added turns from the same base cli255Session[0,46): theirs wrote lines 46..51 (10:07:11) and ours lines 56..59 (10:07:18), so theirs' block is spliced in before ours' and tail_side (ours) differs from visible (theirs, the side holding the leaf of the last last-prompt).",
+      "input": {
+        "base": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            46
+          ]
+        },
+        "ours": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            60
+          ],
+          "ops": [
+            {
+              "dropLines": [
+                46,
+                47,
+                48,
+                49,
+                50,
+                51,
+                52,
+                53,
+                54,
+                55
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              46
+            ]
+          },
+          {
+            "from": "theirs",
+            "lines": [
+              46,
+              52
+            ]
+          },
+          {
+            "from": "ours",
+            "lines": [
+              46,
+              50
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 4,
+            "addedUuid": 4,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 6,
+            "addedUuid": 5,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": {
+            "tailSide": "ours",
+            "visible": "theirs"
+          }
+        }
+      }
+    },
+    {
+      "id": "forkVisibleSide",
+      "provenance": "computed",
+      "note": "A fork whose newest last-prompt (cli255Session line 29) still points at a leaf both machines share, so visible is null even though tail_side is theirs: neither branch owns what the reader is looking at.",
+      "input": {
+        "base": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            34
+          ]
+        },
+        "ours": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            38
+          ]
+        },
+        "theirs": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            60
+          ],
+          "ops": [
+            {
+              "dropLines": [
+                34,
+                35,
+                36,
+                37,
+                38,
+                39,
+                40,
+                41,
+                42,
+                43,
+                44,
+                45,
+                46,
+                47,
+                48,
+                49,
+                50,
+                51,
+                52,
+                53,
+                54,
+                55
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              38
+            ]
+          },
+          {
+            "from": "theirs",
+            "lines": [
+              34,
+              38
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 4,
+            "addedUuid": 4,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 4,
+            "addedUuid": 4,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": {
+            "tailSide": "theirs",
+            "visible": null
+          }
+        }
+      }
+    },
+    {
+      "id": "tornTailOurs",
+      "provenance": "computed",
+      "note": "An interrupted write left ours 200 bytes short, so cli255Session line 44 stands as 541 unterminated bytes; the partial line is discarded, counted in ours.truncated, and the whole record comes back from theirs.",
+      "input": {
+        "base": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            44
+          ]
+        },
+        "ours": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            45
+          ],
+          "ops": [
+            {
+              "cutTailBytes": 200
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            45
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              44
+            ]
+          },
+          {
+            "from": "theirs",
+            "pick": [
+              44
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 541,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 1,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "tornTailBoth",
+      "provenance": "computed",
+      "note": "Both sides were cut mid line at once (ours inside line 44, theirs inside line 50); each side's torn record is simply missing and the merge still joins the two intact prefixes.",
+      "input": {
+        "base": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            37
+          ]
+        },
+        "ours": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            45
+          ],
+          "ops": [
+            {
+              "cutTailBytes": 200
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            51
+          ],
+          "ops": [
+            {
+              "dropLines": [
+                37,
+                38,
+                39,
+                40,
+                41,
+                42,
+                43,
+                44
+              ]
+            },
+            {
+              "cutTailBytes": 150
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              44
+            ]
+          },
+          {
+            "from": "theirs",
+            "lines": [
+              37,
+              42
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 541,
+            "added": 7,
+            "addedUuid": 7,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 305,
+            "added": 5,
+            "addedUuid": 5,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": {
+            "tailSide": "theirs",
+            "visible": null
+          }
+        }
+      }
+    },
+    {
+      "id": "noFinalNewline",
+      "provenance": "computed",
+      "note": "cli255Isolated with the final newline shaved off on all three sides: the last record becomes a tail and is dropped everywhere, so a file that never got its newline loses its last line.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl",
+          "ops": [
+            {
+              "cutTailBytes": 1
+            }
+          ]
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "ops": [
+            {
+              "cutTailBytes": 1
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "ops": [
+            {
+              "cutTailBytes": 1
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              9
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 149,
+          "ours": {
+            "truncated": 149,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 149,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "wholeFileNoNewline",
+      "provenance": "computed",
+      "note": "Ours is a single line with no newline at all, so it contains zero records and 161 tail bytes; the merge takes everything from theirs instead of treating the fragment as data.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            1
+          ],
+          "ops": [
+            {
+              "cutTailBytes": 1
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            3
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "theirs",
+            "lines": [
+              0,
+              3
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 161,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 3,
+            "addedUuid": 1,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "absentSideGuard",
+      "provenance": "computed",
+      "note": "Ours is empty while base is a full cli255Isolated: without the absent side guard every base line would read as deleted by ours, so the guard drops base and the session survives whole.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl"
+        },
+        "ours": {
+          "empty": true
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl"
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "theirs",
+            "lines": [
+              0,
+              10
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": true
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 10,
+            "addedUuid": 6,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "foreignFileGuard",
+      "provenance": "observed",
+      "note": "Ours is two queue-operation lines from cli232Isolated -- a different machine's file with no uuid in common with base; it is treated as absent, base is dropped, and both files are kept side by side rather than one erasing the other.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl"
+        },
+        "ours": {
+          "file": "cli232Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl"
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              2
+            ]
+          },
+          {
+            "from": "theirs",
+            "lines": [
+              0,
+              10
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 2,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": true
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 10,
+            "addedUuid": 6,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "stateMultiplicity",
+      "provenance": "computed",
+      "note": "The byte identical atis-latch line of cli255Isolated appears three times on ours and five times on theirs: copies are keyed by ordinal, so the result holds five, the maximum, and not eight.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            7,
+            8
+          ],
+          "ops": [
+            {
+              "duplicateLine": 0
+            },
+            {
+              "duplicateLine": 0
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            7,
+            8
+          ],
+          "ops": [
+            {
+              "duplicateLine": 0
+            },
+            {
+              "duplicateLine": 0
+            },
+            {
+              "duplicateLine": 0
+            },
+            {
+              "duplicateLine": 0
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              3
+            ]
+          },
+          {
+            "from": "theirs",
+            "lines": [
+              3,
+              5
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 2,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "deletedByOursThreeWay",
+      "provenance": "computed",
+      "note": "Ours deleted cli255Session line 50 while theirs still has it; the line is nobody's parent, so the deletion is respected and counted as dropped on theirs.",
+      "input": {
+        "base": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ]
+        },
+        "ours": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ],
+          "ops": [
+            {
+              "dropLines": [
+                50
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              51
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 1,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "deletedByTheirsThreeWay",
+      "provenance": "computed",
+      "note": "The mirror of deletedByOursThreeWay: theirs deleted line 50, the deletion wins over ours' copy, and the counter lands on ours.",
+      "input": {
+        "base": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ]
+        },
+        "ours": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ]
+        },
+        "theirs": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ],
+          "ops": [
+            {
+              "dropLines": [
+                50
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              50
+            ]
+          },
+          {
+            "from": "ours",
+            "pick": [
+              51
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 1,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "deletedAncestorResurrected",
+      "provenance": "computed",
+      "note": "Ours deleted cli255Session line 49, whose uuid 7240275d is the parentUuid of the surviving line 50; the ancestor is resurrected from theirs, so the chain is never broken -- note it comes back after its own child, because head merge places it by timestamp.",
+      "input": {
+        "base": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ]
+        },
+        "ours": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ],
+          "ops": [
+            {
+              "dropLines": [
+                49
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              50
+            ]
+          },
+          {
+            "from": "theirs",
+            "pick": [
+              49
+            ]
+          },
+          {
+            "from": "ours",
+            "pick": [
+              50
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 1,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "deletedAncestorResurrectedMirror",
+      "provenance": "computed",
+      "note": "The mirror of deletedAncestorResurrected: theirs is the side that deleted the ancestor, so the line comes back from ours and the resurrection is counted on the ours side.",
+      "input": {
+        "base": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ]
+        },
+        "ours": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ]
+        },
+        "theirs": {
+          "file": "cli255Session.jsonl",
+          "lines": [
+            0,
+            52
+          ],
+          "ops": [
+            {
+              "dropLines": [
+                49
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              52
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 1,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "absentSideGuardTheirs",
+      "provenance": "computed",
+      "note": "The mirror of absentSideGuard: theirs is the empty side, so the guard marks theirs absent and the whole session survives from ours.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl"
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl"
+        },
+        "theirs": {
+          "empty": true
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              10
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 10,
+            "addedUuid": 6,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": true
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "theirsModifiedSameUuid",
+      "provenance": "computed",
+      "note": "Line 6 of cli255Isolated was rewritten on theirs only; base arbitrates -- ours still equals base, so theirs' bytes win with no conflict.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl"
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl"
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "ops": [
+            {
+              "setLine": [
+                6,
+                "{\"parentUuid\":\"ecb529a2-36b6-4e0c-8226-349962267c1e\",\"isSidechain\":false,\"attachment\":{\"type\":\"total_tokens_reminder\",\"text\":\"<editedOnTheirs>\"},\"type\":\"attachment\",\"uuid\":\"b57ffa34-8913-48c3-8e52-bcaee6bf71fb\",\"timestamp\":\"2026-09-02T15:41:30.069Z\",\"userType\":\"external\",\"entrypoint\":\"claude-desktop\",\"cwd\":\"/private/tmp/scratch/work\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\",\"version\":\"2.1.255\",\"gitBranch\":\"<scrubbed>\"}"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              6
+            ]
+          },
+          {
+            "from": "theirs",
+            "pick": [
+              6
+            ]
+          },
+          {
+            "from": "ours",
+            "lines": [
+              7,
+              10
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "conflictSameUuid",
+      "provenance": "computed",
+      "note": "Both machines rewrote line 6 of cli255Isolated differently; neither matches base, so both bytes are kept, ours first, and the uuid is reported as a conflict instead of one edit being lost.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl"
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "ops": [
+            {
+              "setLine": [
+                6,
+                "{\"parentUuid\":\"ecb529a2-36b6-4e0c-8226-349962267c1e\",\"isSidechain\":false,\"attachment\":{\"type\":\"total_tokens_reminder\",\"text\":\"<editedOnOurs>\"},\"type\":\"attachment\",\"uuid\":\"b57ffa34-8913-48c3-8e52-bcaee6bf71fb\",\"timestamp\":\"2026-09-02T15:41:30.069Z\",\"userType\":\"external\",\"entrypoint\":\"claude-desktop\",\"cwd\":\"/private/tmp/scratch/work\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\",\"version\":\"2.1.255\",\"gitBranch\":\"<scrubbed>\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "ops": [
+            {
+              "setLine": [
+                6,
+                "{\"parentUuid\":\"ecb529a2-36b6-4e0c-8226-349962267c1e\",\"isSidechain\":false,\"attachment\":{\"type\":\"total_tokens_reminder\",\"text\":\"<editedOnTheirs>\"},\"type\":\"attachment\",\"uuid\":\"b57ffa34-8913-48c3-8e52-bcaee6bf71fb\",\"timestamp\":\"2026-09-02T15:41:30.069Z\",\"userType\":\"external\",\"entrypoint\":\"claude-desktop\",\"cwd\":\"/private/tmp/scratch/work\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\",\"version\":\"2.1.255\",\"gitBranch\":\"<scrubbed>\"}"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              7
+            ]
+          },
+          {
+            "from": "theirs",
+            "pick": [
+              6
+            ]
+          },
+          {
+            "from": "ours",
+            "lines": [
+              7,
+              10
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [
+            "b57ffa34-8913-48c3-8e52-bcaee6bf71fb"
+          ],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "keepBothConverges",
+      "provenance": "computed",
+      "note": "The keep-both output of conflictSameUuid is merged again against the original base and against a machine that only has its own half: the pair survives unchanged and no new conflict is reported, so keep-both is a fixed point rather than a doubling loop.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl"
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "ops": [
+            {
+              "duplicateLine": 6
+            },
+            {
+              "setLine": [
+                6,
+                "{\"parentUuid\":\"ecb529a2-36b6-4e0c-8226-349962267c1e\",\"isSidechain\":false,\"attachment\":{\"type\":\"total_tokens_reminder\",\"text\":\"<editedOnOurs>\"},\"type\":\"attachment\",\"uuid\":\"b57ffa34-8913-48c3-8e52-bcaee6bf71fb\",\"timestamp\":\"2026-09-02T15:41:30.069Z\",\"userType\":\"external\",\"entrypoint\":\"claude-desktop\",\"cwd\":\"/private/tmp/scratch/work\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\",\"version\":\"2.1.255\",\"gitBranch\":\"<scrubbed>\"}"
+              ]
+            },
+            {
+              "setLine": [
+                7,
+                "{\"parentUuid\":\"ecb529a2-36b6-4e0c-8226-349962267c1e\",\"isSidechain\":false,\"attachment\":{\"type\":\"total_tokens_reminder\",\"text\":\"<editedOnTheirs>\"},\"type\":\"attachment\",\"uuid\":\"b57ffa34-8913-48c3-8e52-bcaee6bf71fb\",\"timestamp\":\"2026-09-02T15:41:30.069Z\",\"userType\":\"external\",\"entrypoint\":\"claude-desktop\",\"cwd\":\"/private/tmp/scratch/work\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\",\"version\":\"2.1.255\",\"gitBranch\":\"<scrubbed>\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "ops": [
+            {
+              "setLine": [
+                6,
+                "{\"parentUuid\":\"ecb529a2-36b6-4e0c-8226-349962267c1e\",\"isSidechain\":false,\"attachment\":{\"type\":\"total_tokens_reminder\",\"text\":\"<editedOnOurs>\"},\"type\":\"attachment\",\"uuid\":\"b57ffa34-8913-48c3-8e52-bcaee6bf71fb\",\"timestamp\":\"2026-09-02T15:41:30.069Z\",\"userType\":\"external\",\"entrypoint\":\"claude-desktop\",\"cwd\":\"/private/tmp/scratch/work\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\",\"version\":\"2.1.255\",\"gitBranch\":\"<scrubbed>\"}"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              11
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 1,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "keepBothAsymmetricReedit",
+      "provenance": "computed",
+      "note": "One half of a settled keep-both pair is edited again on ours only; base arbitration applies per ordinal, so the edited half takes ours' bytes while the untouched half stays put.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl",
+          "ops": [
+            {
+              "duplicateLine": 6
+            },
+            {
+              "setLine": [
+                6,
+                "{\"parentUuid\":\"ecb529a2-36b6-4e0c-8226-349962267c1e\",\"isSidechain\":false,\"attachment\":{\"type\":\"total_tokens_reminder\",\"text\":\"<editedOnOurs>\"},\"type\":\"attachment\",\"uuid\":\"b57ffa34-8913-48c3-8e52-bcaee6bf71fb\",\"timestamp\":\"2026-09-02T15:41:30.069Z\",\"userType\":\"external\",\"entrypoint\":\"claude-desktop\",\"cwd\":\"/private/tmp/scratch/work\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\",\"version\":\"2.1.255\",\"gitBranch\":\"<scrubbed>\"}"
+              ]
+            },
+            {
+              "setLine": [
+                7,
+                "{\"parentUuid\":\"ecb529a2-36b6-4e0c-8226-349962267c1e\",\"isSidechain\":false,\"attachment\":{\"type\":\"total_tokens_reminder\",\"text\":\"<editedOnTheirs>\"},\"type\":\"attachment\",\"uuid\":\"b57ffa34-8913-48c3-8e52-bcaee6bf71fb\",\"timestamp\":\"2026-09-02T15:41:30.069Z\",\"userType\":\"external\",\"entrypoint\":\"claude-desktop\",\"cwd\":\"/private/tmp/scratch/work\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\",\"version\":\"2.1.255\",\"gitBranch\":\"<scrubbed>\"}"
+              ]
+            }
+          ]
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "ops": [
+            {
+              "duplicateLine": 6
+            },
+            {
+              "setLine": [
+                6,
+                "{\"parentUuid\":\"ecb529a2-36b6-4e0c-8226-349962267c1e\",\"isSidechain\":false,\"attachment\":{\"type\":\"total_tokens_reminder\",\"text\":\"<editedOnOurs>\"},\"type\":\"attachment\",\"uuid\":\"b57ffa34-8913-48c3-8e52-bcaee6bf71fb\",\"timestamp\":\"2026-09-02T15:41:30.069Z\",\"userType\":\"external\",\"entrypoint\":\"claude-desktop\",\"cwd\":\"/private/tmp/scratch/work\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\",\"version\":\"2.1.255\",\"gitBranch\":\"<scrubbed>\"}"
+              ]
+            },
+            {
+              "setLine": [
+                7,
+                "{\"parentUuid\":\"ecb529a2-36b6-4e0c-8226-349962267c1e\",\"isSidechain\":false,\"attachment\":{\"type\":\"total_tokens_reminder\",\"text\":\"<editedOnTheirs>\"},\"type\":\"attachment\",\"uuid\":\"b57ffa34-8913-48c3-8e52-bcaee6bf71fb\",\"timestamp\":\"2026-09-02T15:41:30.069Z\",\"userType\":\"external\",\"entrypoint\":\"claude-desktop\",\"cwd\":\"/private/tmp/scratch/work\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\",\"version\":\"2.1.255\",\"gitBranch\":\"<scrubbed>\"}"
+              ]
+            },
+            {
+              "setLine": [
+                6,
+                "{\"parentUuid\":\"ecb529a2-36b6-4e0c-8226-349962267c1e\",\"isSidechain\":false,\"attachment\":{\"type\":\"total_tokens_reminder\",\"text\":\"<editedAgainOnOurs>\"},\"type\":\"attachment\",\"uuid\":\"b57ffa34-8913-48c3-8e52-bcaee6bf71fb\",\"timestamp\":\"2026-09-02T15:41:30.069Z\",\"userType\":\"external\",\"entrypoint\":\"claude-desktop\",\"cwd\":\"/private/tmp/scratch/work\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\",\"version\":\"2.1.255\",\"gitBranch\":\"<scrubbed>\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "ops": [
+            {
+              "duplicateLine": 6
+            },
+            {
+              "setLine": [
+                6,
+                "{\"parentUuid\":\"ecb529a2-36b6-4e0c-8226-349962267c1e\",\"isSidechain\":false,\"attachment\":{\"type\":\"total_tokens_reminder\",\"text\":\"<editedOnOurs>\"},\"type\":\"attachment\",\"uuid\":\"b57ffa34-8913-48c3-8e52-bcaee6bf71fb\",\"timestamp\":\"2026-09-02T15:41:30.069Z\",\"userType\":\"external\",\"entrypoint\":\"claude-desktop\",\"cwd\":\"/private/tmp/scratch/work\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\",\"version\":\"2.1.255\",\"gitBranch\":\"<scrubbed>\"}"
+              ]
+            },
+            {
+              "setLine": [
+                7,
+                "{\"parentUuid\":\"ecb529a2-36b6-4e0c-8226-349962267c1e\",\"isSidechain\":false,\"attachment\":{\"type\":\"total_tokens_reminder\",\"text\":\"<editedOnTheirs>\"},\"type\":\"attachment\",\"uuid\":\"b57ffa34-8913-48c3-8e52-bcaee6bf71fb\",\"timestamp\":\"2026-09-02T15:41:30.069Z\",\"userType\":\"external\",\"entrypoint\":\"claude-desktop\",\"cwd\":\"/private/tmp/scratch/work\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\",\"version\":\"2.1.255\",\"gitBranch\":\"<scrubbed>\"}"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              11
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "dupUuidWithinSide",
+      "provenance": "computed",
+      "note": "Line 6 of cli255Isolated appears twice on ours with the same uuid; the ordinal keeps the two copies apart, so the duplicate is preserved rather than silently collapsed.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl"
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "ops": [
+            {
+              "duplicateLine": 6
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl"
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              11
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 1,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "dupUuidFieldIsOpaque",
+      "provenance": "computed",
+      "note": "A constructed line carrying two top-level uuid fields fails to parse, so it is keyed by its bytes and counted as opaque instead of claiming either uuid.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-000000000011\",\"uuid\":\"aaaaaaaa-0000-4000-8000-000000000012\",\"timestamp\":\"2026-09-02T12:00:00.000Z\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              3
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 1,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "dupReadKeyIsOpaque",
+      "provenance": "computed",
+      "note": "A constructed line with a duplicated type field: type is one of the fields the merge reads, so the head cannot be trusted and the line is kept by its bytes (opaque) instead of claiming its uuid.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"type\":\"user\",\"type\":\"assistant\",\"uuid\":\"aaaaaaaa-0000-4000-8000-000000000013\",\"timestamp\":\"2026-09-02T12:00:00.000Z\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              3
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 1,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "dupUnreadKeyIsNormal",
+      "provenance": "computed",
+      "note": "A constructed line with a duplicated cwd field: the merge never reads cwd, so the duplicate is ignored (last value wins, as in the reader) and the line keeps its uuid identity.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"type\":\"user\",\"cwd\":\"/private/tmp/scratch/work\",\"cwd\":\"/private/tmp/scratch/other\",\"uuid\":\"aaaaaaaa-0000-4000-8000-000000000014\",\"timestamp\":\"2026-09-02T12:00:00.000Z\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              3
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 1,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "arrayLineIsOpaque",
+      "provenance": "computed",
+      "note": "A top-level JSON array is never parsed -- the head gate only opens on '{' -- so it is keyed by bytes and counted as opaque even though it is valid JSON holding a uuid.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "[{\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-000000000013\"}]"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              3
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 1,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "outOfRangeNumberInHeadIsOpaque",
+      "provenance": "computed",
+      "note": "A timestamp of 1e400 puts the number out of range, which is a parse error; the line goes opaque and keeps its bytes as its key rather than being rounded to infinity.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-000000000017\",\"timestamp\":1e400}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              3
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 1,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "invalidUtf8LineIsOpaque",
+      "provenance": "computed",
+      "note": "Raw bytes ending in a lone 0xD0 -- a line cut in the middle of a two byte character and then newline-terminated by the next write -- are not UTF-8, so the line is opaque and survives byte for byte.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ],
+          "ops": [
+            {
+              "appendHex": "7b2274797065223a2275736572222c2275756964223a2261616161616161612d303030302d343030302d383030302d303030303030303030303131222c2274657874223a22d00a"
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              3
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 1,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "opaqueLineKept",
+      "provenance": "computed",
+      "note": "A line that is not JSON at all is still carried into the result: the merge never discards bytes it cannot read.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "not json at all -- a half written line from a crashed writer"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              3
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 1,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "crlfLineKept",
+      "provenance": "unverified",
+      "note": "The same record written by a Windows writer carries a trailing CR; the CR is JSON whitespace so the line still parses and keeps its uuid key, but the bytes differ from theirs, and base arbitration hands the CRLF form through unchanged while theirs' own new turn is still appended after it.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-000000000014\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-000000000014\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}\r"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-000000000014\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"parentUuid\":\"aaaaaaaa-0000-4000-8000-000000000014\",\"isSidechain\":false,\"type\":\"assistant\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000e\",\"timestamp\":\"2026-09-02T12:00:04.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "pick": [
+              0
+            ]
+          },
+          {
+            "from": "theirs",
+            "pick": [
+              1
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 1,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "bomLineIsOpaque",
+      "provenance": "unverified",
+      "note": "A line prefixed with a UTF-8 BOM never reaches the parser -- its first byte is not '{' -- so it is keyed by bytes, counted as opaque, and still kept.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ],
+          "ops": [
+            {
+              "appendHex": "efbbbf7b22706172656e7455756964223a6e756c6c2c22697353696465636861696e223a66616c73652c2274797065223a2275736572222c2275756964223a2261616161616161612d303030302d343030302d383030302d303030303030303030303135222c2274696d657374616d70223a22323032362d30392d30325431323a30303a30302e3030305a222c2273657373696f6e4964223a2231313131313131312d313131312d343131312d383131312d313131313131313131313131227d0a"
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              3
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 1,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "emptyLinePreserved",
+      "provenance": "computed",
+      "note": "A bare empty line between two records is a record of its own, keyed by its (empty) bytes: it is opaque, it is preserved, and it does not shift the keys of its neighbours.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "",
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-000000000016\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            2
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              4
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 2,
+            "addedUuid": 1,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 1,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "beforeBoundaryCounted",
+      "provenance": "computed",
+      "note": "Ours holds a system/compact_boundary; theirs added a turn stamped before it and another after it. Head merge places the earlier one ahead of the boundary, which before_boundary counts as one -- that is the line a compact would have hidden from the reader.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"parentUuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"isSidechain\":false,\"type\":\"system\",\"subtype\":\"compact_boundary\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000b\",\"timestamp\":\"2026-09-02T12:00:05.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"parentUuid\":\"aaaaaaaa-0000-4000-8000-00000000000b\",\"isSidechain\":false,\"type\":\"assistant\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000c\",\"timestamp\":\"2026-09-02T12:00:10.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"parentUuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"isSidechain\":false,\"type\":\"assistant\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000d\",\"timestamp\":\"2026-09-02T12:00:02.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"parentUuid\":\"aaaaaaaa-0000-4000-8000-00000000000d\",\"isSidechain\":false,\"type\":\"assistant\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000e\",\"timestamp\":\"2026-09-02T12:00:07.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "pick": [
+              0
+            ]
+          },
+          {
+            "from": "theirs",
+            "pick": [
+              1
+            ]
+          },
+          {
+            "from": "ours",
+            "pick": [
+              1
+            ]
+          },
+          {
+            "from": "theirs",
+            "pick": [
+              2
+            ]
+          },
+          {
+            "from": "ours",
+            "pick": [
+              2
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 2,
+            "addedUuid": 2,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 2,
+            "addedUuid": 2,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 1,
+          "resultEqualsOurs": false,
+          "fork": {
+            "tailSide": "ours",
+            "visible": "ours"
+          }
+        }
+      }
+    },
+    {
+      "id": "journal2way",
+      "provenance": "computed",
+      "note": "cli255Journal has neither uuid nor timestamp, so every line is keyed by its bytes and every at is empty; ours holds lines 0..7 and theirs 0..3 plus 8..15, and the whole journal comes back in order.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Journal.jsonl",
+          "lines": [
+            0,
+            8
+          ]
+        },
+        "theirs": {
+          "file": "cli255Journal.jsonl",
+          "lines": [
+            0,
+            16
+          ],
+          "ops": [
+            {
+              "dropLines": [
+                4,
+                5,
+                6,
+                7
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              8
+            ]
+          },
+          {
+            "from": "theirs",
+            "lines": [
+              4,
+              12
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 4,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 8,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "subagent2way",
+      "provenance": "computed",
+      "note": "The same two-way append on cli255Subagent, whose lines all carry isSidechain true: a sidechain transcript merges by the same rules with no special casing.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Subagent.jsonl",
+          "lines": [
+            0,
+            8
+          ]
+        },
+        "theirs": {
+          "file": "cli255Subagent.jsonl",
+          "lines": [
+            0,
+            12
+          ],
+          "ops": [
+            {
+              "dropLines": [
+                4,
+                5,
+                6,
+                7
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              8
+            ]
+          },
+          {
+            "from": "theirs",
+            "lines": [
+              4,
+              8
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 4,
+            "addedUuid": 4,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 4,
+            "addedUuid": 4,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": {
+            "tailSide": "theirs",
+            "visible": "theirs"
+          }
+        }
+      }
+    },
+    {
+      "id": "constructedStateLines",
+      "provenance": "computed",
+      "note": "State lines from other writers -- summary in both key orders, ai-title, tag, mode, relocated -- are keyed by bytes, so the two key orders of the same summary are two records and none of them is deduplicated.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"type\":\"summary\",\"summary\":\"<scrubbed>\",\"leafUuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\"}",
+                "{\"type\":\"ai-title\",\"aiTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"tag\",\"tag\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"leafUuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"summary\":\"<scrubbed>\",\"type\":\"summary\"}",
+                "{\"type\":\"mode\",\"mode\":\"default\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"relocated\",\"from\":\"/private/tmp/scratch/work\",\"to\":\"/private/tmp/scratch/moved\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              3
+            ]
+          },
+          {
+            "from": "theirs",
+            "lines": [
+              0,
+              3
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 3,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 3,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "deletedStateLineThreeWay",
+      "provenance": "computed",
+      "note": "The state block is rewritten on its own schedule by each machine: base holds four byte-identical custom-title lines, ours five and theirs three. A missing copy is not a deletion, so the result holds the larger count and nothing is reported as dropped.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              6
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "emptyUuidIsBytesKeyed",
+      "provenance": "computed",
+      "note": "A line whose uuid is the empty string is not a record: it is keyed by its bytes like any state line, so the two sides match it by copy number instead of by identity.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"uuid\":\"\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              2
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "boundaryFromTheirsCounted",
+      "provenance": "computed",
+      "note": "The compaction boundary comes from theirs this time: the reader reads the file, not its history, so every added record before that boundary is counted -- including the one ours added.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"parentUuid\":\"aaaaaaaa-0000-4000-8000-00000000000b\",\"isSidechain\":false,\"type\":\"assistant\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000c\",\"timestamp\":\"2026-09-02T12:00:10.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"parentUuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"isSidechain\":false,\"type\":\"assistant\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000d\",\"timestamp\":\"2026-09-02T12:00:02.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"parentUuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"isSidechain\":false,\"type\":\"system\",\"subtype\":\"compact_boundary\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000b\",\"timestamp\":\"2026-09-02T12:00:05.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "pick": [
+              0
+            ]
+          },
+          {
+            "from": "theirs",
+            "lines": [
+              1,
+              3
+            ]
+          },
+          {
+            "from": "ours",
+            "pick": [
+              1
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 1,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 2,
+            "addedUuid": 2,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 1,
+          "resultEqualsOurs": false,
+          "fork": {
+            "tailSide": "ours",
+            "visible": "ours"
+          }
+        }
+      }
+    },
+    {
+      "id": "boundaryClearsNamedLeaf",
+      "provenance": "computed",
+      "note": "A last-prompt names a leaf of theirs, but theirs also carries a compaction boundary stamped later, so head merge puts the boundary after the prompt. The reader clears the remembered leaf there, and the visible branch falls back to the tail of the file.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"parentUuid\":\"aaaaaaaa-0000-4000-8000-00000000000b\",\"isSidechain\":false,\"type\":\"assistant\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000c\",\"timestamp\":\"2026-09-02T12:00:10.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"last-prompt\",\"lastPrompt\":\"<scrubbed>\",\"leafUuid\":\"aaaaaaaa-0000-4000-8000-00000000000d\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"parentUuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"isSidechain\":false,\"type\":\"assistant\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000d\",\"timestamp\":\"2026-09-02T12:00:02.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"parentUuid\":\"aaaaaaaa-0000-4000-8000-00000000000d\",\"isSidechain\":false,\"type\":\"system\",\"subtype\":\"compact_boundary\",\"uuid\":\"ffffffff-0000-4000-8000-00000000cb02\",\"timestamp\":\"2026-09-02T12:00:15.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "pick": [
+              0
+            ]
+          },
+          {
+            "from": "theirs",
+            "pick": [
+              1
+            ]
+          },
+          {
+            "from": "ours",
+            "lines": [
+              1,
+              3
+            ]
+          },
+          {
+            "from": "theirs",
+            "pick": [
+              2
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 2,
+            "addedUuid": 1,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 2,
+            "addedUuid": 2,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 2,
+          "resultEqualsOurs": false,
+          "fork": {
+            "tailSide": "theirs",
+            "visible": "theirs"
+          }
+        }
+      }
+    },
+    {
+      "id": "ghostLeafIsUnknown",
+      "provenance": "computed",
+      "note": "The last last-prompt names a leaf that no record in the result carries: the visible branch is unknown rather than guessed from the tail.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"parentUuid\":\"aaaaaaaa-0000-4000-8000-00000000000b\",\"isSidechain\":false,\"type\":\"assistant\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000c\",\"timestamp\":\"2026-09-02T12:00:10.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"last-prompt\",\"lastPrompt\":\"<scrubbed>\",\"leafUuid\":\"ffffffff-0000-4000-8000-00000000dead\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"parentUuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"isSidechain\":false,\"type\":\"assistant\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000d\",\"timestamp\":\"2026-09-02T12:00:02.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "pick": [
+              0
+            ]
+          },
+          {
+            "from": "theirs",
+            "pick": [
+              1
+            ]
+          },
+          {
+            "from": "ours",
+            "lines": [
+              1,
+              3
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 2,
+            "addedUuid": 1,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 1,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": {
+            "tailSide": "ours",
+            "visible": null
+          }
+        }
+      }
+    },
+    {
+      "id": "crlfStateLineDuplicated",
+      "provenance": "unverified",
+      "note": "A Windows editor rewrote the state block with CRLF endings: a state line is keyed by its bytes, so the CR makes it a different line and the block is kept twice. Nothing is lost, but this is the price of touching the store with an editor -- doctor checks core.autocrlf=false and `* -text` for exactly this reason. Not verified on Windows.",
+      "input": {
+        "base": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "ours": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}"
+              ]
+            }
+          ]
+        },
+        "theirs": {
+          "file": "cli255Isolated.jsonl",
+          "lines": [
+            0,
+            0
+          ],
+          "ops": [
+            {
+              "appendLines": [
+                "{\"parentUuid\":null,\"isSidechain\":false,\"type\":\"user\",\"uuid\":\"aaaaaaaa-0000-4000-8000-00000000000a\",\"timestamp\":\"2026-09-02T12:00:00.000Z\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}",
+                "{\"type\":\"custom-title\",\"customTitle\":\"<scrubbed>\",\"sessionId\":\"11111111-1111-4111-8111-111111111111\"}\r"
+              ]
+            }
+          ]
+        }
+      },
+      "expect": {
+        "result": [
+          {
+            "from": "ours",
+            "lines": [
+              0,
+              2
+            ]
+          },
+          {
+            "from": "theirs",
+            "pick": [
+              1
+            ]
+          }
+        ],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 1,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": false,
+          "fork": null
+        }
+      }
+    },
+    {
+      "id": "emptyEverything",
+      "provenance": "computed",
+      "note": "All three inputs empty: the result is zero bytes and every counter is zero.",
+      "input": {
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "empty": true
+        },
+        "theirs": {
+          "empty": true
+        }
+      },
+      "expect": {
+        "result": [],
+        "report": {
+          "baseTruncated": 0,
+          "ours": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "theirs": {
+            "truncated": 0,
+            "added": 0,
+            "addedUuid": 0,
+            "dropped": 0,
+            "resurrected": 0,
+            "absent": false
+          },
+          "conflicts": [],
+          "opaque": 0,
+          "beforeBoundary": 0,
+          "resultEqualsOurs": true,
+          "fork": null
+        }
+      }
+    }
+  ]
+}
