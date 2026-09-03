@@ -3,3 +3,4 @@
 //! bytes in, bytes and a report out; the caller does the I/O.
 
 pub mod jsonl;
+pub mod keep_both;

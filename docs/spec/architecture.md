@@ -22,7 +22,7 @@ Git даёт то, чего облачная папка не даёт принц
 | Сущность | Где | Режим |
 |---|---|---|
 | `projects/<name>/<sid>.jsonl`, `<sid>/{tool-results,subagents,workflows,custom-title.json}` | стор (git) | union по ключу `(uuid \| байты, номер копии)`; база решает членство (удаление уважается, кроме предков выживших записей), но не порядок; локальный файл — хребет, чужие строки вставляются после последней общей записи с `uuid` и чередуются по `timestamp`; отбрасывается только хвост без `\n`; файлы ≥ 45 МБ не коммитятся (производные, для resume не нужны) |
-| `projects/<name>/memory/**` | стор | **записи** (§6); проекция в markdown; конфликт — keep-both в карантин + `additionalContext` «сведи», никогда LWW |
+| `projects/<name>/memory/**` | стор | **записи** (§6); проекция в markdown; арбитраж базой, а правка с обеих сторон — keep-both: наша версия в файле, чужая в `~/.vibememory/quarantine/` + `additionalContext` «сведи», никогда LWW |
 | `projects/<name>/.keep` | стор | защита от rmdir-свипера пустых каталогов |
 | `config/{CLAUDE.md,settings.json}`, `config/skills/` | стор | skills — ссылка; CLAUDE.md/settings.json — управляемые копии с 3-way по last-synced-хешам |
 | `machines/<id>/live.json` (sid → heartbeat, cwd), `tails.json` (sid → lastUuid, lines, at) | стор, пишет только владелец | межмашинная живость и свежесть — **основной** механизм при одновременной работе |
@@ -44,6 +44,8 @@ Git даёт то, чего облачная папка не даёт принц
   `core.symlinks=false`, `core.longpaths=true` (Win), `core.precomposeunicode=true` (Mac),
   `core.fsmonitor=true`, `core.untrackedCache=true`. LFS не используется.
 - `.gitattributes`: `* -text`, `* merge=vibememory-keepboth`, `**/*.jsonl merge=vibememory-jsonl`.
+  Второй драйвер — побайтный выбор целого файла (`merge::keep_both`): он покрывает и память, и
+  сайдкары сессии, включая бинарные, поэтому ничего не разбирает и маркеров не оставляет.
   Оба драйвера детерминированы, маркеров `<<<<` не бывает; исключение в драйвере →
   `git merge --abort`, запись в лог, `additionalContext` на следующем старте. При `MERGE_HEAD`
   движок никогда не коммитит. `merge.*.recursive` не задаётся: виртуального предка при criss-cross

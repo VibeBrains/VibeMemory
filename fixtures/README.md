@@ -11,7 +11,8 @@
 
 ## `merge/` — слияние JSONL-транскриптов
 
-- `mergeScenarios.json` — сценарии слияния; формат и порядок добавления кейса —
+- `mergeScenarios.json` — сценарии слияния транскриптов; `keepBothScenarios.json` — сценарии
+  выбора целых файлов (память и сайдкары). Формат и порядок добавления кейса —
   [docs/manuals/mergeFixtures.md](../docs/manuals/mergeFixtures.md).
 - `cli255Session.jsonl` (272 строки среза реальной сессии 2026-09-02, CLI 2.1.255),
   `cli255Isolated.jsonl` и `cli232Isolated.jsonl` (изолированные прогоны двух версий),

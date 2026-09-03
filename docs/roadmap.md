@@ -59,7 +59,16 @@
   («Слияние», «Свежесть», «Часы»), architecture §1/§2/§3/§4/§8/§11, idea.md, hooksLifecycle,
   configDirLayout; новые записи [knowledge/git/mergeDriverInvocation.md](knowledge/git/mergeDriverInvocation.md)
   и [knowledge/design/jsonlMergeInvariants.md](knowledge/design/jsonlMergeInvariants.md).
-- [ ] Keep-both для `memory/*.md` с карантином и текстом подсказки.
+- [x] **Keep-both для `memory/*.md` с карантином** — ✅ (2026-09-03, next) модуль
+  `merge::keep_both`: побайтный выбор целого файла для всего, что не транскрипт (память,
+  `custom-title.json`, `workflows/*.json`, бинарные `tool-results/**`) — арбитраж базой, а правка
+  с обеих сторон оставляет нашу версию в файле и откладывает чужую в `~/.vibememory/quarantine/`
+  под детерминированным именем из пути и штампа машины; отчёт различает память и сайдкар, чтобы
+  беспокоить владельца только из-за памяти. 18 кейсов в `fixtures/merge/keepBothScenarios.json`
+  (ожидаемые имена посчитаны независимой реализацией правила), инварианты проверяются на каждом
+  кейсе. Уточнены engineConstraints (путь карантина `~/.vibememory/`, арбитраж базой, действие на
+  все не-JSONL файлы) и architecture §2/§3; в knowledge — переопределяемый каталог памяти
+  (`autoMemoryDirectory`, `CLAUDE_CODE_REMOTE_MEMORY_DIR`) и серверный синк памяти Anthropic.
 - [ ] Модель записей памяти и проекция в markdown (туда и обратно).
 - [ ] Guard дескрипторов Desktop (не понижать `cliSessionId`, не экспортировать
   `transcriptUnavailable`), перевод cwd `{ROOT}/rel` ↔ локальный.
@@ -110,6 +119,12 @@
   `projects/*`) → push → реконсилер ссылок (только при совпадении локального разрешения с
   `links.json`, иначе `nameDisagreement`; предсказанные ссылки помечены и не удаляются) → импорт
   outbox → push-guard → стейл-локи.
+- [ ] Каталог памяти читать из настроек (`autoMemoryDirectory`, `CLAUDE_CODE_REMOTE_MEMORY_DIR`,
+  `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE`), а не выводить из `enc`: иначе стор синхронизирует пустой
+  каталог. Карантин: каталог `~/.vibememory/quarantine/`, штамп `<machineId>-<ISO-время>`, текст
+  `additionalContext` при `kind: memory`, лог и doctor при `kind: other`. Файл карантина
+  пишется `create_new` с суффиксом при совпадении имени: два разных пути могут дать одно имя
+  после санитизации (`a/b.md` и `a-b.md`), и отложенная версия не имеет права быть перезаписанной.
 - [ ] Outbox: `history.jsonl` под mkdir-локом CLI, `tasks/`, дескрипторы Desktop.
 - [ ] Спека `config.json` (дописать `machineId`, `remote`, `roots`, `desktopStore` в
   [manuals/configSpec.md](manuals/configSpec.md)); полный тип конфига в CLI с
@@ -147,6 +162,9 @@
 
 ## Этап 5 — MCP-память для любых агентов
 
+- [ ] Разобраться с серверной памятью самой Anthropic (мультисторы, манифесты, push-удаление —
+  есть во всех трёх версиях CLI): что из этого включено у владельца и как соотносится с
+  MCP-памятью VibeMemory. До этого пункта считать позиционирование этапа 5 не подтверждённым.
 - [ ] `vibememory-mcp`: `memory_search / get / save / update / delete`, `history_search`;
   stdio локально, HTTP с bearer на хосте.
 - [ ] Подключение и проверка: Claude Code, Codex, Gemini CLI, Cursor — одна память у всех.

@@ -1,0 +1,537 @@
+{
+  "description": "keep_both: choosing whole files in the store — memory documents and session side files. Expected quarantine names are computed by an independent implementation of the naming rule.",
+  "cases": [
+    {
+      "id": "identicalMemory",
+      "provenance": "computed",
+      "note": "Both machines hold the same memory index: the file is left exactly as it is.",
+      "input": {
+        "path": "projects/VibeIDE/memory/MEMORY.md",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "text": "# Memory\n\n"
+        },
+        "ours": {
+          "text": "# Memory\n\n- [Store naming](storeNaming.md) — why a submodule keeps its own name\n"
+        },
+        "theirs": {
+          "text": "# Memory\n\n- [Store naming](storeNaming.md) — why a submodule keeps its own name\n"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": null,
+        "report": {
+          "resolution": "identical",
+          "kind": "memory",
+          "oursBytes": 82,
+          "theirsBytes": 82
+        }
+      }
+    },
+    {
+      "id": "tookOursMemory",
+      "provenance": "computed",
+      "note": "Only this machine edited the index; the other still holds the base, so nothing is set aside.",
+      "input": {
+        "path": "projects/VibeIDE/memory/MEMORY.md",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "text": "# Memory\n\n"
+        },
+        "ours": {
+          "text": "# Memory\n\n- [Store naming](storeNaming.md) — why a submodule keeps its own name\n"
+        },
+        "theirs": {
+          "text": "# Memory\n\n"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": null,
+        "report": {
+          "resolution": "tookOurs",
+          "kind": "memory",
+          "oursBytes": 82,
+          "theirsBytes": 10
+        }
+      }
+    },
+    {
+      "id": "tookTheirsMemory",
+      "provenance": "computed",
+      "note": "Only the other machine edited the index: its version is written, and this is not a conflict.",
+      "input": {
+        "path": "projects/VibeIDE/memory/MEMORY.md",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "text": "# Memory\n\n"
+        },
+        "ours": {
+          "text": "# Memory\n\n"
+        },
+        "theirs": {
+          "text": "# Memory\n\n- [Store naming](storeNaming.md) — why a submodule keeps its own name\n- [Merge rules](mergeRules.md) — what the base decides\n"
+        }
+      },
+      "expect": {
+        "result": "theirs",
+        "quarantine": null,
+        "report": {
+          "resolution": "tookTheirs",
+          "kind": "memory",
+          "oursBytes": 10,
+          "theirsBytes": 139
+        }
+      }
+    },
+    {
+      "id": "keptBothMemoryIndex",
+      "provenance": "computed",
+      "note": "Both machines appended a different line to MEMORY.md: ours stays in the store and theirs is quarantined for the owner to reconcile.",
+      "input": {
+        "path": "projects/VibeIDE/memory/MEMORY.md",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "text": "# Memory\n\n"
+        },
+        "ours": {
+          "text": "# Memory\n\n- [Store naming](storeNaming.md) — why a submodule keeps its own name\n"
+        },
+        "theirs": {
+          "text": "# Memory\n\n- [Store naming](storeNaming.md) — why a submodule keeps its own name\n- [Merge rules](mergeRules.md) — what the base decides\n"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": {
+          "name": "projects-VibeIDE-memory-MEMORY-mac-main-2026-09-03T10-15-00Z.md"
+        },
+        "report": {
+          "resolution": "keptBoth",
+          "kind": "memory",
+          "oursBytes": 82,
+          "theirsBytes": 139
+        }
+      }
+    },
+    {
+      "id": "keptBothMemoryDocument",
+      "provenance": "computed",
+      "note": "The same memory document was rewritten on both machines; the frontmatter is irrelevant to the merge, the whole file is chosen.",
+      "input": {
+        "path": "projects/VibeIDE/memory/storeNaming.md",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "text": "---\nname: store-naming\ndescription: Where the store name comes from\nmetadata:\n  type: project\n---\n\nThe name follows the git common dir; see [[merge-rules]].\n"
+        },
+        "ours": {
+          "text": "---\nname: store-naming\ndescription: Where the store name comes from\nmetadata:\n  type: project\n---\n\nThe name follows the git common dir, never the worktree; see [[merge-rules]].\n"
+        },
+        "theirs": {
+          "text": "---\nname: store-naming\ndescription: Where the store name comes from\nmetadata:\n  type: project\n---\n\nThe name follows the git common directory; see [[merge-rules]].\n"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": {
+          "name": "projects-VibeIDE-memory-storeNaming-mac-main-2026-09-03T10-15-00Z.md"
+        },
+        "report": {
+          "resolution": "keptBoth",
+          "kind": "memory",
+          "oursBytes": 177,
+          "theirsBytes": 163
+        }
+      }
+    },
+    {
+      "id": "keptBothAddedOnBothSides",
+      "provenance": "computed",
+      "note": "The memory document was created on both machines at once: git hands the driver an empty base, and neither version may be dropped.",
+      "input": {
+        "path": "projects/VibeIDE/memory/storeNaming.md",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "text": "---\nname: store-naming\ndescription: Where the store name comes from\nmetadata:\n  type: project\n---\n\nThe name follows the git common dir; see [[merge-rules]].\n"
+        },
+        "theirs": {
+          "text": "---\nname: store-naming\ndescription: Where the store name comes from\nmetadata:\n  type: project\n---\n\nThe name follows the git common dir, never the worktree; see [[merge-rules]].\n"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": {
+          "name": "projects-VibeIDE-memory-storeNaming-mac-main-2026-09-03T10-15-00Z.md"
+        },
+        "report": {
+          "resolution": "keptBoth",
+          "kind": "memory",
+          "oursBytes": 157,
+          "theirsBytes": 177
+        }
+      }
+    },
+    {
+      "id": "keptBothSidecarJson",
+      "provenance": "computed",
+      "note": "A session side file was rewritten on both machines: the same rule applies, but the report calls it `other`, so the CLI logs it instead of asking the owner to merge memory.",
+      "input": {
+        "path": "projects/VibeIDE/8f2c/custom-title.json",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "text": "{\"customTitle\":\"Naming\"}"
+        },
+        "ours": {
+          "text": "{\"customTitle\":\"Naming rules\"}"
+        },
+        "theirs": {
+          "text": "{\"customTitle\":\"Store naming\"}"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": {
+          "name": "projects-VibeIDE-8f2c-custom-title-mac-main-2026-09-03T10-15-00Z.json"
+        },
+        "report": {
+          "resolution": "keptBoth",
+          "kind": "other",
+          "oursBytes": 30,
+          "theirsBytes": 30
+        }
+      }
+    },
+    {
+      "id": "binaryBytesPassThrough",
+      "provenance": "computed",
+      "note": "A rendered PDF page: the driver compares bytes and never looks inside, so binary content survives untouched.",
+      "input": {
+        "path": "projects/VibeIDE/8f2c/tool-results/pdf-91/page-2.jpg",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "hex": "ffd8ffe0"
+        },
+        "ours": {
+          "hex": "ffd8ffe1"
+        },
+        "theirs": {
+          "hex": "ffd80001"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": {
+          "name": "projects-VibeIDE-8f2c-tool-results-pdf-91-page-2-mac-main-2026-09-03T10-15-00Z.jpg"
+        },
+        "report": {
+          "resolution": "keptBoth",
+          "kind": "other",
+          "oursBytes": 4,
+          "theirsBytes": 4
+        }
+      }
+    },
+    {
+      "id": "crlfIsADifferentFile",
+      "provenance": "computed",
+      "note": "One machine saved the memory index through an editor that writes CRLF: the bytes differ, so this is a conflict like any other and nothing is silently normalized.",
+      "input": {
+        "path": "projects/VibeIDE/memory/MEMORY.md",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "text": "# Memory\n\n"
+        },
+        "ours": {
+          "text": "# Memory\n\n- [Store naming](storeNaming.md) — why a submodule keeps its own name\n"
+        },
+        "theirs": {
+          "text": "# Memory\r\n\r\n- [Store naming](storeNaming.md) — why a submodule keeps its own name\r\n"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": {
+          "name": "projects-VibeIDE-memory-MEMORY-mac-main-2026-09-03T10-15-00Z.md"
+        },
+        "report": {
+          "resolution": "keptBoth",
+          "kind": "memory",
+          "oursBytes": 82,
+          "theirsBytes": 85
+        }
+      }
+    },
+    {
+      "id": "emptyOnOneSide",
+      "provenance": "computed",
+      "note": "The other machine truncated the document to nothing: an empty file is a version like any other and is kept as such.",
+      "input": {
+        "path": "projects/VibeIDE/memory/storeNaming.md",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "text": "---\nname: store-naming\ndescription: Where the store name comes from\nmetadata:\n  type: project\n---\n\nThe name follows the git common dir; see [[merge-rules]].\n"
+        },
+        "ours": {
+          "text": "---\nname: store-naming\ndescription: Where the store name comes from\nmetadata:\n  type: project\n---\n\nThe name follows the git common dir, never the worktree; see [[merge-rules]].\n"
+        },
+        "theirs": {
+          "empty": true
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": {
+          "name": "projects-VibeIDE-memory-storeNaming-mac-main-2026-09-03T10-15-00Z.md"
+        },
+        "report": {
+          "resolution": "keptBoth",
+          "kind": "memory",
+          "oursBytes": 177,
+          "theirsBytes": 0
+        }
+      }
+    },
+    {
+      "id": "emptyEverywhere",
+      "provenance": "computed",
+      "note": "All three versions are empty: there is nothing to choose and nothing to set aside.",
+      "input": {
+        "path": "projects/VibeIDE/memory/storeNaming.md",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "empty": true
+        },
+        "ours": {
+          "empty": true
+        },
+        "theirs": {
+          "empty": true
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": null,
+        "report": {
+          "resolution": "identical",
+          "kind": "memory",
+          "oursBytes": 0,
+          "theirsBytes": 0
+        }
+      }
+    },
+    {
+      "id": "nameSanitized",
+      "provenance": "computed",
+      "note": "A project directory with a space and a document named in Cyrillic: every character outside [A-Za-z0-9._-] becomes a dash, so the quarantined name is safe on both file systems.",
+      "input": {
+        "path": "projects/Vibe IDE/memory/заметка.md",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "text": "base\n"
+        },
+        "ours": {
+          "text": "ours\n"
+        },
+        "theirs": {
+          "text": "theirs\n"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": {
+          "name": "projects-Vibe-IDE-memory---------mac-main-2026-09-03T10-15-00Z.md"
+        },
+        "report": {
+          "resolution": "keptBoth",
+          "kind": "memory",
+          "oursBytes": 5,
+          "theirsBytes": 7
+        }
+      }
+    },
+    {
+      "id": "nameKeepsExtensionlessFile",
+      "provenance": "computed",
+      "note": "A file without an extension (`.keep` has its dot first, so it is a name, not an extension): the stamp is simply appended.",
+      "input": {
+        "path": "projects/VibeIDE/.keep",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "text": ""
+        },
+        "ours": {
+          "text": "ours\n"
+        },
+        "theirs": {
+          "text": "theirs\n"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": {
+          "name": "projects-VibeIDE-.keep-mac-main-2026-09-03T10-15-00Z"
+        },
+        "report": {
+          "resolution": "keptBoth",
+          "kind": "other",
+          "oursBytes": 5,
+          "theirsBytes": 7
+        }
+      }
+    },
+    {
+      "id": "nameTruncatedFromTheHead",
+      "provenance": "computed",
+      "note": "A path too long for a file name loses its head, not its tail: what the file is stays readable, and the stamp keeps the name unique.",
+      "input": {
+        "path": "projects/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/memory/note.md",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "text": "base\n"
+        },
+        "ours": {
+          "text": "ours\n"
+        },
+        "theirs": {
+          "text": "theirs\n"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": {
+          "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-memory-note-mac-main-2026-09-03T10-15-00Z.md"
+        },
+        "report": {
+          "resolution": "keptBoth",
+          "kind": "memory",
+          "oursBytes": 5,
+          "theirsBytes": 7
+        }
+      }
+    },
+    {
+      "id": "stampSanitized",
+      "provenance": "computed",
+      "note": "The stamp comes from the caller (machine and moment) and is sanitized by the same rule, so a machine id with a slash cannot escape the quarantine directory.",
+      "input": {
+        "path": "projects/VibeIDE/memory/MEMORY.md",
+        "stamp": "mac/main 2026-09-03T10:15:00Z",
+        "base": {
+          "text": "base\n"
+        },
+        "ours": {
+          "text": "ours\n"
+        },
+        "theirs": {
+          "text": "theirs\n"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": {
+          "name": "projects-VibeIDE-memory-MEMORY-mac-main-2026-09-03T10-15-00Z.md"
+        },
+        "report": {
+          "resolution": "keptBoth",
+          "kind": "memory",
+          "oursBytes": 5,
+          "theirsBytes": 7
+        }
+      }
+    },
+    {
+      "id": "memoryDeeperInTree",
+      "provenance": "computed",
+      "note": "Any path under a `memory/` directory counts as memory, not just its top level.",
+      "input": {
+        "path": "projects/VibeIDE/memory/decisions/2026-09.md",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "text": "base\n"
+        },
+        "ours": {
+          "text": "ours\n"
+        },
+        "theirs": {
+          "text": "theirs\n"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": {
+          "name": "projects-VibeIDE-memory-decisions-2026-09-mac-main-2026-09-03T10-15-00Z.md"
+        },
+        "report": {
+          "resolution": "keptBoth",
+          "kind": "memory",
+          "oursBytes": 5,
+          "theirsBytes": 7
+        }
+      }
+    },
+    {
+      "id": "fileNamedMemoryIsNotMemory",
+      "provenance": "computed",
+      "note": "A side file that happens to be named `memory` is not a memory directory: the report calls it `other`, so the owner is not asked to reconcile a tool result.",
+      "input": {
+        "path": "projects/VibeIDE/8f2c/tool-results/memory",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "text": "base\n"
+        },
+        "ours": {
+          "text": "ours\n"
+        },
+        "theirs": {
+          "text": "theirs\n"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": {
+          "name": "projects-VibeIDE-8f2c-tool-results-memory-mac-main-2026-09-03T10-15-00Z"
+        },
+        "report": {
+          "resolution": "keptBoth",
+          "kind": "other",
+          "oursBytes": 5,
+          "theirsBytes": 7
+        }
+      }
+    },
+    {
+      "id": "quarantineNamesCanCollide",
+      "provenance": "computed",
+      "note": "Two different paths can sanitize to the same name (`a/b.md` and `a-b.md`): the core names deterministically and the CLI writes with create_new, adding a suffix instead of overwriting a set-aside version.",
+      "input": {
+        "path": "projects/X/memory/a-b.md",
+        "stamp": "mac-main-2026-09-03T10-15-00Z",
+        "base": {
+          "text": "base\n"
+        },
+        "ours": {
+          "text": "ours\n"
+        },
+        "theirs": {
+          "text": "theirs\n"
+        }
+      },
+      "expect": {
+        "result": "ours",
+        "quarantine": {
+          "name": "projects-X-memory-a-b-mac-main-2026-09-03T10-15-00Z.md"
+        },
+        "report": {
+          "resolution": "keptBoth",
+          "kind": "memory",
+          "oursBytes": 5,
+          "theirsBytes": 7
+        }
+      }
+    }
+  ]
+}

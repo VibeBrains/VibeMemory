@@ -1,5 +1,10 @@
 # Как работать с фикстурами слияния (`fixtures/merge/`)
 
+Здесь два набора: слияние транскриптов (`mergeScenarios.json`, драйвер
+`crates/vibememory-core/tests/merge_fixtures.rs`) и выбор целых файлов —
+памяти и сайдкаров (`keepBothScenarios.json`, драйвер `tests/keep_both_fixtures.rs`,
+[раздел ниже](#фикстуры-keep-both)).
+
 Все ожидания о слиянии JSONL живут в `fixtures/merge/mergeScenarios.json`; драйвер —
 `crates/vibememory-core/tests/merge_fixtures.rs`. Новое правило или новый край — это новый кейс,
 а не unit-тест с литеральными строками. Правила слияния и их обоснование —
@@ -116,3 +121,56 @@ cargo test -p vibememory-core --test merge_fixtures
    обновить таблицу версий в `transcriptFormat.md`.
 4. Добавить файл в `fixtures/merge/`, строку в `transcripts`, версию в `cliVersions` и кейс
    `identical` для нового файла; прогнать тесты.
+
+## Фикстуры keep-both
+
+`fixtures/merge/keepBothScenarios.json` описывает второй драйвер: он не сливает содержимое, а
+выбирает целый файл — память, `custom-title.json`, `workflows/*.json`, бинарные `tool-results/**`.
+Кейс:
+
+```json
+{
+  "id": "keptBothMemoryIndex",
+  "provenance": "computed",
+  "note": "Both machines appended a different line to MEMORY.md: ours stays in the store and theirs is quarantined.",
+  "input": {
+    "path": "projects/VibeIDE/memory/MEMORY.md",
+    "stamp": "mac-main-2026-09-03T10-15-00Z",
+    "base":   { "text": "# Memory\n\n" },
+    "ours":   { "text": "# Memory\n\n- [Store naming](storeNaming.md)\n" },
+    "theirs": { "text": "# Memory\n\n- [Merge rules](mergeRules.md)\n" }
+  },
+  "expect": {
+    "result": "ours",
+    "quarantine": { "name": "projects-VibeIDE-memory-MEMORY-mac-main-2026-09-03T10-15-00Z.md" },
+    "report": { "resolution": "keptBoth", "kind": "memory", "oursBytes": 46, "theirsBytes": 44 }
+  }
+}
+```
+
+| Поле | Значение |
+|---|---|
+| `input.path` | путь файла внутри стора (`%P` драйвера), разделитель `/` |
+| `input.stamp` | машина и момент от вызывающего; попадает в имя карантина и санитизируется тем же правилом |
+| `base` / `ours` / `theirs` | версия файла: `{"text": "…"}`, `{"hex": "ffd8…"}` для не-UTF-8 или `{"empty": true}` |
+| `expect.result` | какому входу обязаны быть равны байты результата: `"ours"`, `"theirs"` или `"base"` |
+| `expect.quarantine` | `null` либо `{"name": "…"}` — ожидаемое имя отложенной версии |
+| `expect.report` | полный отчёт: `resolution` (`identical`/`tookOurs`/`tookTheirs`/`keptBoth`), `kind` (`memory`/`other`), размеры |
+
+Имя карантина считается по правилу: путь без расширения, каждый символ вне `[A-Za-z0-9._-]` → `-`,
+затем `-<штамп>` и расширение; длиннее 255 байт — обрезается голова пути. Ожидаемые имена в
+фикстурах вычислены независимой реализацией этого правила
+(`scratchpad/keepBothScenarios.py` сессии), а не самим модулем.
+
+Имя детерминировано, но не уникально по построению: два разных пути могут санитизироваться в одно
+имя (`a/b.md` и `a-b.md`), поэтому карантин пишется `create_new` с суффиксом при совпадении — это
+обязанность CLI, кейс `quarantineNamesCanCollide` фиксирует само правило имени.
+
+Кроме записанного ожидания драйвер проверяет на каждом кейсе: результат равен одному из входов;
+карантин есть тогда и только тогда, когда `resolution` = `keptBoth`; имя — один компонент пути не
+длиннее 255 байт; повторное слияние результата ничего не меняет, и вторая машина сходится на нём.
+
+Метки `provenance` те же. Сейчас все кейсы `computed`: файлов памяти на этой машине нет
+(локальный `memory/` пуст, сторы остальных проектов лежат в OneDrive и читать их нельзя), поэтому
+содержимое сконструировано по документированному формату памяти и по константам `memory` /
+`MEMORY.md`, снятым из бинаря.

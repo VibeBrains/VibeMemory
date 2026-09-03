@@ -30,7 +30,7 @@
 | `downloads/` (пусто), `todos/` (4×`[]`, legacy) | горячее | не пишутся | да | нет |
 | `projects/<enc(cwd)>/` | path-keyed имя | CLI при первом промпте (не при SessionStart) | — | имя — нет, содержимое — да |
 | `projects/…/<sid>.jsonl`, `<sid>/{tool-results,subagents,workflows,custom-title.json}` | общее, дозапись + редкие удаления записей самим CLI | оба клиента, open/append/close (`lsof` живых pid: 0 открытых `.jsonl`) | да, uuid | максимальная: это и есть `--resume`; вред только живому файлу (прецедент 08.08) |
-| `projects/…/memory/` (`MEMORY.md`, темы, `sessions/*.md`) | общее | модель в каждой сессии | нет | ценно; официально «machine-local»; в VibeIDE уже `MEMORY-GPD-WIN-MAX2.md` |
+| `projects/…/memory/` (`MEMORY.md`, темы, `sessions/*.md`) | общее | модель в каждой сессии | нет | ценно; официально «machine-local»; в VibeIDE уже `MEMORY-GPD-WIN-MAX2.md`; каталог переопределяем (см. ниже) |
 | `tasks/<sid>/N.json` (584 KB, 11 сессий, 1…22 файла) | общее | CLI при TaskList; подметает cleanupPeriodDays | да | умеренно: нужен `--resume` той сессии |
 | `tasks/<sid>/.lock` (0 B), `history.jsonl.lock` (mkdir-лок, stale 10 с) | lock | advisory | да / нет | нет |
 | `history.jsonl` (174 B, 1 строка) | общее, path-keyed построчно | только терминальный CLI при отправке промпта; Desktop не пишет; `CLAUDE_CODE_SKIP_PROMPT_HISTORY=1` глушит вместе с транскриптами | нет | низкая ценность (стрелка вверх), гонки записи |
@@ -145,6 +145,23 @@ file-history, history.jsonl, ide, logs, backups, .session_ingress_token}` плю
 [#81392](https://github.com/anthropics/claude-code/issues/81392) (open). Ни в одном доке нет
 строки про синк каталога между машинами; про облачные папки — только bug-fix записи changelog
 (2.1.7, 2.1.72, 2.1.163, 2.1.181).
+
+## Каталог памяти переопределяем, и у Anthropic есть свой синк памяти
+
+Имена `memory` и `MEMORY.md` зашиты константами (strings 2.1.232/2.1.255/2.1.258), но путь не
+жёсткий: настройка `autoMemoryDirectory` (ищется по цепочке policy → flag → local → project →
+user settings) и переменные `CLAUDE_CODE_REMOTE_MEMORY_DIR` и `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE`
+уводят память из `projects/<enc>/memory/` куда угодно. Для движка это значит: путь памяти нельзя
+считать вычислимым из `enc` — его придётся читать из настроек (пункт этапа 2), иначе стор будет
+синхронизировать пустой каталог.
+
+Там же, во всех трёх версиях, живёт **серверная синхронизация памяти** самой Anthropic:
+мультисторы с манифестами (`team_memory_multistore_conflict`, `manifest_foreign_at_write`,
+`v5MemoryBase`, `mountDir`), сообщения вида «memory store has been archived server-side»,
+«server rejected a memory file that appears to contain a credential», push-удаление
+(`tengu_mem_push_delete_mode`). Документы адресуются путями (`/MEMORY.md`,
+`/feedback_testing.md`). Что именно из этого включено у владельца и как соотносится с идеей
+MCP-памяти VibeMemory — не выяснено; пункт исследования до этапа 5.
 
 ## `projects/<enc>`: основной путь видит ссылки, фолбэк-сканы — нет
 
