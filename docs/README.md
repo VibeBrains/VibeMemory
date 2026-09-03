@@ -8,6 +8,7 @@ docs/
 │   └── architecture.md     # целевая схема: стор, транспорт, хуки, тик, MCP, миграция
 ├── manuals/                # руководства «как сделать» по шагам
 │   ├── configSpec.md       # спека ~/.vibememory/config.json для модели (сейчас: nameOverrides, ignoreCwd)
+│   ├── exportFixtures.md   # как добавить кейс в fixtures/export/, метки provenance, мутационная проверка гейта
 │   ├── mergeFixtures.md    # как добавить кейс в fixtures/merge/, скраббер транскриптов, грамматика сценариев
 │   ├── namingFixtures.md   # как добавить кейс в fixtures/naming/, метки provenance, оракул, новая версия CLI
 │   └── memoryRecordsSpec.md # формат памяти: журнал, документ-проекция, правила расхождений

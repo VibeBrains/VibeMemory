@@ -1,0 +1,211 @@
+{
+  "description": "Что уходит с машины в стор, а что остаётся. Кейсы observed — пути из описи ~/.claude, снятой 2026-09-03; computed — те же правила на путях, которых на этой машине нет, но которые CLI создаёт на других (Windows, Desktop, Cowork) или может создать после обновления.",
+  "cases": [
+    {
+      "id": "projects-transcript",
+      "provenance": "observed",
+      "note": "Транскрипт проекта — ровно то, ради чего движок существует.",
+      "path": "projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/11111111-1111-4111-8111-111111111111.jsonl",
+      "expect": { "decision": "export" }
+    },
+    {
+      "id": "projects-memory",
+      "provenance": "observed",
+      "note": "Память проекта лежит внутри projects/ и уезжает вместе с ним.",
+      "path": "projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/memory/MEMORY.md",
+      "expect": { "decision": "export" }
+    },
+    {
+      "id": "skills-file",
+      "provenance": "observed",
+      "note": "Навыки общие для машин.",
+      "path": "skills/save-session/SKILL.md",
+      "expect": { "decision": "export" }
+    },
+    {
+      "id": "global-claude-md",
+      "provenance": "observed",
+      "note": "Глобальные инструкции едут с человеком.",
+      "path": "CLAUDE.md",
+      "expect": { "decision": "export" }
+    },
+    {
+      "id": "global-settings",
+      "provenance": "observed",
+      "note": "Настройки едут с человеком.",
+      "path": "settings.json",
+      "expect": { "decision": "export" }
+    },
+    {
+      "id": "hot-config",
+      "provenance": "observed",
+      "note": "Главный запрет проекта: .claude.json несёт pid живого процесса.",
+      "path": ".claude.json",
+      "expect": { "decision": "refuse", "refusal": "machineLocal" }
+    },
+    {
+      "id": "hot-config-backup",
+      "provenance": "observed",
+      "note": "Бэкапов .claude.json на машине пять штук — все по префиксу имени.",
+      "path": ".claude.json.backup.1756900000000",
+      "expect": { "decision": "refuse", "refusal": "machineLocal" }
+    },
+    {
+      "id": "credentials",
+      "provenance": "computed",
+      "note": "Файла нет на этой машине (ключи в Keychain), но на Linux он именно такой.",
+      "path": ".credentials.json",
+      "expect": { "decision": "refuse", "refusal": "secret" }
+    },
+    {
+      "id": "sessions-registry",
+      "provenance": "observed",
+      "note": "Реестр живых сессий с peer-токенами.",
+      "path": "sessions/11111111-1111-4111-8111-111111111111.json",
+      "expect": { "decision": "refuse", "refusal": "secret" }
+    },
+    {
+      "id": "session-key-anywhere",
+      "provenance": "computed",
+      "note": "Суффикс .key запрещён где угодно, а не только в sessions/.",
+      "path": "projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/peer.key",
+      "expect": { "decision": "refuse", "refusal": "secret" }
+    },
+    {
+      "id": "sessions-inside-allowed",
+      "provenance": "computed",
+      "note": "Оборона в глубину: чёрный список побеждает внутри разрешённого projects/.",
+      "path": "projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/sessions/live.json",
+      "expect": { "decision": "refuse", "refusal": "secret" }
+    },
+    {
+      "id": "session-env",
+      "provenance": "observed",
+      "note": "Окружение, которое CLI отдаёт хукам, — переменные машины целиком.",
+      "path": "session-env/11111111-1111-4111-8111-111111111111.env",
+      "expect": { "decision": "refuse", "refusal": "secret" }
+    },
+    {
+      "id": "device-registry",
+      "provenance": "unverified",
+      "note": "На этой машине файла нет; правило оставлено по описи документов.",
+      "path": "ant-device-registry.json",
+      "expect": { "decision": "refuse", "refusal": "secret" }
+    },
+    {
+      "id": "mcp-auth-cache",
+      "provenance": "observed",
+      "note": "Кэш говорит, у каких серверов есть учётки.",
+      "path": "mcp-needs-auth-cache.json",
+      "expect": { "decision": "refuse", "refusal": "secret" }
+    },
+    {
+      "id": "cowork-sessions",
+      "provenance": "unverified",
+      "note": "Сессии Cowork с промптами и почтой; каталог заводит Desktop.",
+      "path": "local-agent-mode-sessions/2026-09-03/run.json",
+      "expect": { "decision": "refuse", "refusal": "secret" }
+    },
+    {
+      "id": "shell-snapshot",
+      "provenance": "observed",
+      "note": "Снимок шелла этой машины.",
+      "path": "shell-snapshots/snapshot-zsh-1756900000000.sh",
+      "expect": { "decision": "refuse", "refusal": "machineLocal" }
+    },
+    {
+      "id": "todos",
+      "provenance": "observed",
+      "note": "Тудушки реплицируются через outbox, а не копированием файла.",
+      "path": "todos/11111111-1111-4111-8111-111111111111-agent.json",
+      "expect": { "decision": "refuse", "refusal": "machineLocal" }
+    },
+    {
+      "id": "history",
+      "provenance": "observed",
+      "note": "История промптов реплицируется через outbox.",
+      "path": "history.jsonl",
+      "expect": { "decision": "refuse", "refusal": "machineLocal" }
+    },
+    {
+      "id": "stats-cache",
+      "provenance": "observed",
+      "note": "Счётчик этой машины: вторая машина не должна его унаследовать.",
+      "path": "stats-cache.json",
+      "expect": { "decision": "refuse", "refusal": "machineLocal" }
+    },
+    {
+      "id": "policy-limits",
+      "provenance": "observed",
+      "note": "Лимиты аккаунта на этой машине.",
+      "path": "policy-limits.json",
+      "expect": { "decision": "refuse", "refusal": "machineLocal" }
+    },
+    {
+      "id": "last-marker",
+      "provenance": "observed",
+      "note": "Скрытые маркеры .last-* — когда машина в последний раз что-то делала.",
+      "path": ".last-cost-warning",
+      "expect": { "decision": "refuse", "refusal": "machineLocal" }
+    },
+    {
+      "id": "ds-store-inside-allowed",
+      "provenance": "observed",
+      "note": "Мусор Finder не уезжает даже из разрешённого каталога.",
+      "path": "projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/.DS_Store",
+      "expect": { "decision": "refuse", "refusal": "machineLocal" }
+    },
+    {
+      "id": "plugins",
+      "provenance": "observed",
+      "note": "Плагины с локальными путями установки.",
+      "path": "plugins/repos/engineering/plugin.json",
+      "expect": { "decision": "refuse", "refusal": "machineLocal" }
+    },
+    {
+      "id": "unknown-top-level",
+      "provenance": "computed",
+      "note": "Смысл гейта: незнакомый файл остаётся дома по умолчанию, без правила про него.",
+      "path": "some-new-thing-from-the-next-release.json",
+      "expect": { "decision": "refuse", "refusal": "notListed" }
+    },
+    {
+      "id": "unknown-top-level-directory",
+      "provenance": "computed",
+      "note": "И незнакомый каталог тоже.",
+      "path": "brandNewDir/inner/file.json",
+      "expect": { "decision": "refuse", "refusal": "notListed" }
+    },
+    {
+      "id": "claude-md-not-at-root",
+      "provenance": "computed",
+      "note": "CLAUDE.md разрешён по имени: внутри projects/ он и так уехал бы.",
+      "path": "projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/CLAUDE.md",
+      "expect": { "decision": "export" }
+    },
+    {
+      "id": "big-transcript-refused",
+      "provenance": "computed",
+      "note": "Порог: 45 МиБ ровно уже не едут.",
+      "path": "projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/huge.jsonl",
+      "size": 47185920,
+      "expect": { "decision": "refuse", "refusal": "tooLarge" }
+    },
+    {
+      "id": "just-under-the-limit",
+      "provenance": "computed",
+      "note": "На байт меньше порога — едет.",
+      "path": "projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/big.jsonl",
+      "size": 47185919,
+      "expect": { "decision": "export" }
+    },
+    {
+      "id": "size-does-not-rescue-a-secret",
+      "provenance": "computed",
+      "note": "Порядок правил: запрет проверяется раньше размера и раньше белого списка.",
+      "path": "sessions/tiny.json",
+      "size": 12,
+      "expect": { "decision": "refuse", "refusal": "secret" }
+    }
+  ]
+}
