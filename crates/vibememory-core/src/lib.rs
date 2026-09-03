@@ -7,3 +7,8 @@
 
 pub mod merge;
 pub mod naming;
+
+/// Longest file name APFS and NTFS accept, in bytes of UTF-8. Every name the engine invents — a
+/// store directory, a quarantined version — has to fit, or the checkout breaks on the other
+/// machine instead of here.
+pub const MAX_FILE_NAME_BYTES: usize = 255;

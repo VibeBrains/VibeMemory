@@ -1,0 +1,106 @@
+//! What must never be in the fixtures.
+//!
+//! The fixtures are recordings of a real machine, so the rules in `fixtures/README.md` are the
+//! only thing standing between a recording and a leak — and a rule nobody checks is a rule that
+//! holds until the day it does not. Credentials, other people's paths and live session
+//! identifiers are checked here, on every run.
+
+// The gate reads the repository on purpose, so the purity rule that keeps the library free of I/O
+// is lifted for this file alone.
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::disallowed_methods,
+    clippy::disallowed_types
+)]
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+/// Substrings that must not appear in a fixture, with the reason each one is forbidden.
+const FORBIDDEN: &[(&str, &str)] = &[
+    ("-----BEGIN", "a key or certificate"),
+    ("sk-ant-", "an Anthropic key"),
+    ("ghp_", "a GitHub token"),
+    ("Bearer ", "a bearer token"),
+    ("Authorization:", "an authorization header"),
+    ("@gmail.com", "an e-mail address"),
+    ("OneDrive", "a path into the cloud folder"),
+    ("ssh-rsa", "a public key"),
+    ("BEGIN OPENSSH", "a private key"),
+];
+
+/// The one session identifier the scrubber writes into transcript fixtures.
+const SYNTHETIC_SESSION_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
+}
+
+fn files_under(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let entries =
+            fs::read_dir(&current).unwrap_or_else(|e| panic!("read {}: {e}", current.display()));
+        for entry in entries {
+            let path = entry.expect("directory entry").path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                found.push(path);
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+#[test]
+fn fixtures_carry_nothing_that_must_stay_on_the_machine() {
+    let fixtures = repo_root().join("fixtures");
+    let mut failures: Vec<String> = Vec::new();
+
+    for file in files_under(&fixtures) {
+        let name = file
+            .file_name()
+            .expect("file name")
+            .to_string_lossy()
+            .into_owned();
+        let Ok(text) = fs::read_to_string(&file) else {
+            continue; // binary fixture: nothing to read as text, and none exists today
+        };
+        for (needle, what) in FORBIDDEN {
+            if text.contains(needle) {
+                failures.push(format!("{name}: contains {what} ({needle})"));
+            }
+        }
+        // Transcript fixtures are scrubbed, and the scrubber gives every one of them the same
+        // synthetic session: a real one would mean an unscrubbed line slipped through.
+        if file
+            .extension()
+            .is_some_and(|extension| extension == "jsonl")
+        {
+            for (number, line) in text.lines().enumerate() {
+                let Some(rest) = line.split("\"sessionId\":\"").nth(1) else {
+                    continue;
+                };
+                let session = rest.split('"').next().unwrap_or_default();
+                if session != SYNTHETIC_SESSION_ID {
+                    failures.push(format!(
+                        "{name}:{}: session id {session} is not the synthetic one",
+                        number + 1
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        !failures.is_empty() || !files_under(&fixtures).is_empty(),
+        "no fixtures were checked"
+    );
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n"));
+}

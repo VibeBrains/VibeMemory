@@ -38,7 +38,10 @@ Rust workspace: `crates/vibememory-core` (стор, имена, слияние �
 
 ## Проверка перед завершением задачи
 
-`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. Драйверы
+`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. В `cargo test`
+входят гейты: документации (ссылки, индекс knowledge, дерево мануалов, camelCase, формат
+завершённых пунктов roadmap), приватности фикстур и property-тесты законов слияния — руками эти
+правила больше не проверяются. Драйверы
 слияния — только через фикстуры реального формата JSONL (`fixtures/`). Тесты не запускать при
 ошибках компиляции.
 

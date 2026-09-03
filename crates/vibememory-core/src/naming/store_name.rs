@@ -6,9 +6,8 @@ use typed_path::constants::windows::{DISALLOWED_FILENAME_CHARS, RESERVED_DEVICE_
 use unicode_normalization::UnicodeNormalization;
 
 use super::error::NamingError;
+use crate::MAX_FILE_NAME_BYTES;
 
-/// Longest file name accepted by APFS and NTFS, in bytes of UTF-8.
-const MAX_STORE_NAME_BYTES: usize = 255;
 /// Name of the git directory; a store named like this would break the store repository.
 pub const GIT_DIR_NAME: &str = ".git";
 /// Reserved device names Windows documents in addition to the ASCII ones typed-path ships
@@ -58,7 +57,7 @@ impl StoreName {
         if name.is_empty() {
             return Some("empty");
         }
-        if name.len() > MAX_STORE_NAME_BYTES {
+        if name.len() > MAX_FILE_NAME_BYTES {
             return Some("longer than the file-name limit of APFS and NTFS");
         }
         if name == "." || name == ".." {

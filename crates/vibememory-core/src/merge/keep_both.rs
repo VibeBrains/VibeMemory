@@ -13,6 +13,8 @@
 
 use serde::Serialize;
 
+use crate::MAX_FILE_NAME_BYTES;
+
 /// What the driver was asked to merge. `stamp` names the machine and the moment; the core has no
 /// clock and no machine identity of its own, so the caller supplies both.
 #[derive(Debug, Clone, Copy)]
@@ -89,8 +91,6 @@ pub struct KeepBothReport {
 
 /// Directory name that marks a project's memory.
 const MEMORY_DIR_NAME: &str = "memory";
-/// Longest file name accepted by APFS and NTFS, in bytes of UTF-8.
-const MAX_NAME_BYTES: usize = 255;
 /// Every other character of a path becomes this one in a quarantined file's name.
 const NAME_REPLACEMENT: char = '-';
 
@@ -159,7 +159,7 @@ fn quarantine_name(path: &str, stamp: &str) -> String {
     let stem = sanitize(stem);
     // The tail of a path says what the file is, so a name too long for the file system loses its
     // head, not its name. Sanitizing first makes every character one byte, so the cut is simple.
-    let head_budget = MAX_NAME_BYTES.saturating_sub(suffix.len());
+    let head_budget = MAX_FILE_NAME_BYTES.saturating_sub(suffix.len());
     let head = stem
         .get(stem.len().saturating_sub(head_budget)..)
         .unwrap_or_default();
