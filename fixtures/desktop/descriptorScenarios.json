@@ -1,0 +1,515 @@
+{
+  "description": "Guard дескрипторов Desktop и перевод cwd между машинами. Реальный стор дескрипторов лежит в облачной папке и читать его нельзя (дегидрированные файлы тянутся из сети), поэтому кейсы computed/unverified: форма полей взята из опубликованных в docs/knowledge/claudeDesktop/sessionStore.md частот по 165 файлам local_*.json, значения синтетические. Корни машин — из примера config.json в architecture §9.",
+  "machines": {
+    "mac": {
+      "syntax": "posix",
+      "roots": {
+        "PROJECTS": "/Volumes/Storage/Projects",
+        "HOME": "/Users/owner",
+        "HOME_PROJECTS": "/Users/owner/Projects"
+      }
+    },
+    "win": {
+      "syntax": "windows",
+      "roots": {
+        "PROJECTS": "D:\\Projects",
+        "HOME": "C:\\Users\\owner"
+      }
+    },
+    "bare": { "syntax": "posix", "roots": {} }
+  },
+  "rootCases": [
+    {
+      "id": "portable-mac-project",
+      "provenance": "computed",
+      "note": "Обычный путь владельца внутри объявленного корня.",
+      "machine": "mac",
+      "toPortable": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+      "expect": { "portable": "{PROJECTS}/VibeCode/VibeIDE" }
+    },
+    {
+      "id": "portable-longest-root-wins",
+      "provenance": "computed",
+      "note": "Вложенные корни: побеждает самый длинный, иначе путь получит менее точный смысл.",
+      "machine": "mac",
+      "toPortable": "/Users/owner/Projects/VibeCode/VibeIDE",
+      "expect": { "portable": "{HOME_PROJECTS}/VibeCode/VibeIDE" }
+    },
+    {
+      "id": "portable-root-itself",
+      "provenance": "computed",
+      "note": "Путь, равный корню, — голое {NAME} без хвостового слеша.",
+      "machine": "mac",
+      "toPortable": "/Volumes/Storage/Projects",
+      "expect": { "portable": "{PROJECTS}" }
+    },
+    {
+      "id": "portable-outside-roots",
+      "provenance": "computed",
+      "note": "Смысл механизма: путь вне корней не переводится, и потому не уезжает.",
+      "machine": "mac",
+      "toPortable": "/private/tmp/scratch/thing",
+      "expect": { "error": "outside" }
+    },
+    {
+      "id": "portable-sibling-not-a-prefix",
+      "provenance": "computed",
+      "note": "Совпадение по строке не годится: /Users/ownerX не внутри /Users/owner.",
+      "machine": "mac",
+      "toPortable": "/Users/ownerX/Projects",
+      "expect": { "error": "outside" }
+    },
+    {
+      "id": "portable-no-roots-declared",
+      "provenance": "computed",
+      "note": "Машина без корней не переводит ничего.",
+      "machine": "bare",
+      "toPortable": "/Users/owner/Projects/A",
+      "expect": { "error": "outside" }
+    },
+    {
+      "id": "portable-windows-drive",
+      "provenance": "unverified",
+      "note": "В сторе 23 дескриптора с D:\\… — их пишет Windows, читает Mac.",
+      "machine": "win",
+      "toPortable": "D:\\Projects\\VibeCode\\VibeIDE",
+      "expect": { "portable": "{PROJECTS}/VibeCode/VibeIDE" }
+    },
+    {
+      "id": "portable-windows-case",
+      "provenance": "unverified",
+      "note": "Windows сравнивает пути без учёта регистра — корень должен совпасть.",
+      "machine": "win",
+      "toPortable": "d:\\projects\\VibeCode",
+      "expect": { "portable": "{PROJECTS}/VibeCode" }
+    },
+    {
+      "id": "local-mac",
+      "provenance": "computed",
+      "note": "Обратный перевод в POSIX-форму принимающей машины.",
+      "machine": "mac",
+      "toLocal": "{PROJECTS}/VibeCode/VibeIDE",
+      "expect": { "local": "/Volumes/Storage/Projects/VibeCode/VibeIDE" }
+    },
+    {
+      "id": "local-windows",
+      "provenance": "unverified",
+      "note": "Тот же портативный путь на Windows-машине рендерится с её префиксом диска.",
+      "machine": "win",
+      "toLocal": "{PROJECTS}/VibeCode/VibeIDE",
+      "expect": { "local": "D:/Projects/VibeCode/VibeIDE" }
+    },
+    {
+      "id": "local-root-itself",
+      "provenance": "computed",
+      "note": "Голое {NAME} возвращает сам корень.",
+      "machine": "mac",
+      "toLocal": "{HOME}",
+      "expect": { "local": "/Users/owner" }
+    },
+    {
+      "id": "local-unknown-root",
+      "provenance": "computed",
+      "note": "Корень, которого у этой машины нет: карточка не импортируется, а не угадывается.",
+      "machine": "mac",
+      "toLocal": "{WORK_LAPTOP}/A",
+      "expect": { "error": "unknownRoot" }
+    },
+    {
+      "id": "local-not-portable",
+      "provenance": "computed",
+      "note": "Абсолютный путь чужой машины в портативную сторону не принимается.",
+      "machine": "mac",
+      "toLocal": "D:\\Projects\\A",
+      "expect": { "error": "notPortable" }
+    },
+    {
+      "id": "local-unclosed-brace",
+      "provenance": "computed",
+      "note": "Битая форма — отказ, а не половина имени корня.",
+      "machine": "mac",
+      "toLocal": "{PROJECTS/A",
+      "expect": { "error": "notPortable" }
+    },
+    {
+      "id": "round-trip-windows-to-mac",
+      "provenance": "unverified",
+      "note": "Главный сценарий чекбокса: карточка с Windows становится путём Mac.",
+      "machine": "win",
+      "toPortable": "D:\\Projects\\VibeCode\\VibeIDE",
+      "thenToLocalOn": "mac",
+      "expect": {
+        "portable": "{PROJECTS}/VibeCode/VibeIDE",
+        "local": "/Volumes/Storage/Projects/VibeCode/VibeIDE"
+      }
+    }
+  ],
+  "exportCases": [
+    {
+      "id": "first-export",
+      "provenance": "computed",
+      "note": "Первый экспорт карточки: понижать нечего, пути переводятся.",
+      "machine": "mac",
+      "local": {
+        "sessionId": "local_11111111-1111-4111-8111-111111111111",
+        "cliSessionId": "22222222-2222-4222-8222-222222222222",
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "originCwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "title": "<scrubbed>",
+        "completedTurns": 3
+      },
+      "expect": {
+        "verdict": "export",
+        "cwd": "{PROJECTS}/VibeCode/VibeIDE",
+        "originCwd": "{PROJECTS}/VibeCode/VibeIDE",
+        "keeps": ["title", "completedTurns"]
+      }
+    },
+    {
+      "id": "worktree-cwd-differs",
+      "provenance": "unverified",
+      "note": "У изолированных worktree cwd и originCwd расходятся — переводятся оба.",
+      "machine": "mac",
+      "local": {
+        "sessionId": "local_33333333-3333-4333-8333-333333333333",
+        "cliSessionId": "44444444-4444-4444-8444-444444444444",
+        "cwd": "/Users/owner/.claude/worktrees/feature",
+        "originCwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE"
+      },
+      "expect": {
+        "verdict": "export",
+        "cwd": "{HOME}/.claude/worktrees/feature",
+        "originCwd": "{PROJECTS}/VibeCode/VibeIDE"
+      }
+    },
+    {
+      "id": "lost-transcript-withheld",
+      "provenance": "computed",
+      "note": "clearStaleResumeHandle стёр cliSessionId: экспорт разнёс бы порчу на все машины.",
+      "machine": "mac",
+      "exported": {
+        "sessionId": "local_55555555-5555-4555-8555-555555555555",
+        "cliSessionId": "66666666-6666-4666-8666-666666666666",
+        "cwd": "{PROJECTS}/VibeCode/VibeIDE"
+      },
+      "local": {
+        "sessionId": "local_55555555-5555-4555-8555-555555555555",
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE"
+      },
+      "expect": { "verdict": "withhold", "reason": "lostTranscript" }
+    },
+    {
+      "id": "never-had-a-transcript",
+      "provenance": "computed",
+      "note": "16 дескрипторов в сторе без cliSessionId: карточка, у которой его и не было, — не порча.",
+      "machine": "mac",
+      "local": {
+        "sessionId": "local_77777777-7777-4777-8777-777777777777",
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE"
+      },
+      "expect": { "verdict": "export", "cwd": "{PROJECTS}/VibeCode/VibeIDE" }
+    },
+    {
+      "id": "marked-unavailable-withheld",
+      "provenance": "computed",
+      "note": "transcriptUnavailable — вердикт про диск этой машины; на другой транскрипт есть.",
+      "machine": "mac",
+      "local": {
+        "sessionId": "local_88888888-8888-4888-8888-888888888888",
+        "cliSessionId": "99999999-9999-4999-8999-999999999999",
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "transcriptUnavailable": true
+      },
+      "expect": { "verdict": "withhold", "reason": "markedUnavailable" }
+    },
+    {
+      "id": "unavailable-beats-first-export",
+      "provenance": "computed",
+      "note": "Порядок правил: пометка держит карточку даже когда экспортированной версии нет.",
+      "machine": "mac",
+      "local": {
+        "sessionId": "local_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "transcriptUnavailable": true
+      },
+      "expect": { "verdict": "withhold", "reason": "markedUnavailable" }
+    },
+    {
+      "id": "gained-a-transcript",
+      "provenance": "computed",
+      "note": "Храповик пропускает в другую сторону: получила транскрипт — едет.",
+      "machine": "mac",
+      "exported": {
+        "sessionId": "local_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "cwd": "{PROJECTS}/VibeCode/VibeIDE"
+      },
+      "local": {
+        "sessionId": "local_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "cliSessionId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE"
+      },
+      "expect": { "verdict": "export", "cwd": "{PROJECTS}/VibeCode/VibeIDE" }
+    },
+    {
+      "id": "cwd-outside-roots-withheld",
+      "provenance": "computed",
+      "note": "Сессии раннера с cwd вне корней остаются локальными.",
+      "machine": "mac",
+      "local": {
+        "sessionId": "local_dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "cliSessionId": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        "cwd": "/private/tmp/scratch/runner"
+      },
+      "expect": { "verdict": "withhold", "reason": "cwdOutsideRoots" }
+    }
+  ],
+  "importCases": [
+    {
+      "id": "import-accepted",
+      "provenance": "computed",
+      "note": "Все три факта измерены: транскрипт в сторе, каталог существует, ссылка подтверждена.",
+      "machine": "mac",
+      "remote": {
+        "sessionId": "local_ffffffff-ffff-4fff-8fff-ffffffffffff",
+        "cliSessionId": "12121212-1212-4212-8212-121212121212",
+        "cwd": "{PROJECTS}/VibeCode/VibeIDE",
+        "originCwd": "{PROJECTS}/VibeCode/VibeIDE",
+        "isStarred": true
+      },
+      "facts": {
+        "cwdExists": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "transcriptInStore": true,
+        "confirmedTranscriptPath": "/Users/owner/.claude/projects/-ALL-/VibeIDE/12121212-1212-4212-8212-121212121212.jsonl"
+      },
+      "expect": {
+        "verdict": "import",
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "originCwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "keeps": ["isStarred"]
+      }
+    },
+    {
+      "id": "import-link-only-predicted",
+      "provenance": "computed",
+      "note": "Ключевой запрет §7: предсказанная реконсилером ссылка гейт не проходит.",
+      "machine": "mac",
+      "remote": {
+        "sessionId": "local_13131313-1313-4313-8313-131313131313",
+        "cliSessionId": "14141414-1414-4414-8414-141414141414",
+        "cwd": "{PROJECTS}/VibeCode/VibeIDE"
+      },
+      "facts": {
+        "cwdExists": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "transcriptInStore": true,
+        "confirmedTranscriptPath": null
+      },
+      "expect": { "verdict": "skip", "reason": "linkUnconfirmed" }
+    },
+    {
+      "id": "import-transcript-not-yet",
+      "provenance": "computed",
+      "note": "Другая машина закоммитила карточку раньше транскрипта — примем на следующем тике.",
+      "machine": "mac",
+      "remote": {
+        "sessionId": "local_15151515-1515-4515-8515-151515151515",
+        "cliSessionId": "16161616-1616-4616-8616-161616161616",
+        "cwd": "{PROJECTS}/VibeCode/VibeIDE"
+      },
+      "facts": {
+        "cwdExists": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "transcriptInStore": false,
+        "confirmedTranscriptPath": null
+      },
+      "expect": { "verdict": "skip", "reason": "transcriptMissing" }
+    },
+    {
+      "id": "import-cwd-missing",
+      "provenance": "computed",
+      "note": "prepareSpawnCwd откажет, а отказ стоит карточке cliSessionId навсегда.",
+      "machine": "mac",
+      "remote": {
+        "sessionId": "local_17171717-1717-4717-8717-171717171717",
+        "cliSessionId": "18181818-1818-4818-8818-181818181818",
+        "cwd": "{PROJECTS}/VibeCode/Missing"
+      },
+      "facts": {
+        "cwdExists": null,
+        "transcriptInStore": true,
+        "confirmedTranscriptPath": "/Users/owner/.claude/projects/-ALL-/VibeIDE/18181818-1818-4818-8818-181818181818.jsonl"
+      },
+      "expect": { "verdict": "skip", "reason": "cwdMissing" }
+    },
+    {
+      "id": "import-cwd-measured-elsewhere",
+      "provenance": "computed",
+      "note": "Измерение должно относиться к тому самому переведённому каталогу, а не к любому.",
+      "machine": "mac",
+      "remote": {
+        "sessionId": "local_19191919-1919-4919-8919-191919191919",
+        "cliSessionId": "1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a1a",
+        "cwd": "{PROJECTS}/VibeCode/VibeIDE"
+      },
+      "facts": {
+        "cwdExists": "/Volumes/Storage/Projects/VibeCode/Other",
+        "transcriptInStore": true,
+        "confirmedTranscriptPath": "/Users/owner/.claude/projects/-ALL-/VibeIDE/1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a1a.jsonl"
+      },
+      "expect": { "verdict": "skip", "reason": "cwdMissing" }
+    },
+    {
+      "id": "import-no-transcript",
+      "provenance": "computed",
+      "note": "Карточка без cliSessionId нечего возобновлять — 16 таких в сторе.",
+      "machine": "mac",
+      "remote": {
+        "sessionId": "local_1b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b",
+        "cwd": "{PROJECTS}/VibeCode/VibeIDE"
+      },
+      "facts": {
+        "cwdExists": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "transcriptInStore": true,
+        "confirmedTranscriptPath": "/Users/owner/.claude/projects/-ALL-/VibeIDE/x.jsonl"
+      },
+      "expect": { "verdict": "skip", "reason": "noTranscript" }
+    },
+    {
+      "id": "import-arrived-marked",
+      "provenance": "computed",
+      "note": "Помеченная карточка (три из четырёх таких в сторе — конфликт-копии с Windows) не принимается.",
+      "machine": "mac",
+      "remote": {
+        "sessionId": "local_1c1c1c1c-1c1c-4c1c-8c1c-1c1c1c1c1c1c",
+        "cliSessionId": "1d1d1d1d-1d1d-4d1d-8d1d-1d1d1d1d1d1d",
+        "cwd": "{PROJECTS}/VibeCode/VibeIDE",
+        "transcriptUnavailable": true
+      },
+      "facts": {
+        "cwdExists": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "transcriptInStore": true,
+        "confirmedTranscriptPath": "/Users/owner/.claude/projects/-ALL-/VibeIDE/1d1d1d1d-1d1d-4d1d-8d1d-1d1d1d1d1d1d.jsonl"
+      },
+      "expect": { "verdict": "skip", "reason": "transcriptMissing" }
+    },
+    {
+      "id": "import-unknown-root",
+      "provenance": "computed",
+      "note": "Корень чужой машины, которого здесь нет.",
+      "machine": "mac",
+      "remote": {
+        "sessionId": "local_1e1e1e1e-1e1e-4e1e-8e1e-1e1e1e1e1e1e",
+        "cliSessionId": "1f1f1f1f-1f1f-4f1f-8f1f-1f1f1f1f1f1f",
+        "cwd": "{WORK_LAPTOP}/VibeCode/VibeIDE"
+      },
+      "facts": {
+        "cwdExists": null,
+        "transcriptInStore": true,
+        "confirmedTranscriptPath": "/Users/owner/.claude/projects/-ALL-/VibeIDE/1f1f1f1f-1f1f-4f1f-8f1f-1f1f1f1f1f1f.jsonl"
+      },
+      "expect": { "verdict": "skip", "reason": "rootUnknown" }
+    }
+  ],
+  "repairCases": [
+    {
+      "id": "repair-lost-handle",
+      "provenance": "computed",
+      "note": "Карточка сломана локально, а в outbox лежит теневой cliSessionId и транскрипт достижим.",
+      "local": {
+        "sessionId": "local_21212121-2121-4121-8121-212121212121",
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE"
+      },
+      "exported": {
+        "sessionId": "local_21212121-2121-4121-8121-212121212121",
+        "cliSessionId": "22222222-3333-4333-8333-333333333333",
+        "cwd": "{PROJECTS}/VibeCode/VibeIDE"
+      },
+      "facts": {
+        "cwdExists": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "transcriptInStore": true,
+        "confirmedTranscriptPath": "/Users/owner/.claude/projects/-ALL-/VibeIDE/22222222-3333-4333-8333-333333333333.jsonl"
+      },
+      "expect": { "repaired": true, "cliSessionId": "22222222-3333-4333-8333-333333333333" }
+    },
+    {
+      "id": "repair-drops-the-mark",
+      "provenance": "computed",
+      "note": "Пометку надо снять вместе с починкой, иначе Desktop вернётся к тому же вердикту.",
+      "local": {
+        "sessionId": "local_23232323-2323-4323-8323-232323232323",
+        "cliSessionId": "24242424-2424-4424-8424-242424242424",
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "transcriptUnavailable": true
+      },
+      "exported": {
+        "sessionId": "local_23232323-2323-4323-8323-232323232323",
+        "cliSessionId": "24242424-2424-4424-8424-242424242424",
+        "cwd": "{PROJECTS}/VibeCode/VibeIDE"
+      },
+      "facts": {
+        "cwdExists": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "transcriptInStore": true,
+        "confirmedTranscriptPath": "/Users/owner/.claude/projects/-ALL-/VibeIDE/24242424-2424-4424-8424-242424242424.jsonl"
+      },
+      "expect": { "repaired": true, "cliSessionId": "24242424-2424-4424-8424-242424242424" }
+    },
+    {
+      "id": "repair-nothing-broken",
+      "provenance": "computed",
+      "note": "Целая карточка не трогается: тик идёт каждые две минуты.",
+      "local": {
+        "sessionId": "local_25252525-2525-4525-8525-252525252525",
+        "cliSessionId": "26262626-2626-4626-8626-262626262626",
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE"
+      },
+      "exported": {
+        "sessionId": "local_25252525-2525-4525-8525-252525252525",
+        "cliSessionId": "26262626-2626-4626-8626-262626262626",
+        "cwd": "{PROJECTS}/VibeCode/VibeIDE"
+      },
+      "facts": {
+        "cwdExists": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "transcriptInStore": true,
+        "confirmedTranscriptPath": "/Users/owner/.claude/projects/-ALL-/VibeIDE/26262626-2626-4626-8626-262626262626.jsonl"
+      },
+      "expect": { "repaired": false }
+    },
+    {
+      "id": "repair-without-shadow",
+      "provenance": "computed",
+      "note": "В outbox тоже нет транскрипта — чинить нечем.",
+      "local": {
+        "sessionId": "local_27272727-2727-4727-8727-272727272727",
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE"
+      },
+      "exported": {
+        "sessionId": "local_27272727-2727-4727-8727-272727272727",
+        "cwd": "{PROJECTS}/VibeCode/VibeIDE"
+      },
+      "facts": {
+        "cwdExists": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "transcriptInStore": true,
+        "confirmedTranscriptPath": "/Users/owner/.claude/projects/-ALL-/VibeIDE/x.jsonl"
+      },
+      "expect": { "repaired": false }
+    },
+    {
+      "id": "repair-transcript-unreachable",
+      "provenance": "computed",
+      "note": "Отдать карточке недостижимый транскрипт — купить следующий промах резюме.",
+      "local": {
+        "sessionId": "local_29292929-2929-4929-8929-292929292929",
+        "cwd": "/Volumes/Storage/Projects/VibeCode/VibeIDE"
+      },
+      "exported": {
+        "sessionId": "local_29292929-2929-4929-8929-292929292929",
+        "cliSessionId": "2a2a2a2a-2a2a-4a2a-8a2a-2a2a2a2a2a2a",
+        "cwd": "{PROJECTS}/VibeCode/VibeIDE"
+      },
+      "facts": {
+        "cwdExists": "/Volumes/Storage/Projects/VibeCode/VibeIDE",
+        "transcriptInStore": true,
+        "confirmedTranscriptPath": null
+      },
+      "expect": { "repaired": false }
+    }
+  ]
+}

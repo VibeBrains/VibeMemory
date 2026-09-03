@@ -101,8 +101,14 @@
   `fixtures/memory/memoryScenarios.json`, спека — [manuals/memoryRecordsSpec.md](manuals/memoryRecordsSpec.md),
   решения — [knowledge/design/memoryRecords.md](knowledge/design/memoryRecords.md); architecture §6
   приведена в соответствие.
-- [ ] Guard дескрипторов Desktop (не понижать `cliSessionId`, не экспортировать
-  `transcriptUnavailable`), перевод cwd `{ROOT}/rel` ↔ локальный.
+- [x] **Guard дескрипторов Desktop** — ✅ (2026-09-03, next) `core::desktop`: храповик экспорта
+  (карточка может получить транскрипт, но не потерять; `transcriptUnavailable` не выпускается —
+  это вердикт про диск одной машины), гейт импорта на трёх измерениях этой машины (каталог
+  существует, транскрипт в сторе, ссылка подтверждена `transcript_path` — предсказанная не
+  проходит), локальная починка теневым `cliSessionId` из outbox со снятием пометки, перевод cwd
+  `{ROOT}/rel` ↔ локальный с выбором самого длинного корня и регистром Windows. Незнакомые поля
+  дескриптора переносятся нетронутыми: формат Desktop не документирован. 36 кейсов в
+  `fixtures/desktop/`, гейт проверен пятью мутациями — [manuals/desktopFixtures.md](manuals/desktopFixtures.md).
 - [x] **Белый список экспорта** — ✅ (2026-09-03, next) `core::export`: отказ по умолчанию, чёрный список побеждает внутри разрешённых каталогов, порог 45 МиБ; 29 кейсов в `fixtures/export/`, гейт проверен двумя мутациями (снятое правило и перевёрнутый дефолт).
 
 ## Этап 2 — движок на Mac (`vibememory-cli`)

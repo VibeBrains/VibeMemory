@@ -11,7 +11,7 @@ pub mod config;
 pub mod enc;
 pub mod error;
 pub mod git;
-mod path;
+pub(crate) mod path;
 mod rules;
 pub mod store_name;
 
