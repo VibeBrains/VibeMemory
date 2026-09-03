@@ -12,8 +12,9 @@ Codex, Gemini CLI, Cursor, Zed, Cline) читает и пишет ту же па
 ## Статус
 
 Этап 1, ядро (2026-09-03): в `crates/vibememory-core` готовы модуль naming (кодировка
-`projects/<enc>` и имя стора) и модуль merge (слияние транскриптов JSONL и keep-both для памяти с
-карантином) — оба на фикстурах реального формата; движка (хуки, тик) и MCP-сервера ещё нет. Концепт — [idea.md](idea.md), архитектура —
+`projects/<enc>` и имя стора) модуль merge (слияние транскриптов JSONL и keep-both для файлов памяти с
+карантином) и модуль memory (память как записи: журнал, проекция в markdown и импорт правок
+обратно) — все на фикстурах; движка (хуки, тик) и MCP-сервера ещё нет. Концепт — [idea.md](idea.md), архитектура —
 [docs/spec/architecture.md](docs/spec/architecture.md), план — [docs/roadmap.md](docs/roadmap.md),
 проверенные факты про Claude Code, Desktop и облачные папки — [docs/knowledge/](docs/knowledge/README.md).
 

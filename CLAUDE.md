@@ -54,7 +54,8 @@ Rust workspace: `crates/vibememory-core` (стор, имена, слияние �
 
 - Имена и кодировка — только через `fixtures/naming/*.json` ([manuals/namingFixtures.md](docs/manuals/namingFixtures.md)),
   слияние — только через `fixtures/merge/{mergeScenarios,keepBothScenarios}.json`
-  ([manuals/mergeFixtures.md](docs/manuals/mergeFixtures.md)):
+  ([manuals/mergeFixtures.md](docs/manuals/mergeFixtures.md)), память — через
+  `fixtures/memory/memoryScenarios.json` ([manuals/memoryRecordsSpec.md](docs/manuals/memoryRecordsSpec.md)):
   новых unit-тестов с литеральными путями и строками транскрипта не заводить. Транскрипт-фикстуры
   попадают в репозиторий только через `fixtures/merge/scrubTranscript.js`.
 - В `tests/*.rs` нет `pub`-элементов (`missing_docs`), а хелперы теста разрешают panic/unwrap

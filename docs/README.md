@@ -9,7 +9,8 @@ docs/
 ├── manuals/                # руководства «как сделать» по шагам
 │   ├── configSpec.md       # спека ~/.vibememory/config.json для модели (сейчас: nameOverrides, ignoreCwd)
 │   ├── mergeFixtures.md    # как добавить кейс в fixtures/merge/, скраббер транскриптов, грамматика сценариев
-│   └── namingFixtures.md   # как добавить кейс в fixtures/naming/, метки provenance, оракул, новая версия CLI
+│   ├── namingFixtures.md   # как добавить кейс в fixtures/naming/, метки provenance, оракул, новая версия CLI
+│   └── memoryRecordsSpec.md # формат памяти: журнал, документ-проекция, правила расхождений
 └── knowledge/              # база знаний: проверенные факты и грабли
     ├── README.md           # индекс — запись без строки здесь не существует
     ├── claudeCode/         # CLI: раскладка каталога, формат транскрипта, кодировка projects/<enc>, хуки, нативный кросс-девайс

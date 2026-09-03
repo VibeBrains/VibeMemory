@@ -90,7 +90,17 @@
   кейсе. Уточнены engineConstraints (путь карантина `~/.vibememory/`, арбитраж базой, действие на
   все не-JSONL файлы) и architecture §2/§3; в knowledge — переопределяемый каталог памяти
   (`autoMemoryDirectory`, `CLAUDE_CODE_REMOTE_MEMORY_DIR`) и серверный синк памяти Anthropic.
-- [ ] Модель записей памяти и проекция в markdown (туда и обратно).
+- [x] **Модель записей памяти и проекция в markdown** — ✅ (2026-09-03, next) модуль `memory`:
+  запись (`id`, вид, проект, заголовок, однострочное описание, тело, ссылки `[[id]]`, агент,
+  созданo/изменено), журнал событий (`uuid` + `parent`), свёртка в состояние, проекция в
+  `MEMORY.md` и `<id>.md` и импорт правок обратно. Причинность вместо часов: две версии от одного
+  родителя обе остаются, вторая — файлом `<id>.rival-<версия>.md`, индекс просит свести; удаление
+  только явным событием и уступает конкурентной правке; чтение нетронутой проекции не пишет
+  ничего (проверяется на каждом кейсе). Журнал — обычный JSONL с `uuid`, поэтому сливается уже
+  готовым драйвером — своих правил слияния у памяти нет. 16 кейсов в
+  `fixtures/memory/memoryScenarios.json`, спека — [manuals/memoryRecordsSpec.md](manuals/memoryRecordsSpec.md),
+  решения — [knowledge/design/memoryRecords.md](knowledge/design/memoryRecords.md); architecture §6
+  приведена в соответствие.
 - [ ] Guard дескрипторов Desktop (не понижать `cliSessionId`, не экспортировать
   `transcriptUnavailable`), перевод cwd `{ROOT}/rel` ↔ локальный.
 - [ ] Белый список экспорта + тест «ни один файл из чёрного списка не попадает в стор».
@@ -140,6 +150,8 @@
   `projects/*`) → push → реконсилер ссылок (только при совпадении локального разрешения с
   `links.json`, иначе `nameDisagreement`; предсказанные ссылки помечены и не удаляются) → импорт
   outbox → push-guard → стейл-локи.
+- [ ] Проекция памяти в хуках и тике: где живёт `memory.jsonl`, когда идёт импорт правок (Stop) и
+  генерация файлов (SessionStart), куда пишется `additionalContext` при расхождении записи.
 - [ ] Каталог памяти читать из настроек (`autoMemoryDirectory`, `CLAUDE_CODE_REMOTE_MEMORY_DIR`,
   `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE`), а не выводить из `enc`: иначе стор синхронизирует пустой
   каталог. Карантин: каталог `~/.vibememory/quarantine/`, штамп `<machineId>-<ISO-время>`, текст
@@ -187,7 +199,8 @@
   есть во всех трёх версиях CLI): что из этого включено у владельца и как соотносится с
   MCP-памятью VibeMemory. До этого пункта считать позиционирование этапа 5 не подтверждённым.
 - [ ] `vibememory-mcp`: `memory_search / get / save / update / delete`, `history_search`;
-  stdio локально, HTTP с bearer на хосте.
+  stdio локально, HTTP с bearer на хосте. Поверх `memory::journal` — сервер только читает
+  состояние и дописывает события, своей модели у него нет.
 - [ ] Подключение и проверка: Claude Code, Codex, Gemini CLI, Cursor — одна память у всех.
 
 ## Этап 6 — SaaS для команд (start0)

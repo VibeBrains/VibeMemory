@@ -101,10 +101,18 @@ Mac — LaunchAgent (`RunAtLoad` + `StartInterval 120`; во сне интерв
 ## 6. Память как записи и MCP
 
 Первоисточник памяти — **записи** в сторе: `{id, type, project, agent, createdAt, updatedAt,
-title, body, links[]}` (append-only журнал + материализованное состояние). Markdown Claude Code
+title, body, links[]}` плюс однострочный `description` для индекса (append-only журнал
+`projects/<имя>/memory.jsonl` + материализованное состояние). Markdown Claude Code
 (`memory/MEMORY.md` + `memory/*.md`) — проекция: движок генерирует файлы из записей и
-импортирует правки файлов обратно в записи (Claude пишет файлы, как привык). Конфликт правок
-одной записи — keep-both.
+импортирует правки файлов обратно в записи (Claude пишет файлы, как привык).
+
+Реализовано в `vibememory-core::memory` (2026-09-03), решения — [knowledge/design/memoryRecords.md](../knowledge/design/memoryRecords.md),
+формат — [manuals/memoryRecordsSpec.md](../manuals/memoryRecordsSpec.md): каждое событие журнала
+несёт `uuid` (журналы двух машин сливает **тот же** JSONL-драйвер) и `parent` — версию, которую
+видел писавший. Конфликт правок одной записи — keep-both по причинности, а не по часам: обе версии
+остаются, вторая проецируется файлом `<id>.rival-<версия>.md`, индекс просит их свести. Удаление —
+только явным событием `delete`, пропавший файл проекции удалением не считается; чтение нетронутой
+проекции не порождает событий.
 
 MCP-сервер `vibememory-mcp` (stdio локально; HTTP с bearer-токеном на хосте — для агентов без
 локального стора): `memory_search` (индекс: id, тип, дата, превью), `memory_get` (полный текст
