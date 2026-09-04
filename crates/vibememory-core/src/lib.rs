@@ -7,6 +7,7 @@
 
 pub mod desktop;
 pub mod export;
+pub mod links;
 pub mod memory;
 pub mod merge;
 pub mod naming;

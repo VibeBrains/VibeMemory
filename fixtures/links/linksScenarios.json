@@ -1,0 +1,113 @@
+{
+  "description": "Формат machines/<id>/links.json: что читается, что отвергается и что переживает круг «прочитали → записали». Все кейсы computed — файл пишет сам движок, реального образца пока нет; форма полей выведена из architecture §4 (реконсилер) и §7.",
+  "cases": [
+    {
+      "id": "observed-link",
+      "provenance": "computed",
+      "note": "Обычная запись: сессия стартовала здесь, enc пришёл из transcript_path.",
+      "text": "{\"version\":1,\"links\":[{\"enc\":\"-Volumes-Storage-Projects-VibeCode-VibeMemory\",\"name\":\"VibeMemory\",\"cwd\":\"{PROJECTS}/VibeCode/VibeMemory\",\"syntax\":\"posix\",\"source\":\"observed\"}]}",
+      "expect": {
+        "parses": true,
+        "version": 1,
+        "records": [
+          { "enc": "-Volumes-Storage-Projects-VibeCode-VibeMemory", "name": "VibeMemory", "predicted": false, "confirmed": false }
+        ],
+        "roundTrip": "{\"version\":1,\"links\":[{\"enc\":\"-Volumes-Storage-Projects-VibeCode-VibeMemory\",\"name\":\"VibeMemory\",\"cwd\":\"{PROJECTS}/VibeCode/VibeMemory\",\"syntax\":\"posix\",\"source\":\"observed\",\"predicted\":false}]}"
+      }
+    },
+    {
+      "id": "predicted-not-yet-confirmed",
+      "provenance": "computed",
+      "note": "Ссылка, придуманная реконсилером по чужой записи: enc может оказаться неверным.",
+      "text": "{\"version\":1,\"links\":[{\"enc\":\"D--Projects-VibeCode-VibeIDE\",\"name\":\"VibeIDE\",\"cwd\":\"{PROJECTS}/VibeCode/VibeIDE\",\"syntax\":\"windows\",\"source\":\"reconciled\",\"predicted\":true}]}",
+      "expect": {
+        "parses": true,
+        "version": 1,
+        "records": [
+          { "enc": "D--Projects-VibeCode-VibeIDE", "name": "VibeIDE", "predicted": true, "confirmed": false }
+        ]
+      }
+    },
+    {
+      "id": "predicted-then-confirmed",
+      "provenance": "computed",
+      "note": "Догадка подтверждена transcript_path этой машины — с этого момента ссылка доказана.",
+      "text": "{\"version\":1,\"links\":[{\"enc\":\"-Volumes-Storage-Projects-VibeCode-VibeIDE\",\"name\":\"VibeIDE\",\"cwd\":\"{PROJECTS}/VibeCode/VibeIDE\",\"syntax\":\"posix\",\"source\":\"reconciled\",\"predicted\":true,\"confirmedBy\":\"/Users/o/.claude/projects/-Volumes-Storage-Projects-VibeCode-VibeIDE/11111111-1111-4111-8111-111111111111.jsonl\"}]}",
+      "expect": {
+        "parses": true,
+        "version": 1,
+        "records": [
+          { "enc": "-Volumes-Storage-Projects-VibeCode-VibeIDE", "name": "VibeIDE", "predicted": true, "confirmed": true }
+        ]
+      }
+    },
+    {
+      "id": "empty-file",
+      "provenance": "computed",
+      "note": "Свежая машина: файл есть, ссылок ещё нет.",
+      "text": "{\"version\":1,\"links\":[]}",
+      "expect": { "parses": true, "version": 1, "records": [] }
+    },
+    {
+      "id": "unknown-key-rejected",
+      "provenance": "computed",
+      "note": "Опечатка в ключе обязана падать, а не молча означать «поля нет»: тихо потерянный predicted снимает защиту с предсказанной ссылки.",
+      "text": "{\"version\":1,\"links\":[{\"enc\":\"-a\",\"name\":\"A\",\"cwd\":\"{P}/a\",\"syntax\":\"posix\",\"source\":\"observed\",\"predicated\":true}]}",
+      "expect": { "parses": false }
+    },
+    {
+      "id": "unknown-source-rejected",
+      "provenance": "computed",
+      "note": "Незнакомое происхождение — запись из будущей версии; угадывать её смысл нельзя.",
+      "text": "{\"version\":1,\"links\":[{\"enc\":\"-a\",\"name\":\"A\",\"cwd\":\"{P}/a\",\"syntax\":\"posix\",\"source\":\"imagined\"}]}",
+      "expect": { "parses": false }
+    },
+    {
+      "id": "missing-version-rejected",
+      "provenance": "computed",
+      "note": "Версия обязательна: без неё нельзя отличить старый файл от битого.",
+      "text": "{\"links\":[]}",
+      "expect": { "parses": false }
+    },
+    {
+      "id": "unparseable-name-survives-the-file",
+      "provenance": "computed",
+      "note": "Имя, не проходящее StoreName::parse, не валит файл: остальные ссылки дороже одной битой.",
+      "text": "{\"version\":1,\"links\":[{\"enc\":\"-a\",\"name\":\"CON\",\"cwd\":\"{P}/a\",\"syntax\":\"posix\",\"source\":\"installed\"},{\"enc\":\"-b\",\"name\":\"B\",\"cwd\":\"{P}/b\",\"syntax\":\"posix\",\"source\":\"installed\"}]}",
+      "expect": {
+        "parses": true,
+        "version": 1,
+        "records": [
+          { "enc": "-a", "name": "CON", "predicted": false, "confirmed": false, "nameParses": false },
+          { "enc": "-b", "name": "B", "predicted": false, "confirmed": false }
+        ]
+      }
+    }
+  ],
+  "sameName": [
+    {
+      "id": "case-differs-one-store",
+      "provenance": "computed",
+      "note": "APFS и NTFS кладут VibeIDE и vibeide в один каталог — реконсилер обязан видеть здесь конфликт, а не две разные ссылки.",
+      "left": "VibeIDE",
+      "right": "vibeide",
+      "same": true
+    },
+    {
+      "id": "different-stores",
+      "provenance": "computed",
+      "note": "Разные имена — разные каталоги.",
+      "left": "VibeIDE",
+      "right": "VibeMemory",
+      "same": false
+    },
+    {
+      "id": "both-unparseable-compared-as-written",
+      "provenance": "computed",
+      "note": "Понять нельзя, но заметить расхождение обязаны.",
+      "left": "CON",
+      "right": "PRN",
+      "same": false
+    }
+  ]
+}

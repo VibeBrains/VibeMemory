@@ -128,9 +128,14 @@
 - [ ] `existing` для идентичности имён — `git ls-tree -d --name-only HEAD:projects` ∪ readdir с
   дедупликацией (readdir на APFS не видит коллизию регистра); имена, не проходящие
   `StoreName::parse`, пропускаются с предупреждением doctor, а не валят хук.
-- [ ] Тип `LinkRecord` для `links.json` в ядре (`enc`, `name`, `cwd` как `{ROOT}/rel` + синтаксис,
-  `source`, `predicted`, `confirmedBy`) с `Serialize`/`Deserialize` и фикстурой реального файла;
-  сравнение имён — по `StoreName::key()`.
+- [x] **Тип `LinkRecord` для `links.json`** — ✅ (2026-09-04, next) `core::links`: `enc`, `name`,
+  `cwd` как `{ROOT}/rel` + синтаксис, `source` (`observed`/`reconciled`/`installed`), `predicted`,
+  `confirmedBy`; `deny_unknown_fields` — опечатка в ключе падает, а не означает «поля нет»;
+  нечитаемое имя не роняет файл, остальные ссылки дороже одной битой; сравнение — по
+  `StoreName::key()`. 8 кейсов файла + 3 сравнения имён, круг «прочитали → записали» проверяется
+  на каждом; манул — [manuals/linksFixtures.md](manuals/linksFixtures.md). Фикстура **не** снята с
+  реального файла: его ещё не существует, первый напишет `install` — все кейсы помечены
+  `computed`.
 - [ ] Хуки `Stop` (commit сразу, push с дебаунсом), `SessionEnd`, `UserPromptSubmit`-гейт
   свежести с блоком промпта; heartbeat `live.json`, `tails.json`. Снимок живого транскрипта —
   `snapshot_boundary` ядра и `git hash-object -w --stdin`, никакого `git add` живого файла и
