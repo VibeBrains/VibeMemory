@@ -102,6 +102,46 @@ struct Emitted<'a> {
     origin: Origin,
 }
 
+/// What one transcript looks like from outside, without merging anything.
+///
+/// The tick writes this into `tails.json` so other machines can tell at a glance whether their
+/// copy is behind, and the freshness gate of `UserPromptSubmit` compares it against the store
+/// before letting a prompt through. Both need the leaf a reader would resume from, and that rule
+/// is not theirs to re-derive — it is the same one the merge report uses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptSurvey {
+    /// Complete lines: everything up to the last `\n`.
+    pub lines: usize,
+    /// Bytes after the last `\n`, which a snapshot must not carry.
+    pub truncated: usize,
+    /// The `uuid` of the last line that has one — the tail another machine appends after.
+    pub last_uuid: Option<String>,
+    /// The leaf a reader resumes from: the target of the last `last-prompt` line after the last
+    /// compaction boundary. `None` when nothing names one and the reader falls back to the tail.
+    pub resume_leaf: Option<String>,
+    /// Lines that are not JSON objects. They are carried through merges untouched, but a growing
+    /// count means the format moved and `doctor` should say so.
+    pub opaque: usize,
+}
+
+/// Reads a transcript without merging it.
+#[must_use]
+pub fn survey(bytes: &[u8]) -> TranscriptSurvey {
+    let side = line::read_side(bytes);
+    TranscriptSurvey {
+        lines: side.lines.len(),
+        truncated: side.truncated,
+        last_uuid: side
+            .lines
+            .iter()
+            .rev()
+            .find_map(|line| line.uuid())
+            .map(str::to_owned),
+        resume_leaf: line::resume_leaf(&side.lines, |line| line).map(str::to_owned),
+        opaque: side.lines.iter().filter(|line| line.opaque).count(),
+    }
+}
+
 /// Merges two versions of a JSONL file, using `base` to tell additions from deletions.
 ///
 /// `base` may be empty: git passes an empty `%O` when the file was added on both sides, and
@@ -479,16 +519,7 @@ fn fork(emitted: &[Emitted<'_>], report: &MergeReport) -> Option<Fork> {
         .rev()
         .find(|item| item.line.uuid().is_some())
         .map_or(Side::Ours, |item| item.origin.side());
-    // Claude Code resumes from the leaf named by the last `last-prompt` line, not from the last
-    // record and not from the newest timestamp — and a compaction boundary clears that leaf, so
-    // only the part of the file after the last boundary can name it.
-    let after_boundary = last_boundary(emitted).map_or(0, |index| index + 1);
-    let named_leaf = emitted
-        .get(after_boundary..)
-        .unwrap_or_default()
-        .iter()
-        .rev()
-        .find_map(|item| item.line.leaf_target());
+    let named_leaf = line::resume_leaf(emitted, |item| item.line);
     let visible = match named_leaf {
         // No `last-prompt` at all: the reader falls back to the last record of the file.
         None => Some(tail_side),

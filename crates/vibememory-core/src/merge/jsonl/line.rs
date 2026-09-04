@@ -104,6 +104,32 @@ pub(crate) struct Side<'a> {
     pub(crate) truncated: usize,
 }
 
+/// The leaf a reader resumes from, by the one rule both the merge report and `tails.json` obey.
+///
+/// Claude Code resumes from the leaf named by the last `last-prompt` line — not from the last
+/// record and not from the newest timestamp. A compaction boundary clears that leaf, so only the
+/// part of the file after the last boundary may name it. The rule lives here alone: written twice,
+/// it would drift, and the two places that need it are the merge report the user reads and the
+/// freshness gate that blocks a prompt.
+///
+/// `items` is any slice whose elements carry a line — the merged view holds lines with their
+/// origin, a survey holds them bare — and `line` names that field.
+pub(crate) fn resume_leaf<'a, T>(
+    items: &'a [T],
+    line: impl Fn(&'a T) -> &'a Line<'a>,
+) -> Option<&'a str> {
+    let after_boundary = items
+        .iter()
+        .rposition(|item| line(item).is_compact_boundary())
+        .map_or(0, |index| index + 1);
+    items
+        .get(after_boundary..)
+        .unwrap_or_default()
+        .iter()
+        .rev()
+        .find_map(|item| line(item).leaf_target())
+}
+
 /// Splits an input into complete lines and reads the head of each.
 ///
 /// Only the bytes up to the last `\n` are lines: a snapshot of a live transcript can catch a

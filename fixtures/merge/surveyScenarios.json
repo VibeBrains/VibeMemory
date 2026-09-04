@@ -1,0 +1,148 @@
+{
+  "description": "Опись транскрипта без слияния: число строк, оборванный хвост, последний uuid, лист возобновления, непрозрачные строки. Ожидания observed-кейсов посчитаны независимой реализацией на Python по самим файлам фикстур, а не выводом модуля.",
+  "cases": [
+    {
+      "id": "real-session",
+      "provenance": "observed",
+      "note": "Срез реальной сессии CLI 2.1.255: лист ec4df8ec… не совпадает с последней записью 69bfbb81… — ровно то, ради чего правило листа существует.",
+      "file": "cli255Session.jsonl",
+      "expect": {
+        "lines": 272,
+        "truncated": 0,
+        "lastUuid": "69bfbb81-35cf-4545-8ea7-2e2f1564106a",
+        "resumeLeaf": "ec4df8ec-162b-4238-85a5-1679b599566e",
+        "opaque": 0
+      }
+    },
+    {
+      "id": "isolated-255",
+      "provenance": "observed",
+      "note": "Изолированный прогон 2.1.255: лист и хвост совпадают.",
+      "file": "cli255Isolated.jsonl",
+      "expect": {
+        "lines": 10,
+        "truncated": 0,
+        "lastUuid": "abe69844-3aaa-4a64-8401-aa3c0562571d",
+        "resumeLeaf": "abe69844-3aaa-4a64-8401-aa3c0562571d",
+        "opaque": 0
+      }
+    },
+    {
+      "id": "isolated-232",
+      "provenance": "observed",
+      "note": "Изолированный прогон 2.1.232 — формат другой версии описывается тем же правилом.",
+      "file": "cli232Isolated.jsonl",
+      "expect": {
+        "lines": 8,
+        "truncated": 0,
+        "lastUuid": "36c6f42b-dc36-47f2-8e06-0e2cf62829b4",
+        "resumeLeaf": "36c6f42b-dc36-47f2-8e06-0e2cf62829b4",
+        "opaque": 0
+      }
+    },
+    {
+      "id": "subagent-sidechain",
+      "provenance": "observed",
+      "note": "Сайдчейн субагента: last-prompt в нём нет, листа нет — читатель падает на хвост.",
+      "file": "cli255Subagent.jsonl",
+      "expect": {
+        "lines": 12,
+        "truncated": 0,
+        "lastUuid": "e5746a55-4b99-4471-8af1-fb22e0b9c01e",
+        "resumeLeaf": null,
+        "opaque": 0
+      }
+    },
+    {
+      "id": "workflow-journal",
+      "provenance": "observed",
+      "note": "Журнал воркфлоу: ни uuid, ни timestamp — опись обязана пережить файл, в котором нечего опознать.",
+      "file": "cli255Journal.jsonl",
+      "expect": {
+        "lines": 16,
+        "truncated": 0,
+        "lastUuid": null,
+        "resumeLeaf": null,
+        "opaque": 0
+      }
+    },
+    {
+      "id": "truncated-tail",
+      "provenance": "computed",
+      "note": "Снимок живого транскрипта ловит запись на середине: оборванный хвост не строка и в опись не идёт.",
+      "text": "{\"type\": \"user\", \"uuid\": \"aaaaaaaa\", \"timestamp\": \"2026-09-02T10:00:00Z\", \"sessionId\": \"11111111-1111-4111-8111-111111111111\"}\n{\"type\": \"assistant\", \"uuid\": \"bbbbbbbb\", \"timestamp\": \"2026-09-02T10:00:01Z\", \"sessionId\": \"11111111-1111-4111-8111-111111111111\"}\n{\"type\":\"user\",\"uu",
+      "expect": {
+        "lines": 2,
+        "truncated": 18,
+        "lastUuid": "bbbbbbbb",
+        "resumeLeaf": null,
+        "opaque": 0
+      }
+    },
+    {
+      "id": "boundary-clears-the-leaf",
+      "provenance": "computed",
+      "note": "Граница уплотнения стирает лист: назвать его может только часть файла после последней границы.",
+      "text": "{\"type\": \"last-prompt\", \"leafUuid\": \"aaaaaaaa\", \"sessionId\": \"11111111-1111-4111-8111-111111111111\"}\n{\"type\": \"system\", \"subtype\": \"compact_boundary\", \"uuid\": \"cccccccc\", \"timestamp\": \"2026-09-02T10:00:02Z\", \"sessionId\": \"11111111-1111-4111-8111-111111111111\"}\n{\"type\": \"assistant\", \"uuid\": \"dddddddd\", \"timestamp\": \"2026-09-02T10:00:03Z\", \"sessionId\": \"11111111-1111-4111-8111-111111111111\"}\n",
+      "expect": {
+        "lines": 3,
+        "truncated": 0,
+        "lastUuid": "dddddddd",
+        "resumeLeaf": null,
+        "opaque": 0
+      }
+    },
+    {
+      "id": "leaf-named-after-boundary",
+      "provenance": "computed",
+      "note": "После границы лист назван заново — он и есть точка возобновления.",
+      "text": "{\"type\": \"last-prompt\", \"leafUuid\": \"aaaaaaaa\", \"sessionId\": \"11111111-1111-4111-8111-111111111111\"}\n{\"type\": \"system\", \"subtype\": \"compact_boundary\", \"uuid\": \"cccccccc\", \"timestamp\": \"2026-09-02T10:00:02Z\", \"sessionId\": \"11111111-1111-4111-8111-111111111111\"}\n{\"type\": \"assistant\", \"uuid\": \"dddddddd\", \"timestamp\": \"2026-09-02T10:00:03Z\", \"sessionId\": \"11111111-1111-4111-8111-111111111111\"}\n{\"type\": \"last-prompt\", \"leafUuid\": \"dddddddd\", \"sessionId\": \"11111111-1111-4111-8111-111111111111\"}\n",
+      "expect": {
+        "lines": 4,
+        "truncated": 0,
+        "lastUuid": "dddddddd",
+        "resumeLeaf": "dddddddd",
+        "opaque": 0
+      }
+    },
+    {
+      "id": "leaf-is-not-the-last-record",
+      "provenance": "computed",
+      "note": "Лист и хвост — разные вещи: читатель возобновляется с названного листа, а не с последней записи.",
+      "text": "{\"type\": \"assistant\", \"uuid\": \"dddddddd\", \"timestamp\": \"2026-09-02T10:00:03Z\", \"sessionId\": \"11111111-1111-4111-8111-111111111111\"}\n{\"type\": \"last-prompt\", \"leafUuid\": \"dddddddd\", \"sessionId\": \"11111111-1111-4111-8111-111111111111\"}\n{\"type\": \"assistant\", \"uuid\": \"eeeeeeee\", \"timestamp\": \"2026-09-02T10:00:04Z\", \"sessionId\": \"11111111-1111-4111-8111-111111111111\"}\n",
+      "expect": {
+        "lines": 3,
+        "truncated": 0,
+        "lastUuid": "eeeeeeee",
+        "resumeLeaf": "dddddddd",
+        "opaque": 0
+      }
+    },
+    {
+      "id": "opaque-lines-counted",
+      "provenance": "computed",
+      "note": "Непрозрачные строки слияние переносит как есть, но их рост означает, что формат уехал — doctor обязан это видеть.",
+      "text": "{\"type\": \"user\", \"uuid\": \"aaaaaaaa\", \"timestamp\": \"2026-09-02T10:00:00Z\", \"sessionId\": \"11111111-1111-4111-8111-111111111111\"}\n[\"not\",\"an\",\"object\"]\nnot json at all\n",
+      "expect": {
+        "lines": 3,
+        "truncated": 0,
+        "lastUuid": "aaaaaaaa",
+        "resumeLeaf": null,
+        "opaque": 2
+      }
+    },
+    {
+      "id": "empty-file",
+      "provenance": "computed",
+      "note": "Пустой файл — законное состояние: сессия началась, первая запись ещё не пришла.",
+      "text": "",
+      "expect": {
+        "lines": 0,
+        "truncated": 0,
+        "lastUuid": null,
+        "resumeLeaf": null,
+        "opaque": 0
+      }
+    }
+  ]
+}
