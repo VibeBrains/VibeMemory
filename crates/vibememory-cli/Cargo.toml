@@ -1,0 +1,23 @@
+[package]
+name = "vibememory-cli"
+description = "VibeMemory engine: hooks, tick, install, doctor — the side that touches the machine"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "vibememory_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vibememory"
+path = "src/main.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+vibememory-core = { path = "../vibememory-core" }
+
+[lints]
+workspace = true

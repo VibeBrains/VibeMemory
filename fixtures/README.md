@@ -56,6 +56,12 @@ MCP-серверов (`name`), структура объектов и поряд
   [docs/manuals/linksFixtures.md](../docs/manuals/linksFixtures.md).
 - Все кейсы `computed`: формат наш, первый настоящий файл появится с `install` на этапе 2.
 
+## `config/` — `~/.vibememory/config.json`
+
+- `configScenarios.json` — что конфиг принимает, что отвергает и во что превращаются корни.
+  Все кейсы `computed`, кроме Windows-раскладки стора Desktop (`unverified`, этап 4).
+  Описание ключей для модели — [docs/manuals/configSpec.md](../docs/manuals/configSpec.md).
+
 ## Происхождение и санитизация
 
 - Метка `provenance` у каждого кейса: `observed` (снято с этой машины 2026-09-02: вывод

@@ -191,6 +191,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vibememory-cli"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "vibememory-core",
+]
+
+[[package]]
 name = "vibememory-core"
 version = "0.1.0"
 dependencies = [

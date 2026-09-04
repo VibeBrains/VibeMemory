@@ -1,0 +1,134 @@
+{
+  "description": "~/.vibememory/config.json целиком: что принимается, что отвергается и во что превращаются корни. syntax у всех кейсов — posix, кроме помеченных unverified (Windows, этап 4).",
+  "cases": [
+    {
+      "id": "full-mac",
+      "provenance": "computed",
+      "note": "Полный конфиг машины владельца по architecture §9: все ключи разом.",
+      "text": "{\"machineId\": \"mac-main\", \"remote\": \"ssh://git@host/vibememory/store.git\", \"roots\": {\"PROJECTS\": \"/Volumes/Storage/Projects\", \"HOME_PROJECTS\": \"/Users/o/Projects\"}, \"nameOverrides\": {\"/Volumes/Storage/Projects/VibeCode/VibeSweep\": \"VibeSweep\"}, \"ignoreCwd\": [\"/\"], \"desktopStore\": \"auto\"}",
+      "expect": {
+        "ok": {
+          "machineId": "mac-main",
+          "roots": {
+            "PROJECTS": "/Volumes/Storage/Projects",
+            "HOME_PROJECTS": "/Users/o/Projects"
+          },
+          "desktopStore": "auto"
+        }
+      }
+    },
+    {
+      "id": "minimal",
+      "provenance": "computed",
+      "note": "Минимум, на котором движок стартует: остальное имеет умолчания.",
+      "text": "{\"machineId\": \"mac-main\", \"remote\": \"ssh://git@host/s.git\"}",
+      "expect": {
+        "ok": {
+          "machineId": "mac-main",
+          "roots": {},
+          "desktopStore": "auto"
+        }
+      }
+    },
+    {
+      "id": "desktop-store-explicit",
+      "provenance": "unverified",
+      "note": "Явный путь к стору дескрипторов — MSIX-раскладка Windows, проверка на этапе 4.",
+      "text": "{\"machineId\": \"gpd\", \"remote\": \"ssh://git@host/s.git\", \"desktopStore\": \"C:/Users/o/AppData/Roaming/Claude/claude-code-sessions\"}",
+      "expect": {
+        "ok": {
+          "machineId": "gpd",
+          "roots": {},
+          "desktopStore": "C:/Users/o/AppData/Roaming/Claude/claude-code-sessions"
+        }
+      }
+    },
+    {
+      "id": "roots-canonicalized",
+      "provenance": "computed",
+      "note": "Корень приводится к канонической форме той же функцией, что и cwd: хвостовой слэш и .. не должны давать другой корень.",
+      "text": "{\"machineId\": \"m\", \"remote\": \"r\", \"roots\": {\"P\": \"/Volumes/Storage/Projects/VibeCode/../\"}}",
+      "expect": {
+        "ok": {
+          "machineId": "m",
+          "roots": {
+            "P": "/Volumes/Storage/Projects"
+          },
+          "desktopStore": "auto"
+        }
+      }
+    },
+    {
+      "id": "unknown-key",
+      "provenance": "computed",
+      "note": "Опечатка в ключе обязана падать: иначе правило владельца молча не существует.",
+      "text": "{\"machineId\": \"m\", \"remote\": \"r\", \"nameOverides\": {}}",
+      "expect": {
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "missing-machine-id",
+      "provenance": "computed",
+      "note": "Без machineId имена в сторе столкнутся между машинами.",
+      "text": "{\"remote\": \"r\"}",
+      "expect": {
+        "error": "missing"
+      }
+    },
+    {
+      "id": "blank-machine-id",
+      "provenance": "computed",
+      "note": "Пробелы — не имя машины.",
+      "text": "{\"machineId\": \"   \", \"remote\": \"r\"}",
+      "expect": {
+        "error": "missing"
+      }
+    },
+    {
+      "id": "missing-remote",
+      "provenance": "computed",
+      "note": "Без remote стор некуда толкать.",
+      "text": "{\"machineId\": \"m\"}",
+      "expect": {
+        "error": "missing"
+      }
+    },
+    {
+      "id": "relative-root",
+      "provenance": "computed",
+      "note": "Относительный корень ничего не якорит и превратил бы {ROOT}/rel в угадайку.",
+      "text": "{\"machineId\": \"m\", \"remote\": \"r\", \"roots\": {\"P\": \"Projects\"}}",
+      "expect": {
+        "error": "relativeRoot"
+      }
+    },
+    {
+      "id": "naming-error-propagates",
+      "provenance": "computed",
+      "note": "Ошибка правил именования — тоже отказ старта: конфиг применяется целиком или никак.",
+      "text": "{\"machineId\": \"m\", \"remote\": \"r\", \"nameOverrides\": {\"relative/path\": \"X\"}}",
+      "expect": {
+        "error": "naming"
+      }
+    },
+    {
+      "id": "empty-object",
+      "provenance": "computed",
+      "note": "Пустой конфиг — не «правил нет», а отсутствие обязательных ключей.",
+      "text": "{}",
+      "expect": {
+        "error": "missing"
+      }
+    },
+    {
+      "id": "not-json",
+      "provenance": "computed",
+      "note": "Битый файл не читается частично.",
+      "text": "{ machineId: mac }",
+      "expect": {
+        "error": "invalid"
+      }
+    }
+  ]
+}
