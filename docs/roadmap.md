@@ -121,10 +121,15 @@
   `hookInputInvalid` при неразборе stdin; `CLAUDE_CODE_PROJECT_DIR_NAME` из окружения хука.
 - [ ] Спавн git для имени стора: `env_remove` всех `GIT_*` (кроме `GIT_EXEC_PATH`), таймаут →
   `Unavailable`; обязательный обход `.git` вверх до корня тома с таймаутом → `Unknown`.
-- [ ] Канонизация cwd в хуке и реконсилере — одна функция, один раз, до всего (обход `.git`,
-  `current_dir` спавна git, `NamingInput.cwd`, `links.json`, `encode_cwd`): Mac — realpath;
-  Windows — снять `\\?\` (verbatim ломает и слаг, и сверку), junction/subst не разворачивать
-  (как `fs.realpathSync` Node, которым ключует Windows-CLI); проверка — этап 4.
+- [x] **Канонизация cwd — лексическая половина** — ✅ (2026-09-04, next) `naming::canonical_cwd`:
+  снятие verbatim-префикса (`\\?\D:\a` и `\\?\UNC\server\share` — verbatim ломает и слаг, и сверку с
+  тем, что написал CLI), NFC, разрешение `.`/`..`, схлопывание разделителей, без хвостового
+  слэша; регистр и junction/subst **не** трогаются — Windows-CLI ключует по `fs.realpathSync`,
+  и развернуть их значило бы придумать имя, которого CLI не пишет. 15 кейсов в
+  `fixtures/naming/canonicalCwd.json`, идемпотентность проверяется на каждом; гейт проверен
+  тремя подделками (не снимать verbatim, потерять корень UNC, привести регистр). Вторая
+  половина — `realpath` на Mac и его отсутствие на Windows — в CLI, вместе с единственной точкой
+  вызова; живая проверка Windows-форм (все они `unverified`) — этап 4.
 - [ ] `existing` для идентичности имён — `git ls-tree -d --name-only HEAD:projects` ∪ readdir с
   дедупликацией (readdir на APFS не видит коллизию регистра); имена, не проходящие
   `StoreName::parse`, пропускаются с предупреждением doctor, а не валят хук.

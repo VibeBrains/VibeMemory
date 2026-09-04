@@ -5,7 +5,8 @@
 
 ## `naming/` — кодировка `projects/<enc>` и имя стора
 
-- `encFromTranscriptPath.json`, `encodeCwd.json`, `resolveStoreName.json`, `namingConfig.json` —
+- `encFromTranscriptPath.json`, `encodeCwd.json`, `resolveStoreName.json`, `namingConfig.json`,
+  `canonicalCwd.json` (лексическая канонизация cwd: verbatim, NFC, `.`/`..`) —
   кейсы; формат, метки и порядок добавления — [docs/manuals/namingFixtures.md](../docs/manuals/namingFixtures.md).
 - `encodeCwdOracle.js` — точная JS-формула Claude Code (2.1.232 / 2.1.255) для `computed`-кейсов.
 

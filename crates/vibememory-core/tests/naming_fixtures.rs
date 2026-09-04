@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use vibememory_core::naming::{
     GitProbe, IgnoreReason, NamingConfig, NamingError, NamingInput, PathSyntax, RawNamingConfig,
-    Resolution, StoreName, enc_from_transcript_path, encode_cwd, resolve_store_name,
+    Resolution, StoreName, canonical_cwd, enc_from_transcript_path, encode_cwd, resolve_store_name,
 };
 
 const ENC_FROM_TRANSCRIPT_PATH: &str =
@@ -23,6 +23,7 @@ const ENC_FROM_TRANSCRIPT_PATH: &str =
 const ENCODE_CWD: &str = include_str!("../../../fixtures/naming/encodeCwd.json");
 const RESOLVE_STORE_NAME: &str = include_str!("../../../fixtures/naming/resolveStoreName.json");
 const NAMING_CONFIG: &str = include_str!("../../../fixtures/naming/namingConfig.json");
+const CANONICAL_CWD: &str = include_str!("../../../fixtures/naming/canonicalCwd.json");
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,6 +90,13 @@ struct ResolveInput {
     config: Option<RawNamingConfig>,
     #[serde(default)]
     existing: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CanonicalInput {
+    raw: String,
+    syntax: PathSyntax,
 }
 
 #[derive(Deserialize)]
@@ -214,6 +222,23 @@ fn encode_cwd_fixtures() {
 #[test]
 fn resolve_store_name_fixtures() {
     let failures = check("resolveStoreName.json", RESOLVE_STORE_NAME, resolve);
+    assert_no_failures(&failures);
+}
+
+#[test]
+fn canonical_cwd_fixtures() {
+    let failures = check(
+        "canonicalCwd.json",
+        CANONICAL_CWD,
+        |input: &CanonicalInput| {
+            let once = canonical_cwd(&input.raw, input.syntax);
+            // Canonicalization happens once, at the edge — but a second pass has to be a no-op,
+            // or "once" is a claim nobody can check.
+            let twice = canonical_cwd(&once, input.syntax);
+            assert_eq!(once, twice, "canonicalization is not idempotent");
+            Ok(json!(once))
+        },
+    );
     assert_no_failures(&failures);
 }
 

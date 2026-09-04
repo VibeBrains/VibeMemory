@@ -7,6 +7,7 @@
 //! `CLAUDE_CODE_PROJECT_DIR_NAME`. Every failure is an error the caller must respect: no link, no
 //! store, no guessed name.
 
+pub mod canonical;
 pub mod config;
 pub mod enc;
 pub mod error;
@@ -15,6 +16,7 @@ pub(crate) mod path;
 mod rules;
 pub mod store_name;
 
+pub use canonical::canonical_cwd;
 pub use config::{NamingConfig, RawNamingConfig};
 pub use enc::{
     EncSlug, PROJECTS_DIR_NAME, TRANSCRIPT_EXTENSION, enc_from_transcript_path, encode_cwd,

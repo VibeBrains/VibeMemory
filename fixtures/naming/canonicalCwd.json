@@ -1,0 +1,185 @@
+{
+  "description": "Лексическая канонизация рабочего каталога: снятие verbatim-префикса, NFC, разрешение . и .., отсутствие хвостового разделителя. Файловой системы здесь нет — realpath делает вызывающий до этой функции. Windows-кейсы unverified до этапа 4.",
+  "cases": [
+    {
+      "id": "posix-plain",
+      "provenance": "observed",
+      "note": "Реальный cwd этого проекта: канонизация не имеет права его менять.",
+      "input": {
+        "raw": "/Volumes/Storage/Projects/VibeCode/VibeMemory",
+        "syntax": "posix"
+      },
+      "expect": {
+        "ok": "/Volumes/Storage/Projects/VibeCode/VibeMemory"
+      }
+    },
+    {
+      "id": "posix-trailing-slash",
+      "provenance": "computed",
+      "note": "Хвостовой разделитель смысла не несёт, но даёт другой enc.",
+      "input": {
+        "raw": "/Users/o/Projects/App/",
+        "syntax": "posix"
+      },
+      "expect": {
+        "ok": "/Users/o/Projects/App"
+      }
+    },
+    {
+      "id": "posix-dot-segments",
+      "provenance": "computed",
+      "note": ". и .. разрешаются лексически, без обращения к диску.",
+      "input": {
+        "raw": "/Users/o/Projects/./App/../App",
+        "syntax": "posix"
+      },
+      "expect": {
+        "ok": "/Users/o/Projects/App"
+      }
+    },
+    {
+      "id": "posix-repeated-separators",
+      "provenance": "computed",
+      "note": "Повторные слэши схлопываются.",
+      "input": {
+        "raw": "/Users//o///Projects/App",
+        "syntax": "posix"
+      },
+      "expect": {
+        "ok": "/Users/o/Projects/App"
+      }
+    },
+    {
+      "id": "posix-root",
+      "provenance": "observed",
+      "note": "Корень — реальный cwd сессий раннера VibeDub; он остаётся корнем.",
+      "input": {
+        "raw": "/",
+        "syntax": "posix"
+      },
+      "expect": {
+        "ok": "/"
+      }
+    },
+    {
+      "id": "posix-nfd-becomes-nfc",
+      "provenance": "computed",
+      "note": "APFS хранит имя в NFD, CLI сообщает cwd в NFC — одна папка обязана дать одну строку.",
+      "input": {
+        "raw": "/Users/o/Projects/Página",
+        "syntax": "posix"
+      },
+      "expect": {
+        "ok": "/Users/o/Projects/Página"
+      }
+    },
+    {
+      "id": "windows-backslashes",
+      "provenance": "unverified",
+      "note": "Каноническая форма — со слэшами: сравнения и слаг считаются по ней.",
+      "input": {
+        "raw": "D:\\Projects\\VibeCode\\VibeIDE",
+        "syntax": "windows"
+      },
+      "expect": {
+        "ok": "D:/Projects/VibeCode/VibeIDE"
+      }
+    },
+    {
+      "id": "windows-verbatim-stripped",
+      "provenance": "unverified",
+      "note": "Главный кейс: verbatim ломает и слаг, и сверку с тем, что написал CLI.",
+      "input": {
+        "raw": "\\\\?\\D:\\Projects\\VibeCode\\VibeIDE",
+        "syntax": "windows"
+      },
+      "expect": {
+        "ok": "D:/Projects/VibeCode/VibeIDE"
+      }
+    },
+    {
+      "id": "windows-verbatim-unc",
+      "provenance": "unverified",
+      "note": "UNC-форма verbatim: два ведущих слэша обязаны вернуться, иначе share исчезает и путь становится относительным.",
+      "input": {
+        "raw": "\\\\?\\UNC\\server\\share\\Projects",
+        "syntax": "windows"
+      },
+      "expect": {
+        "ok": "//server/share/Projects"
+      }
+    },
+    {
+      "id": "windows-plain-unc",
+      "provenance": "unverified",
+      "note": "Обычный UNC остаётся собой.",
+      "input": {
+        "raw": "\\\\server\\share\\Projects",
+        "syntax": "windows"
+      },
+      "expect": {
+        "ok": "//server/share/Projects"
+      }
+    },
+    {
+      "id": "windows-dot-segments",
+      "provenance": "unverified",
+      "note": "То же лексическое разрешение, что и на POSIX.",
+      "input": {
+        "raw": "D:\\Projects\\.\\VibeCode\\..\\VibeCode\\VibeIDE",
+        "syntax": "windows"
+      },
+      "expect": {
+        "ok": "D:/Projects/VibeCode/VibeIDE"
+      }
+    },
+    {
+      "id": "windows-drive-root",
+      "provenance": "unverified",
+      "note": "Корень диска сохраняет хвостовой разделитель — без него это уже дискоотносительный путь.",
+      "input": {
+        "raw": "D:\\",
+        "syntax": "windows"
+      },
+      "expect": {
+        "ok": "D:/"
+      }
+    },
+    {
+      "id": "windows-case-preserved",
+      "provenance": "unverified",
+      "note": "Регистр не трогаем: Windows-CLI ключует по fs.realpathSync, который его сохраняет; сравнение без учёта регистра делает StoreName::key, а не эта функция.",
+      "input": {
+        "raw": "D:\\PROJECTS\\VibeIDE",
+        "syntax": "windows"
+      },
+      "expect": {
+        "ok": "D:/PROJECTS/VibeIDE"
+      }
+    },
+    {
+      "id": "windows-junction-not-resolved",
+      "provenance": "unverified",
+      "note": "Junction и subst не разворачиваются: функция лексическая, диска не видит — и это ровно то поведение, которым ключует Windows-CLI.",
+      "input": {
+        "raw": "J:\\Link\\VibeIDE",
+        "syntax": "windows"
+      },
+      "expect": {
+        "ok": "J:/Link/VibeIDE"
+      }
+    },
+    {
+      "id": "idempotent-on-its-own-output",
+      "provenance": "computed",
+      "note": "Канонизация применяется один раз, но повторный прогон обязан ничего не менять — иначе «один раз» невозможно проверить.",
+      "input": {
+        "raw": "D:/Projects/VibeCode/VibeIDE",
+        "syntax": "windows"
+      },
+      "expect": {
+        "ok": "D:/Projects/VibeCode/VibeIDE"
+      }
+    }
+  ]
+}
