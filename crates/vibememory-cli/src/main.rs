@@ -12,12 +12,13 @@ use std::process::ExitCode;
 use vibememory_cli::config::Config;
 use vibememory_cli::hook::parse_input;
 use vibememory_cli::hook::prompt_gate::{Gate, decide};
-use vibememory_cli::hook::session_start;
+use vibememory_cli::hook::session_start::{self, Decision};
 use vibememory_cli::hook::stop::{
     PUSH_DEBOUNCE, commit_snapshot, push_if_due, record_end, record_progress,
 };
 use vibememory_cli::hook::stop::{Tail, Tails};
 use vibememory_cli::install::{Layout, State, apply, plan};
+use vibememory_cli::links_file;
 use vibememory_cli::memory::{
     COWORK_MEMORY_VAR, JOURNAL_FILE, MemoryLocation, REMOTE_MEMORY_VAR, memory_dir,
     settings_memory_dir, sync,
@@ -239,6 +240,22 @@ fn session_start_hook() -> ExitCode {
             "VibeMemory could not put the link in place: {error}"
         ));
     }
+    // What this machine now knows about the link, for the other machines to read. The
+    // `transcript_path` is what proves it: the encoding came from the CLI, not from our guess.
+    if let Some(name) = linked_name(&decision) {
+        let _ = links_file::record(
+            &layout.store(),
+            &config.machine_id,
+            &links_file::Observation {
+                enc: enc.as_str(),
+                name: &name,
+                cwd: &portable_cwd(&config, &cwd),
+                syntax,
+                source: vibememory_core::links::LinkSource::Observed,
+                confirmed_by: Some(&input.transcript_path),
+            },
+        );
+    }
     match decision.additional_context() {
         Some(message) => say(&message),
         None => ExitCode::SUCCESS,
@@ -391,14 +408,32 @@ fn sync_memory(
     }
 }
 
+/// The store name a decision settled on, when it settled on one. A session that was ignored or
+/// that met a disagreement teaches the other machines nothing.
+fn linked_name(decision: &Decision) -> Option<String> {
+    match decision {
+        Decision::Link { name, .. } => Some(name.clone()),
+        Decision::AlreadyLinked { .. }
+        | Decision::ImportNeeded { .. }
+        | Decision::Disagreement { .. }
+        | Decision::Ignored { .. } => None,
+    }
+}
+
+/// The named roots of this machine, as the core wants them.
+fn roots_of(config: &Config) -> vibememory_core::desktop::roots::Roots {
+    vibememory_core::desktop::roots::Roots::new(
+        config.roots.clone().into_iter().collect(),
+        PathSyntax::Posix,
+    )
+}
+
 /// The working directory in the form other machines can read, or the local one when no root
 /// covers it — a path nobody can translate is still better in a log than nothing.
 fn portable_cwd(config: &Config, cwd: &str) -> String {
-    let roots = vibememory_core::desktop::roots::Roots::new(
-        config.roots.clone().into_iter().collect(),
-        PathSyntax::Posix,
-    );
-    roots.to_portable(cwd).unwrap_or_else(|_| cwd.to_owned())
+    roots_of(config)
+        .to_portable(cwd)
+        .unwrap_or_else(|_| cwd.to_owned())
 }
 
 /// Seconds since the epoch, for the push debounce.
@@ -621,8 +656,14 @@ fn tick_command() -> ExitCode {
         }
     };
 
-    let ticked =
-        vibememory_cli::tick::run(&store, &config.machine_id, &vibememory_cli::clock::now());
+    let roots = roots_of(&config);
+    let ticked = vibememory_cli::tick::run(
+        &store,
+        &layout.config_dir,
+        &config.machine_id,
+        &roots,
+        &vibememory_cli::clock::now(),
+    );
     if ticked.merged {
         println!("merged what the other machines wrote");
     }
@@ -631,6 +672,15 @@ fn tick_command() -> ExitCode {
     }
     for session in &ticked.forgotten {
         println!("forgotten: {session}");
+    }
+    for enc in &ticked.linked {
+        println!("linked: {enc}");
+    }
+    for enc in &ticked.disagreements {
+        println!(
+            "disagreement: {enc} resolves to a different store name here than on another \
+             machine; nothing was changed"
+        );
     }
     for project in &ticked.projected_memory {
         println!("memory projected: {project}");

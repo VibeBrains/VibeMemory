@@ -9,9 +9,13 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
+use vibememory_core::desktop::roots::Roots;
+use vibememory_core::links::LinkSource;
+
 use crate::forget::Forgotten;
 use crate::git;
 use crate::hook::stop::Live;
+use crate::links_file::{self, Observation};
 
 /// How long any one git command of the tick may take. Longer than a hook's, because nobody is
 /// waiting: the tick runs in the background.
@@ -38,6 +42,12 @@ pub struct Ticked {
     pub restored: Vec<String>,
     /// Projects whose memory projection was rewritten from records that arrived from elsewhere.
     pub projected_memory: Vec<String>,
+    /// Links created ahead of any session that might need them.
+    pub linked: Vec<String>,
+    /// Encoded directories where this machine and another disagree about the store name. Never
+    /// resolved automatically: one of the two is wrong, and guessing which would split a project
+    /// into two stores.
+    pub disagreements: Vec<String>,
     /// Whether anything was pushed.
     pub pushed: bool,
     /// What went wrong, if anything. A tick reports and returns; it never panics a machine.
@@ -50,7 +60,13 @@ pub struct Ticked {
 /// safe, and it is read from the store rather than from a process list because a session lives
 /// across machines, not inside one pid.
 #[must_use]
-pub fn run(store: &Path, machine_id: &str, stamp: &str) -> Ticked {
+pub fn run(
+    store: &Path,
+    config_dir: &Path,
+    machine_id: &str,
+    roots: &Roots,
+    stamp: &str,
+) -> Ticked {
     let mut result = Ticked {
         fetched: fetch(store),
         ..Ticked::default()
@@ -65,6 +81,14 @@ pub fn run(store: &Path, machine_id: &str, stamp: &str) -> Ticked {
 
     match apply_tombstones(store, stamp) {
         Ok(removed) => result.forgotten = removed,
+        Err(problem) => result.problems.push(problem),
+    }
+
+    match reconcile_links(store, config_dir, machine_id, roots) {
+        Ok(mut outcome) => {
+            result.linked.append(&mut outcome.linked);
+            result.disagreements.append(&mut outcome.disagreements);
+        }
         Err(problem) => result.problems.push(problem),
     }
 
@@ -401,4 +425,85 @@ fn project_memory(store: &Path, machine_id: &str, stamp: &str) -> Result<Vec<Str
         }
     }
     Ok(projected)
+}
+
+/// What the reconciler did.
+#[derive(Debug, Default)]
+struct Reconciled {
+    linked: Vec<String>,
+    disagreements: Vec<String>,
+}
+
+/// Creates the links other machines' records call for, before any session needs them.
+///
+/// The fallback scans of both the CLI and Desktop are blind to symlinks, so a link that does not
+/// exist beforehand is a link nobody will find. Three things stop the reconciler: a working
+/// directory that does not exist here, a name this machine resolves differently, and a path
+/// already occupied. None of them is fixed automatically — the first is somebody else's project,
+/// the second is a disagreement worth a person's attention, and the third may be a live session.
+fn reconcile_links(
+    store: &Path,
+    config_dir: &Path,
+    machine_id: &str,
+    roots: &Roots,
+) -> Result<Reconciled, String> {
+    let mut outcome = Reconciled::default();
+    let own = links_file::read(store, machine_id);
+
+    for (machine, record) in links_file::read_all(store) {
+        if machine == machine_id {
+            continue;
+        }
+        // A path this machine cannot translate names a directory it does not have.
+        let Ok(local_cwd) = roots.to_local(&record.cwd) else {
+            continue;
+        };
+        if !Path::new(&local_cwd).is_dir() {
+            continue;
+        }
+        // Our own record for the same encoded directory outranks theirs; if the names differ,
+        // one of us is wrong and neither may act.
+        if let Some(ours) = own.links.iter().find(|ours| ours.enc == record.enc)
+            && !ours.same_name_as(&record)
+        {
+            outcome.disagreements.push(record.enc.clone());
+            continue;
+        }
+
+        let link = config_dir.join("projects").join(&record.enc);
+        if std::fs::symlink_metadata(&link).is_ok() {
+            continue; // already there, or something else is — either way, not ours to change
+        }
+        let target = store.join("projects").join(&record.name);
+        std::fs::create_dir_all(&target).map_err(|error| error.to_string())?;
+        if let Some(parent) = link.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        symlink_dir(&target, &link)?;
+        links_file::record(
+            store,
+            machine_id,
+            &Observation {
+                enc: &record.enc,
+                name: &record.name,
+                cwd: &record.cwd,
+                syntax: record.syntax,
+                source: LinkSource::Reconciled,
+                confirmed_by: None,
+            },
+        )?;
+        outcome.linked.push(record.enc);
+    }
+    Ok(outcome)
+}
+
+fn symlink_dir(target: &Path, link: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link).map_err(|error| error.to_string())
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(target, link).map_err(|error| error.to_string())
+    }
 }

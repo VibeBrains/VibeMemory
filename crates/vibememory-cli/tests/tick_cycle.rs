@@ -19,7 +19,9 @@ use std::path::{Path, PathBuf};
 use support::{TempDir, git, git_repo_with_commit};
 use vibememory_cli::forget::forget;
 use vibememory_cli::hook::stop::{Live, LiveSession};
-use vibememory_cli::tick::{TickLock, run};
+use vibememory_cli::tick::{TickLock, Ticked, run};
+use vibememory_core::desktop::roots::Roots;
+use vibememory_core::naming::PathSyntax;
 
 const STAMP: &str = "2026-09-05T10:00:00Z";
 const SESSION: &str = "11111111-1111-4111-8111-111111111111";
@@ -67,6 +69,14 @@ fn two_machines(temp: &TempDir) -> Pair {
     Pair { mac, other }
 }
 
+/// One tick with the layout a real machine has: a config directory beside the store and no roots
+/// declared, which is what a machine looks like before anybody sets them up.
+fn tick(store: &Path, temp: &TempDir) -> Ticked {
+    let config_dir = temp.dir("claude");
+    let roots = Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix);
+    run(store, &config_dir, "mac-test", &roots, STAMP)
+}
+
 fn write_commit(store: &Path, relative: &str, contents: &str, message: &str) {
     let path = store.join(relative);
     fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
@@ -105,7 +115,7 @@ fn what_the_other_machine_wrote_arrives() {
     );
     git(&pair.other, &["push", "--quiet", "origin", "main"]);
 
-    let ticked = run(&pair.mac, "mac-test", STAMP);
+    let ticked = tick(&pair.mac, &temp);
     assert!(ticked.problems.is_empty(), "{:?}", ticked.problems);
     assert!(ticked.merged, "the tick must merge what it fetched");
     let here = fs::read_to_string(pair.mac.join(relative())).expect("read");
@@ -125,7 +135,7 @@ fn a_session_live_on_this_machine_holds_the_merge_back() {
     git(&pair.other, &["push", "--quiet", "origin", "main"]);
     mark_live(&pair.mac, "mac-test", SESSION);
 
-    let ticked = run(&pair.mac, "mac-test", STAMP);
+    let ticked = tick(&pair.mac, &temp);
     assert!(!ticked.merged, "a live session may not be merged into");
     assert_eq!(ticked.held_back, vec![SESSION.to_owned()]);
     let here = fs::read_to_string(pair.mac.join(relative())).expect("read");
@@ -140,7 +150,7 @@ fn a_session_live_on_this_machine_holds_the_merge_back() {
         "{\"sessions\":{}}",
     )
     .expect("write");
-    let ticked = run(&pair.mac, "mac-test", STAMP);
+    let ticked = tick(&pair.mac, &temp);
     assert!(ticked.merged, "nothing is live any more, so it merges");
 }
 
@@ -152,7 +162,7 @@ fn a_deleted_transcript_is_put_back_instead_of_pushed() {
     // deletion would take the records off every machine.
     fs::remove_file(pair.mac.join(relative())).expect("remove");
 
-    let ticked = run(&pair.mac, "mac-test", STAMP);
+    let ticked = tick(&pair.mac, &temp);
     assert_eq!(ticked.restored, vec![relative()]);
     assert!(
         pair.mac.join(relative()).exists(),
@@ -166,14 +176,14 @@ fn a_forget_removes_the_transcript_on_this_machine_too() {
     let pair = two_machines(&temp);
     forget(&pair.mac, "other-machine", SESSION, &relative(), STAMP).expect("forget");
 
-    let ticked = run(&pair.mac, "mac-test", STAMP);
+    let ticked = tick(&pair.mac, &temp);
     assert_eq!(ticked.forgotten, vec![SESSION.to_owned()]);
     assert!(
         !pair.mac.join(relative()).exists(),
         "a forgotten session leaves no file behind"
     );
     // And the removal must not come back as a restore on the next tick.
-    let again = run(&pair.mac, "mac-test", STAMP);
+    let again = tick(&pair.mac, &temp);
     assert!(
         again.restored.is_empty(),
         "the push-guard must not resurrect what was forgotten: {:?}",
@@ -188,7 +198,7 @@ fn a_store_without_a_remote_is_not_a_problem() {
     git_repo_with_commit(&store);
     write_commit(&store, &relative(), "{\"uuid\":\"one\"}\n", "first");
 
-    let ticked = run(&store, "mac-test", STAMP);
+    let ticked = tick(&store, &temp);
     assert!(ticked.problems.is_empty(), "{:?}", ticked.problems);
     assert!(!ticked.fetched && !ticked.pushed);
 }
@@ -213,7 +223,7 @@ fn a_merge_that_cannot_be_done_is_aborted_and_leaves_a_clean_tree() {
         "our rewrite",
     );
 
-    let ticked = run(&pair.mac, "mac-test", STAMP);
+    let ticked = tick(&pair.mac, &temp);
     assert!(!ticked.merged, "an unresolvable merge is not a merge");
     assert!(
         !ticked.problems.is_empty(),
@@ -269,7 +279,7 @@ fn nothing_incoming_is_not_reported_as_a_merge() {
     );
     mark_live(&pair.mac, "mac-test", SESSION);
 
-    let ticked = run(&pair.mac, "mac-test", STAMP);
+    let ticked = tick(&pair.mac, &temp);
     assert!(!ticked.merged, "there was nothing to merge");
     assert!(
         ticked.held_back.is_empty(),
@@ -279,7 +289,7 @@ fn nothing_incoming_is_not_reported_as_a_merge() {
     assert!(ticked.pushed, "but what we wrote does go out");
 
     // And a tick with nothing of its own to send says so by staying quiet.
-    let again = run(&pair.mac, "mac-test", STAMP);
+    let again = tick(&pair.mac, &temp);
     assert!(
         !again.pushed,
         "a log that says `pushed` every two minutes cannot show a stuck machine"
@@ -301,7 +311,7 @@ fn memory_that_arrived_from_elsewhere_becomes_readable_files() {
     write_commit(&pair.other, journal, event, "their memory");
     git(&pair.other, &["push", "--quiet", "origin", "main"]);
 
-    let ticked = run(&pair.mac, "mac-test", STAMP);
+    let ticked = tick(&pair.mac, &temp);
     assert!(ticked.merged, "the journal must arrive first");
     assert_eq!(
         ticked.projected_memory,
@@ -317,7 +327,7 @@ fn memory_that_arrived_from_elsewhere_becomes_readable_files() {
     );
 
     // And a second tick, with nothing new, writes nothing.
-    let again = run(&pair.mac, "mac-test", STAMP);
+    let again = tick(&pair.mac, &temp);
     assert!(
         again.projected_memory.is_empty(),
         "an unchanged projection may not be rewritten every two minutes: {:?}",
