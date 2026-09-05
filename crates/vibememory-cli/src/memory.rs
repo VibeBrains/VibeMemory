@@ -204,6 +204,12 @@ pub fn quarantine(engine_dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf
 
     let dir = engine_dir.join(QUARANTINE_DIR);
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    // A version already waiting here is not set aside a second time: the migration is re-run
+    // while the other machine still writes, and every run would otherwise add one more copy of
+    // the same file for the person to sort through.
+    if let Some(existing) = already_quarantined(&dir, bytes) {
+        return Ok(existing);
+    }
     for attempt in 0u32.. {
         let candidate = if attempt == 0 {
             dir.join(name)
@@ -224,6 +230,15 @@ pub fn quarantine(engine_dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf
         }
     }
     Err("no free name in the quarantine directory".to_owned())
+}
+
+/// The quarantined file holding exactly these bytes, if one does.
+fn already_quarantined(dir: &Path, bytes: &[u8]) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| std::fs::read(path).is_ok_and(|held| held == bytes))
 }
 
 /// Files waiting in quarantine, for `additionalContext` and `doctor`.

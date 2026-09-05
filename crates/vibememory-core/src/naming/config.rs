@@ -85,6 +85,13 @@ impl NamingConfig {
     }
 
     /// The first `ignoreCwd` pattern matching the rendered path, in configuration order.
+    /// Whether a canonical working directory is one the engine leaves alone. The migration asks
+    /// this about `/` before importing an archive of runner sessions that live there.
+    #[must_use]
+    pub fn ignores(&self, rendered_path: &str) -> bool {
+        self.ignore_match(rendered_path).is_some()
+    }
+
     pub(crate) fn ignore_match(&self, rendered_path: &str) -> Option<&str> {
         self.ignore
             .matches(rendered_path)

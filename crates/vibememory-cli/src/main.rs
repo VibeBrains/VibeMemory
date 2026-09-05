@@ -44,6 +44,7 @@ fn main() -> ExitCode {
             install(dry_run)
         }
         Some("tick") => tick_command(),
+        Some("migrate") => migrate_command(&args.collect::<Vec<String>>()),
         Some("relink") => relink_command(&args.collect::<Vec<String>>(), false),
         Some("import") => relink_command(&args.collect::<Vec<String>>(), true),
         Some("forget") => forget_command(args.next().as_deref()),
@@ -70,7 +71,8 @@ fn main() -> ExitCode {
             println!(
                 "commands: status, doctor, install [--dry-run], hook <event>, \
                  merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>, tick, \
-                 relink <enc> <name> <cwd>, import <enc> <name> <cwd>"
+                 relink <enc> <name> <cwd>, import <enc> <name> <cwd>, \
+                 migrate --from <dir> [--apply]"
             );
             ExitCode::SUCCESS
         }
@@ -834,4 +836,124 @@ fn relink_command(args: &[String], import: bool) -> ExitCode {
 /// Seconds since the epoch as a signed number, for arithmetic on stamps.
 fn epoch_seconds_signed() -> i64 {
     i64::try_from(epoch_seconds()).unwrap_or(i64::MAX)
+}
+
+/// `--from <dir>` and an optional `--apply`.
+fn migrate_args(args: &[String]) -> Result<(PathBuf, bool), String> {
+    let mut from: Option<PathBuf> = None;
+    let mut apply_it = false;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--from" => from = iter.next().map(PathBuf::from),
+            "--apply" => apply_it = true,
+            other => return Err(format!("unknown argument {other:?}")),
+        }
+    }
+    from.map(|source| (source, apply_it))
+        .ok_or_else(|| "usage: vibememory migrate --from <dir> [--apply]".to_owned())
+}
+
+/// `migrate --from <dir> [--apply]` — the old synced folder into the store.
+///
+/// Without `--apply` nothing is read but metadata: the plan says what would go where, and how
+/// many files are cloud placeholders that must be pinned first. The source is never written to.
+fn migrate_command(args: &[String]) -> ExitCode {
+    let (source, apply_it) = match migrate_args(args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            eprintln!("{message}");
+            return ExitCode::from(2);
+        }
+    };
+    let layout = layout();
+    let config = match read_config(&layout) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("config: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let Ok(store) = std::fs::canonicalize(layout.store()) else {
+        eprintln!("the store is not there yet; run `vibememory install` first");
+        return ExitCode::FAILURE;
+    };
+
+    let plan = match vibememory_cli::migrate::plan(&source, &config.machine_id) {
+        Ok(plan) => plan,
+        Err(error) => {
+            eprintln!("migrate: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "plan: {} file(s), {} MiB; {} left in the archive-only store; {} refused by the export \
+         gate; {} cloud placeholder(s) not on this disk",
+        plan.files.len(),
+        plan.bytes / (1024 * 1024),
+        plan.archived,
+        plan.refused.len(),
+        plan.dehydrated.len()
+    );
+    for (path, rule) in plan.refused.iter().take(20) {
+        println!("  refused: {path} — {rule}");
+    }
+    if plan.refused.len() > 20 {
+        println!("  … and {} more", plan.refused.len() - 20);
+    }
+    if !config.naming.ignores("/") {
+        println!(
+            "note: the archive-only store holds sessions with cwd `/`; add \"/\" to ignoreCwd in \
+             config.json so the hook leaves such sessions alone"
+        );
+    }
+    if !apply_it {
+        println!("dry run: nothing was written. Add --apply to migrate.");
+        return if plan.dehydrated.is_empty() {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+
+    match vibememory_cli::migrate::apply(
+        &source,
+        &store,
+        &layout.engine_dir,
+        &plan,
+        &vibememory_cli::clock::now(),
+    ) {
+        Ok(applied) => {
+            println!(
+                "copied {}, unchanged {}, merged {} transcript(s), quarantined {}, repaired {} \
+                 card(s), committed: {}",
+                applied.copied,
+                applied.unchanged,
+                applied.merged.len(),
+                applied.quarantined.len(),
+                applied.repaired_cards.len(),
+                applied.committed
+            );
+            for (path, ours, theirs) in &applied.merged {
+                println!("  merged: {path} (+{ours} store, +{theirs} source)");
+            }
+            for path in &applied.quarantined {
+                println!("  set aside: {path}");
+            }
+            if applied.mismatched.is_empty() {
+                ExitCode::SUCCESS
+            } else {
+                for path in &applied.mismatched {
+                    eprintln!(
+                        "MISMATCH: {path} does not hash to its source; nothing was committed"
+                    );
+                }
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            eprintln!("migrate: {error}");
+            ExitCode::FAILURE
+        }
+    }
 }

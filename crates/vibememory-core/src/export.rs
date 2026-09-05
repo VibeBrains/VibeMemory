@@ -88,8 +88,12 @@ const REFUSED: &[(Match, Refusal, &str)] = &[
         Refusal::Secret,
         "the OAuth tokens of every MCP server",
     ),
+    // Top level only, deliberately: the registry lives at the root of the config directory,
+    // while `projects/<name>/memory/sessions/` holds a person's saved session hand-offs — real
+    // data of theirs, found by the first dry run over a real archive. The peer tokens themselves
+    // are `.key` files, and those are refused wherever they appear.
     (
-        Match::AnySegment("sessions"),
+        Match::TopLevel("sessions"),
         Refusal::Secret,
         "the registry of live sessions and their peer tokens",
     ),
