@@ -23,6 +23,7 @@ use vibememory_cli::tick::{TickLock, Ticked, run};
 use vibememory_core::desktop::roots::Roots;
 use vibememory_core::naming::PathSyntax;
 
+const CUTOFF: &str = "2026-09-05T00:00:00Z";
 const STAMP: &str = "2026-09-05T10:00:00Z";
 const SESSION: &str = "11111111-1111-4111-8111-111111111111";
 
@@ -74,7 +75,7 @@ fn two_machines(temp: &TempDir) -> Pair {
 fn tick(store: &Path, temp: &TempDir) -> Ticked {
     let config_dir = temp.dir("claude");
     let roots = Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix);
-    run(store, &config_dir, "mac-test", &roots, None, STAMP)
+    run(store, &config_dir, "mac-test", &roots, None, STAMP, CUTOFF)
 }
 
 fn write_commit(store: &Path, relative: &str, contents: &str, message: &str) {
@@ -85,14 +86,14 @@ fn write_commit(store: &Path, relative: &str, contents: &str, message: &str) {
     git(store, &["commit", "--quiet", "-m", message]);
 }
 
-fn mark_live(store: &Path, machine: &str, session: &str) {
+fn mark_live_at(store: &Path, machine: &str, session: &str, at: &str) {
     let dir = store.join("machines").join(machine);
     fs::create_dir_all(&dir).expect("dirs");
     let mut live = Live::default();
     live.sessions.insert(
         session.to_owned(),
         LiveSession {
-            at: STAMP.to_owned(),
+            at: at.to_owned(),
             cwd: "/x".to_owned(),
         },
     );
@@ -101,6 +102,11 @@ fn mark_live(store: &Path, machine: &str, session: &str) {
         serde_json::to_string(&live).expect("encode"),
     )
     .expect("write live");
+}
+
+/// A heartbeat as fresh as this tick: the session is working right now.
+fn mark_live(store: &Path, machine: &str, session: &str) {
+    mark_live_at(store, machine, session, STAMP);
 }
 
 #[test]
@@ -332,5 +338,63 @@ fn memory_that_arrived_from_elsewhere_becomes_readable_files() {
         again.projected_memory.is_empty(),
         "an unchanged projection may not be rewritten every two minutes: {:?}",
         again.projected_memory
+    );
+}
+
+#[test]
+fn a_session_that_ended_without_a_hook_stops_blocking_everything() {
+    let temp = TempDir::new("tick-stale");
+    let pair = two_machines(&temp);
+    write_commit(
+        &pair.other,
+        &relative(),
+        "{\"uuid\":\"one\"}\n{\"uuid\":\"two\"}\n",
+        "their record",
+    );
+    git(&pair.other, &["push", "--quiet", "origin", "main"]);
+    // A crash, a kill, a lid closed on a dying battery: the heartbeat was never cleared, and this
+    // claim would hold back every merge of that file for ever.
+    mark_live_at(&pair.mac, "mac-test", SESSION, "2026-09-04T09:00:00Z");
+
+    let ticked = tick(&pair.mac, &temp);
+    assert_eq!(
+        ticked.stale_sessions,
+        vec![SESSION.to_owned()],
+        "an hour-old heartbeat is not a live session"
+    );
+    let live: Live = serde_json::from_str(
+        &fs::read_to_string(pair.mac.join("machines").join("mac-test").join("live.json"))
+            .expect("read"),
+    )
+    .expect("parse");
+    assert!(live.sessions.is_empty(), "the claim must be gone");
+
+    // And the merge it was holding back happens on the next tick.
+    let again = tick(&pair.mac, &temp);
+    assert!(again.merged, "nothing blocks it any more");
+}
+
+#[test]
+fn a_fresh_heartbeat_is_left_alone() {
+    let temp = TempDir::new("tick-fresh");
+    let pair = two_machines(&temp);
+    mark_live(&pair.mac, "mac-test", SESSION);
+
+    // The cutoff is older than the heartbeat: the session is working right now.
+    let config_dir = temp.dir("claude");
+    let roots = Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix);
+    let ticked = run(
+        &pair.mac,
+        &config_dir,
+        "mac-test",
+        &roots,
+        None,
+        STAMP,
+        "2020-01-01T00:00:00Z",
+    );
+    assert!(
+        ticked.stale_sessions.is_empty(),
+        "a live session must not be declared dead: {:?}",
+        ticked.stale_sessions
     );
 }

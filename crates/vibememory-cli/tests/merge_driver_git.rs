@@ -281,3 +281,70 @@ fn the_losing_memory_version_is_written_into_the_quarantine() {
         "what was set aside must be the version that lost"
     );
 }
+
+#[test]
+fn a_criss_cross_history_keeps_every_record() {
+    let temp = TempDir::new("driver-crisscross");
+    let store = temp.dir("store");
+    git_repo_with_commit(&store);
+    let relative = "projects/Project/session.jsonl";
+    commit_file(
+        &store,
+        relative,
+        &record("base", "2026-09-05T08:00:00Z"),
+        "base",
+    );
+    register_drivers(&store);
+    git(&store, &["branch", "left"]);
+    git(&store, &["branch", "right"]);
+
+    // Two machines each merged the other once before, so the two branches now have two merge
+    // bases and git has to invent a virtual ancestor. Recursive strategy calls the driver on that
+    // invented base — which is a merge our driver produced, not a file any machine ever wrote.
+    let mut lines = vec![record("base", "2026-09-05T08:00:00Z")];
+    git(&store, &["checkout", "--quiet", "left"]);
+    lines.push(record("left-1", "2026-09-05T08:01:00Z"));
+    commit_file(&store, relative, &lines.concat(), "left one");
+
+    git(&store, &["checkout", "--quiet", "right"]);
+    let mut right = vec![record("base", "2026-09-05T08:00:00Z")];
+    right.push(record("right-1", "2026-09-05T08:02:00Z"));
+    commit_file(&store, relative, &right.concat(), "right one");
+
+    // Each side takes the other's first record: this is what makes the history criss-cross.
+    git(&store, &["merge", "--quiet", "--no-edit", "left"]);
+    git(&store, &["checkout", "--quiet", "left"]);
+    git(&store, &["merge", "--quiet", "--no-edit", "right"]);
+
+    // And now each adds one more and they meet again.
+    let after_left = read(&store, relative);
+    commit_file(
+        &store,
+        relative,
+        &format!("{after_left}{}", record("left-2", "2026-09-05T08:03:00Z")),
+        "left two",
+    );
+    git(&store, &["checkout", "--quiet", "right"]);
+    let after_right = read(&store, relative);
+    commit_file(
+        &store,
+        relative,
+        &format!("{after_right}{}", record("right-2", "2026-09-05T08:04:00Z")),
+        "right two",
+    );
+    git(&store, &["merge", "--quiet", "--no-edit", "left"]);
+
+    let merged = read(&store, relative);
+    for uuid in ["base", "left-1", "right-1", "left-2", "right-2"] {
+        assert!(
+            merged.contains(&format!("\"{uuid}\"")),
+            "{uuid} was lost across a criss-cross merge: {merged}"
+        );
+    }
+    assert!(!merged.contains("<<<<"), "no markers: {merged}");
+    assert_eq!(
+        merged.lines().count(),
+        5,
+        "each record exactly once, whatever ancestor git invented: {merged}"
+    );
+}

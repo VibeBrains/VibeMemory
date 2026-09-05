@@ -42,6 +42,9 @@ pub struct Ticked {
     pub restored: Vec<String>,
     /// Projects whose memory projection was rewritten from records that arrived from elsewhere.
     pub projected_memory: Vec<String>,
+    /// Sessions dropped from this machine's live list because nothing has confirmed them for
+    /// longer than a machine that crashed would take to come back.
+    pub stale_sessions: Vec<String>,
     /// Desktop cards published to the outbox.
     pub cards_out: usize,
     /// Desktop cards written into the local Desktop store.
@@ -75,6 +78,7 @@ pub fn run(
     roots: &Roots,
     desktop_store: Option<&Path>,
     stamp: &str,
+    heartbeat_cutoff: &str,
 ) -> Ticked {
     let mut result = Ticked {
         fetched: fetch(store),
@@ -133,6 +137,11 @@ pub fn run(
 
     match restore_deleted_transcripts(store) {
         Ok(restored) => result.restored = restored,
+        Err(problem) => result.problems.push(problem),
+    }
+
+    match clear_stale_heartbeats(store, machine_id, heartbeat_cutoff) {
+        Ok(cleared) => result.stale_sessions = cleared,
         Err(problem) => result.problems.push(problem),
     }
 
@@ -558,4 +567,50 @@ fn confirmed_transcripts(
             Some((id, path))
         })
         .collect()
+}
+
+/// How long a session may go without a heartbeat before this machine stops claiming it is live.
+///
+/// The hooks refresh it on every stop and at the end, so a session unheard-of for this long ended
+/// in a way that ran no hook: a crash, a kill, a machine that lost power. Left in place, it would
+/// hold back every merge of that session's file and refuse every relink for ever.
+pub const HEARTBEAT_STALE_AFTER: Duration = Duration::from_hours(1);
+
+/// Drops this machine's own stale claims.
+///
+/// Only its own. Another machine's `live.json` is that machine's to correct, and deciding from
+/// here that somebody else is dead is exactly the mistake that ends with two machines writing one
+/// file — their clock is not ours, and their silence may be a closed lid.
+///
+/// `cutoff` is a stamp from this machine's clock; comparison is textual, which is exact for
+/// ISO-8601 in UTC and needs no date arithmetic.
+fn clear_stale_heartbeats(
+    store: &Path,
+    machine_id: &str,
+    cutoff: &str,
+) -> Result<Vec<String>, String> {
+    let path = store.join("machines").join(machine_id).join("live.json");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Ok(Vec::new());
+    };
+    let Ok(mut live) = serde_json::from_str::<Live>(&text) else {
+        return Ok(Vec::new());
+    };
+    let stale: Vec<String> = live
+        .sessions
+        .iter()
+        .filter(|(_, session)| session.at.as_str() < cutoff)
+        .map(|(id, _)| id.clone())
+        .collect();
+    if stale.is_empty() {
+        return Ok(Vec::new());
+    }
+    for id in &stale {
+        live.sessions.remove(id);
+    }
+    let text = serde_json::to_string_pretty(&live).map_err(|error| error.to_string())?;
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, text.as_bytes()).map_err(|error| error.to_string())?;
+    std::fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
+    Ok(stale)
 }

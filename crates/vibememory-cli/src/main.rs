@@ -44,6 +44,8 @@ fn main() -> ExitCode {
             install(dry_run)
         }
         Some("tick") => tick_command(),
+        Some("relink") => relink_command(&args.collect::<Vec<String>>(), false),
+        Some("import") => relink_command(&args.collect::<Vec<String>>(), true),
         Some("forget") => forget_command(args.next().as_deref()),
         Some("merge-driver") => merge_driver_command(&args.collect::<Vec<String>>()),
         Some("hook") => match args.next().as_deref() {
@@ -67,7 +69,8 @@ fn main() -> ExitCode {
             println!("vibememory {}", env!("CARGO_PKG_VERSION"));
             println!(
                 "commands: status, doctor, install [--dry-run], hook <event>, \
-                 merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>, tick"
+                 merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>, tick, \
+                 relink <enc> <name> <cwd>, import <enc> <name> <cwd>"
             );
             ExitCode::SUCCESS
         }
@@ -256,9 +259,28 @@ fn session_start_hook() -> ExitCode {
             },
         );
     }
-    match decision.additional_context() {
-        Some(message) => say(&message),
-        None => ExitCode::SUCCESS,
+    // Anything a merge in the tick needed a person to know has been waiting for a session to
+    // exist; this is that session.
+    let mut notes: Vec<String> = vibememory_cli::merge_report::read_pending(&layout.engine_dir);
+    if !notes.is_empty() {
+        let _ = vibememory_cli::merge_report::clear_pending(&layout.engine_dir);
+    }
+    let waiting = vibememory_cli::memory::quarantined(&layout.engine_dir);
+    if !waiting.is_empty() {
+        notes.push(format!(
+            "VibeMemory: {} version(s) of memory files are waiting in the quarantine to be \
+             reconciled ({}).",
+            waiting.len(),
+            waiting.join(", ")
+        ));
+    }
+    if let Some(message) = decision.additional_context() {
+        notes.push(message);
+    }
+    if notes.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        say(&notes.join(" "))
     }
 }
 
@@ -560,6 +582,22 @@ fn merge_driver_command(args: &[String]) -> ExitCode {
         &stamp,
     ) {
         Ok(outcome) => {
+            // The report is split three ways here: one line to the log always, the parts a person
+            // must act on into a file the next session reads, the rest into doctor's warnings.
+            if let vibememory_cli::merge_driver::DriverOutcome::Jsonl(report) = &outcome {
+                let merged = std::fs::read(std::path::Path::new(ours)).unwrap_or_default();
+                let duplicates = vibememory_cli::merge_report::duplicate_message_ids(&merged);
+                let routed = vibememory_cli::merge_report::route(path, report, &duplicates);
+                let _ = vibememory_cli::merge_report::append_to_log(
+                    &layout.engine_dir,
+                    &vibememory_cli::clock::now(),
+                    &routed.log,
+                );
+                for note in routed.session.iter().chain(&routed.doctor) {
+                    eprintln!("vibememory: {note}");
+                }
+                let _ = vibememory_cli::merge_report::save_pending(&layout.engine_dir, &routed);
+            }
             // The losing version is written to disk here, not inside the driver: the core has no
             // file system, and a version that was only reported would be a version lost.
             if let vibememory_cli::merge_driver::DriverOutcome::KeepBoth(outcome) = &outcome
@@ -677,6 +715,10 @@ fn tick_command() -> ExitCode {
         &roots,
         desktop.as_deref(),
         &vibememory_cli::clock::now(),
+        &vibememory_cli::clock::iso8601(
+            epoch_seconds_signed()
+                - i64::try_from(vibememory_cli::tick::HEARTBEAT_STALE_AFTER.as_secs()).unwrap_or(0),
+        ),
     );
     if ticked.merged {
         println!("merged what the other machines wrote");
@@ -698,6 +740,9 @@ fn tick_command() -> ExitCode {
             "brought in: {} history line(s), {} task file(s)",
             ticked.imported.history_in, ticked.imported.tasks_in
         );
+    }
+    for session in &ticked.stale_sessions {
+        println!("no longer live here: {session} has not been heard from in an hour");
     }
     for enc in &ticked.linked {
         println!("linked: {enc}");
@@ -725,4 +770,68 @@ fn tick_command() -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// `relink <enc> <name> <cwd>` and `import <enc> <name> <cwd>`.
+///
+/// Both refuse while any machine reports a live session in that working directory. That check is
+/// the whole reason these are commands and not something a hook does quietly.
+fn relink_command(args: &[String], import: bool) -> ExitCode {
+    let verb = if import { "import" } else { "relink" };
+    let [enc, name, cwd] = args else {
+        eprintln!("usage: vibememory {verb} <enc> <store-name> <cwd>");
+        return ExitCode::from(2);
+    };
+    let layout = layout();
+    let config = match read_config(&layout) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("config: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let Ok(store) = std::fs::canonicalize(layout.store()) else {
+        eprintln!("the store is not there yet; run `vibememory install` first");
+        return ExitCode::FAILURE;
+    };
+    let portable = portable_cwd(&config, &canonical_cwd(cwd, PathSyntax::Posix));
+
+    if import {
+        match vibememory_cli::relink::import_real_directory(
+            &layout.config_dir,
+            &store,
+            enc,
+            name,
+            &portable,
+        ) {
+            Ok(imported) => {
+                println!(
+                    "imported {} file(s) into projects/{name}; {} already in the store",
+                    imported.copied.len(),
+                    imported.kept.len()
+                );
+                ExitCode::SUCCESS
+            }
+            Err(refusal) => {
+                eprintln!("import refused: {}", refusal.message());
+                ExitCode::FAILURE
+            }
+        }
+    } else {
+        match vibememory_cli::relink::relink(&layout.config_dir, &store, enc, name, &portable) {
+            Ok(target) => {
+                println!("{enc} now points at {}", target.display());
+                ExitCode::SUCCESS
+            }
+            Err(refusal) => {
+                eprintln!("relink refused: {}", refusal.message());
+                ExitCode::FAILURE
+            }
+        }
+    }
+}
+
+/// Seconds since the epoch as a signed number, for arithmetic on stamps.
+fn epoch_seconds_signed() -> i64 {
+    i64::try_from(epoch_seconds()).unwrap_or(i64::MAX)
 }

@@ -25,6 +25,8 @@ pub mod install;
 pub mod links_file;
 pub mod memory;
 pub mod merge_driver;
+pub mod merge_report;
 pub mod outbox;
+pub mod relink;
 pub mod store;
 pub mod tick;

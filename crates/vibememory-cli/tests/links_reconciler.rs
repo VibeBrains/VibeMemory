@@ -23,6 +23,7 @@ use vibememory_core::desktop::roots::Roots;
 use vibememory_core::links::LinkSource;
 use vibememory_core::naming::PathSyntax;
 
+const CUTOFF: &str = "2026-09-05T00:00:00Z";
 const STAMP: &str = "2026-09-05T12:00:00Z";
 const ENC: &str = "-work-Project";
 
@@ -118,6 +119,7 @@ fn the_reconciler_creates_the_link_another_machine_needs() {
         &roots(&projects_root),
         None,
         STAMP,
+        CUTOFF,
     );
     assert_eq!(ticked.linked, vec![ENC.to_owned()], "{ticked:?}");
     assert_eq!(
@@ -142,6 +144,7 @@ fn the_reconciler_creates_the_link_another_machine_needs() {
         &roots(&projects_root),
         None,
         STAMP,
+        CUTOFF,
     );
     assert!(again.linked.is_empty(), "{:?}", again.linked);
 }
@@ -168,6 +171,7 @@ fn a_working_directory_this_machine_does_not_have_is_left_alone() {
         &roots(&projects_root),
         None,
         STAMP,
+        CUTOFF,
     );
     assert!(
         ticked.linked.is_empty(),
@@ -206,6 +210,7 @@ fn two_machines_that_name_one_directory_differently_are_reported_not_resolved() 
         &roots(&projects_root),
         None,
         STAMP,
+        CUTOFF,
     );
     assert_eq!(
         ticked.disagreements,
