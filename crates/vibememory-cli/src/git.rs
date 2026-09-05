@@ -122,6 +122,79 @@ pub fn run_with_timeout(mut command: Command, timeout: Duration) -> Result<Optio
     ))
 }
 
+/// Runs a prepared command, writing `stdin_bytes` to its input first.
+///
+/// Used for `hash-object -w --stdin`, which is how a snapshot of a live file enters the object
+/// database without `git add` ever looking at the file itself.
+///
+/// # Errors
+///
+/// The text of what went wrong; the deadline counts as a failure, as everywhere here.
+pub fn run_with_input(
+    mut command: Command,
+    stdin_bytes: &[u8],
+    timeout: Duration,
+) -> Result<Option<String>, String> {
+    use std::io::Write;
+
+    command.stdin(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("git could not be started: {error}"))?;
+    {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "git took no stdin".to_owned())?;
+        stdin
+            .write_all(stdin_bytes)
+            .map_err(|error| format!("writing to git failed: {error}"))?;
+    }
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {}
+            Err(error) => return Err(format!("waiting for git failed: {error}")),
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!(
+                "git did not answer within {}ms",
+                timeout.as_millis()
+            ));
+        }
+        std::thread::sleep(POLL);
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("reading git output failed: {error}"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(
+        String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+    ))
+}
+
+/// A git command prepared to run in `dir` with the environment stripped.
+#[must_use]
+pub fn command(dir: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new("git");
+    command
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for name in variables_to_remove(environment_names()) {
+        command.env_remove(name);
+    }
+    command
+}
+
 /// Which of the given variable names must be removed before git is spawned.
 ///
 /// Kept pure and separate from reading the environment: this is the rule worth testing, and the

@@ -15,6 +15,7 @@
     clippy::disallowed_macros
 )]
 
+pub mod clock;
 pub mod config;
 pub mod git;
 pub mod hook;

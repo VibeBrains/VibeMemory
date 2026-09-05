@@ -12,6 +12,9 @@ use std::process::ExitCode;
 use vibememory_cli::config::Config;
 use vibememory_cli::hook::parse_input;
 use vibememory_cli::hook::session_start;
+use vibememory_cli::hook::stop::{
+    PUSH_DEBOUNCE, commit_snapshot, push_if_due, record_end, record_progress,
+};
 use vibememory_cli::install::{Layout, State, apply, plan};
 use vibememory_cli::store::existing;
 use vibememory_core::naming::{
@@ -35,8 +38,10 @@ fn main() -> ExitCode {
         }
         Some("hook") => match args.next().as_deref() {
             Some("session-start") => session_start_hook(),
+            Some("stop") => session_progress_hook(false),
+            Some("session-end") => session_progress_hook(true),
             other => {
-                eprintln!("unknown hook {other:?}; try session-start");
+                eprintln!("unknown hook {other:?}; try session-start, stop or session-end");
                 ExitCode::from(2)
             }
         },
@@ -239,4 +244,87 @@ fn say(message: &str) -> ExitCode {
     });
     println!("{payload}");
     ExitCode::SUCCESS
+}
+
+/// `Stop` and `SessionEnd`: commit what the session has written so far.
+///
+/// Both events do the same work, because neither can be relied on alone: a session whose turn
+/// fails produces `SessionEnd` and no `Stop` (measured on 2.1.258), while a long session produces
+/// many `Stop`s and one `SessionEnd` at the very end. Committing twice costs nothing — an
+/// unchanged snapshot makes no commit — and missing one costs the session's history.
+///
+/// Exits 0 like every hook. The snapshot is cut at the last newline, so what is committed is
+/// always a whole number of records; the live file itself is never handed to git.
+fn session_progress_hook(ended: bool) -> ExitCode {
+    let mut text = String::new();
+    if let Err(error) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text) {
+        return say(&format!("VibeMemory could not read its input: {error}"));
+    }
+    let input = match parse_input(&text) {
+        Ok(input) => input,
+        Err(error) => return say(&error.message()),
+    };
+    let layout = layout();
+    let config = match read_config(&layout) {
+        Ok(config) => config,
+        Err(error) => return say(&format!("VibeMemory is not configured: {error}")),
+    };
+
+    // The transcript is reached through the link, so its real path is inside the store — unless
+    // this session is one the hook could not link, and then there is nothing to commit here.
+    let Ok(store) = std::fs::canonicalize(layout.store()) else {
+        return ExitCode::SUCCESS;
+    };
+    let transcript = std::path::PathBuf::from(&input.transcript_path);
+    let Ok(real) = std::fs::canonicalize(&transcript) else {
+        return ExitCode::SUCCESS;
+    };
+    let Ok(relative) = real.strip_prefix(&store) else {
+        // A session in a real directory: the tick imports it, and saying so on every stop would
+        // be noise, since SessionStart already said it once.
+        return ExitCode::SUCCESS;
+    };
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    let stamp = vibememory_cli::clock::now();
+
+    if let Err(error) = commit_snapshot(&store, &real, &relative, &stamp) {
+        return say(&format!(
+            "VibeMemory could not commit this session: {error}"
+        ));
+    }
+    let cwd = portable_cwd(&config, &input.cwd);
+    if let Err(error) = record_progress(
+        &store,
+        &config.machine_id,
+        &input.session_id,
+        &cwd,
+        &real,
+        &stamp,
+    ) {
+        return say(&format!("VibeMemory could not record progress: {error}"));
+    }
+    if ended && let Err(error) = record_end(&store, &config.machine_id, &input.session_id) {
+        return say(&format!("VibeMemory could not close this session: {error}"));
+    }
+    // A push that does not happen costs nothing here: the commit is already on this disk, and the
+    // tick pushes again in two minutes.
+    let _ = push_if_due(&store, &layout.engine_dir, epoch_seconds(), PUSH_DEBOUNCE);
+    ExitCode::SUCCESS
+}
+
+/// The working directory in the form other machines can read, or the local one when no root
+/// covers it — a path nobody can translate is still better in a log than nothing.
+fn portable_cwd(config: &Config, cwd: &str) -> String {
+    let roots = vibememory_core::desktop::roots::Roots::new(
+        config.roots.clone().into_iter().collect(),
+        PathSyntax::Posix,
+    );
+    roots.to_portable(cwd).unwrap_or_else(|_| cwd.to_owned())
+}
+
+/// Seconds since the epoch, for the push debounce.
+fn epoch_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
 }
