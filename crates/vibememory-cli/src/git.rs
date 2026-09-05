@@ -266,3 +266,55 @@ fn read_dot_git(path: &Path) -> Result<Option<DotGit>, String> {
         Err(error) => Err(format!("{text} could not be read: {error}")),
     }
 }
+
+/// Paths under `pathspec` that differ from HEAD or are untracked, as bare paths.
+///
+/// Two plumbing commands instead of `status --porcelain`: porcelain's two-character status
+/// column makes the first line's leading space significant, and the runner trims output. Bare
+/// path lists have nothing to trim away.
+///
+/// # Errors
+///
+/// The text of what went wrong.
+pub fn changed_paths(
+    store: &Path,
+    pathspec: &str,
+    timeout: Duration,
+) -> Result<Vec<String>, String> {
+    let has_head = run_with_timeout(
+        command(store, &["rev-parse", "--verify", "--quiet", "HEAD"]),
+        timeout,
+    )?
+    .is_some();
+    let mut paths: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    if has_head {
+        let modified = run_with_timeout(
+            command(store, &["diff", "--name-only", "HEAD", "--", pathspec]),
+            timeout,
+        )?
+        .unwrap_or_default();
+        paths.extend(
+            modified
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_owned),
+        );
+    }
+    let untracked = run_with_timeout(
+        command(
+            store,
+            &["ls-files", "--others", "--exclude-standard", "--", pathspec],
+        ),
+        timeout,
+    )?
+    .unwrap_or_default();
+    paths.extend(
+        untracked
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_owned),
+    );
+    Ok(paths.into_iter().collect())
+}

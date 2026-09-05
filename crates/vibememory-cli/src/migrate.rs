@@ -338,11 +338,16 @@ pub fn apply(
     if !run.applied.mismatched.is_empty() {
         return Ok(run.applied);
     }
-    if !run.written.is_empty() {
-        commit(store, &run.written, stamp)?;
+    // Everything the plan owns that git sees as changed is committed — not only what this run
+    // wrote. A previous run may have merged a file and then stopped before its commit; the file
+    // is on disk, it is ours, and leaving it uncommitted for ever would be a migration that
+    // silently never finished.
+    let pending = pending_destinations(store, plan)?;
+    if !pending.is_empty() {
+        commit(store, &pending, stamp)?;
         run.applied.committed = true;
     }
-    run.applied.written = run.written;
+    run.applied.written = pending;
     Ok(run.applied)
 }
 
@@ -604,6 +609,22 @@ fn dest_is_union_of(store: &Path, dest: &str, source_root: &Path, source: &str) 
     want.split(|b| *b == b'\n')
         .filter(|line| !line.is_empty())
         .all(|line| have_lines.contains(line))
+}
+
+/// The plan's destinations that git reports as modified or untracked.
+fn pending_destinations(store: &Path, plan: &Plan) -> Result<Vec<String>, String> {
+    let wanted: std::collections::BTreeSet<String> = plan
+        .files
+        .iter()
+        .map(|planned| match &planned.kind {
+            Kind::TranscriptCopy { into } | Kind::OtherCopy { of: into } => into.clone(),
+            Kind::Copy | Kind::Card { .. } => planned.dest.clone(),
+        })
+        .collect();
+    Ok(git::changed_paths(store, ".", TIMEOUT)?
+        .into_iter()
+        .filter(|path| wanted.contains(path))
+        .collect())
 }
 
 /// Stages exactly the written paths and commits: the store may hold a live file or two by the

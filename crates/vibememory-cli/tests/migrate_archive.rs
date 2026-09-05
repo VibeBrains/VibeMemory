@@ -404,3 +404,45 @@ fn a_memory_file_the_store_rewrote_since_does_not_stop_the_next_run() {
             .contains("appended-elsewhere")
     );
 }
+
+#[test]
+fn a_file_an_earlier_run_left_uncommitted_is_committed_by_the_next() {
+    let temp = TempDir::new("migrate-leftover");
+    let source = old_folder(&temp);
+    let store = store(&temp);
+    let engine = temp.dir("engine");
+    apply(
+        &source,
+        &store,
+        &engine,
+        &plan(&source, MACHINE).expect("plan"),
+        STAMP,
+    )
+    .expect("first");
+    // An earlier run merged this and stopped before committing: the bytes are on disk, in the
+    // plan's own destination, and nothing else will ever commit them.
+    write(
+        &store.join("projects/VibeIDE/s1.jsonl"),
+        &format!("{}{}", record("a"), record("left-over")),
+    );
+
+    let again = apply(
+        &source,
+        &store,
+        &engine,
+        &plan(&source, MACHINE).expect("plan"),
+        STAMP,
+    )
+    .expect("second");
+    assert!(again.committed, "{again:?}");
+    let status = std::process::Command::new("git")
+        .args(["status", "--short", "--", "projects"])
+        .current_dir(&store)
+        .output()
+        .expect("git status");
+    assert!(
+        status.stdout.is_empty(),
+        "nothing of the plan may stay uncommitted: {}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+}

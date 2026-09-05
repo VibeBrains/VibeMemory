@@ -398,3 +398,39 @@ fn a_fresh_heartbeat_is_left_alone() {
         ticked.stale_sessions
     );
 }
+
+#[test]
+fn what_the_hooks_wrote_into_the_outbox_is_committed_by_the_tick() {
+    let temp = TempDir::new("tick-outbox-commit");
+    let pair = two_machines(&temp);
+    // A hook recorded progress: the files exist, nothing committed them.
+    let transcript = temp.path().join("live.jsonl");
+    fs::write(&transcript, "{\"uuid\":\"one\"}\n").expect("write");
+    vibememory_cli::hook::stop::record_progress(
+        &pair.mac,
+        "mac-test",
+        SESSION,
+        "/x",
+        &transcript,
+        STAMP,
+    )
+    .expect("record");
+
+    let ticked = tick(&pair.mac, &temp);
+    assert!(ticked.outbox_committed > 0, "{ticked:?}");
+    let output = std::process::Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", "HEAD"])
+        .current_dir(&pair.mac)
+        .output()
+        .expect("ls-tree");
+    let tree = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        tree.contains("machines/mac-test/tails.json"),
+        "until the tick commits it, nothing this machine says reaches the others: {tree}"
+    );
+    assert_eq!(
+        tick(&pair.mac, &temp).outbox_committed,
+        0,
+        "an unchanged outbox makes no commit"
+    );
+}

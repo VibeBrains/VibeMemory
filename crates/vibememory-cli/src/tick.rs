@@ -42,6 +42,8 @@ pub struct Ticked {
     pub restored: Vec<String>,
     /// Projects whose memory projection was rewritten from records that arrived from elsewhere.
     pub projected_memory: Vec<String>,
+    /// Files of this machine's outbox (`machines/<id>/**`) committed by this tick.
+    pub outbox_committed: usize,
     /// Sessions dropped from this machine's live list because nothing has confirmed them for
     /// longer than a machine that crashed would take to come back.
     pub stale_sessions: Vec<String>,
@@ -137,6 +139,11 @@ pub fn run(
 
     match restore_deleted_transcripts(store) {
         Ok(restored) => result.restored = restored,
+        Err(problem) => result.problems.push(problem),
+    }
+
+    match commit_own_outbox(store, machine_id, stamp) {
+        Ok(files) => result.outbox_committed = files,
         Err(problem) => result.problems.push(problem),
     }
 
@@ -596,4 +603,28 @@ fn clear_stale_heartbeats(
     std::fs::write(&temporary, text.as_bytes()).map_err(|error| error.to_string())?;
     std::fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
     Ok(stale)
+}
+
+/// Commits this machine's outbox: `links.json`, `live.json`, `tails.json`, the cards, the
+/// tombstones. The hooks write these files but do not commit them — a hook has ten seconds and
+/// no business running git commits — so until the tick does, nothing this machine says reaches
+/// the others. Only its own directory is staged, by path; never `git add -A`.
+fn commit_own_outbox(store: &Path, machine_id: &str, stamp: &str) -> Result<usize, String> {
+    let own = format!("machines/{machine_id}");
+    if !store.join(&own).is_dir() {
+        return Ok(0);
+    }
+    let changed = git::changed_paths(store, &own, TIMEOUT)?;
+    if changed.is_empty() {
+        return Ok(0);
+    }
+    git::run_with_timeout(git::command(store, &["add", "--", &own]), TIMEOUT)?
+        .ok_or_else(|| "git refused to stage the outbox".to_owned())?;
+    let message = format!("vibememory: outbox of {machine_id} at {stamp}");
+    git::run_with_timeout(
+        git::command(store, &["commit", "--quiet", "-m", &message]),
+        TIMEOUT,
+    )?
+    .ok_or_else(|| "git refused to commit the outbox".to_owned())?;
+    Ok(changed.len())
 }

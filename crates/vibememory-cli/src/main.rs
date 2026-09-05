@@ -744,6 +744,9 @@ fn tick_command() -> ExitCode {
             ticked.imported.history_in, ticked.imported.tasks_in
         );
     }
+    if ticked.outbox_committed > 0 {
+        println!("outbox committed: {} file(s)", ticked.outbox_committed);
+    }
     for session in &ticked.stale_sessions {
         println!("no longer live here: {session} has not been heard from in an hour");
     }
