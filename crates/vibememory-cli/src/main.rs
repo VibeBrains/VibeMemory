@@ -11,10 +11,12 @@ use std::process::ExitCode;
 
 use vibememory_cli::config::Config;
 use vibememory_cli::hook::parse_input;
+use vibememory_cli::hook::prompt_gate::{Gate, decide};
 use vibememory_cli::hook::session_start;
 use vibememory_cli::hook::stop::{
     PUSH_DEBOUNCE, commit_snapshot, push_if_due, record_end, record_progress,
 };
+use vibememory_cli::hook::stop::{Tail, Tails};
 use vibememory_cli::install::{Layout, State, apply, plan};
 use vibememory_cli::store::existing;
 use vibememory_core::naming::{
@@ -40,8 +42,12 @@ fn main() -> ExitCode {
             Some("session-start") => session_start_hook(),
             Some("stop") => session_progress_hook(false),
             Some("session-end") => session_progress_hook(true),
+            Some("user-prompt-submit") => prompt_gate_hook(),
             other => {
-                eprintln!("unknown hook {other:?}; try session-start, stop or session-end");
+                eprintln!(
+                    "unknown hook {other:?}; try session-start, stop, session-end or \
+                     user-prompt-submit"
+                );
                 ExitCode::from(2)
             }
         },
@@ -327,4 +333,80 @@ fn epoch_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())
+}
+
+/// `UserPromptSubmit`: hold a prompt back only when another machine is provably ahead.
+///
+/// Every failure path here lets the prompt through. A gate that stops somebody because a file
+/// could not be read is a gate that gets switched off, and then it guards nothing.
+fn prompt_gate_hook() -> ExitCode {
+    let mut text = String::new();
+    if std::io::Read::read_to_string(&mut std::io::stdin(), &mut text).is_err() {
+        return ExitCode::SUCCESS;
+    }
+    let Ok(input) = parse_input(&text) else {
+        return ExitCode::SUCCESS;
+    };
+    let layout = layout();
+    let Ok(config) = read_config(&layout) else {
+        return ExitCode::SUCCESS;
+    };
+    let Ok(store) = std::fs::canonicalize(layout.store()) else {
+        return ExitCode::SUCCESS;
+    };
+
+    // An unreadable local transcript must never become a block: `0 lines` would make every other
+    // machine look ahead. Not knowing our own state is exactly the doubt this gate resolves in
+    // favour of the person typing.
+    let local_lines = match std::fs::read(&input.transcript_path) {
+        Ok(bytes) => vibememory_core::merge::jsonl::survey(&bytes).lines,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(_) => return ExitCode::SUCCESS,
+    };
+    let others = other_machines_tails(&store, &config.machine_id, &input.session_id);
+
+    let gate = decide(local_lines, &others);
+    match gate {
+        Gate::Allow => ExitCode::SUCCESS,
+        Gate::Block { .. } => {
+            let Some(reason) = gate.reason() else {
+                return ExitCode::SUCCESS;
+            };
+            let payload = serde_json::json!({
+                "decision": "block",
+                "reason": reason,
+            });
+            println!("{payload}");
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+/// What the other machines report about this session, from what the tick has already fetched.
+/// Anything unreadable is simply absent: it may not turn into a block.
+fn other_machines_tails(
+    store: &std::path::Path,
+    own_machine: &str,
+    session_id: &str,
+) -> Vec<(String, Tail)> {
+    let Ok(entries) = std::fs::read_dir(store.join("machines")) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let machine = entry.file_name().to_string_lossy().into_owned();
+        if machine == own_machine {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(entry.path().join("tails.json")) else {
+            continue;
+        };
+        let Ok(tails) = serde_json::from_str::<Tails>(&text) else {
+            continue;
+        };
+        if let Some(tail) = tails.sessions.get(session_id) {
+            found.push((machine, tail.clone()));
+        }
+    }
+    found
 }

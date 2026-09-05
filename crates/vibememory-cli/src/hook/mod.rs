@@ -5,6 +5,7 @@
 //! `additionalContext`, because a hook that returns an error stops the session it was supposed
 //! to serve.
 
+pub mod prompt_gate;
 pub mod session_start;
 pub mod stop;
 
