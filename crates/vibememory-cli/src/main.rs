@@ -10,8 +10,14 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use vibememory_cli::config::Config;
+use vibememory_cli::hook::parse_input;
+use vibememory_cli::hook::session_start;
 use vibememory_cli::install::{Layout, State, apply, plan};
-use vibememory_core::naming::PathSyntax;
+use vibememory_cli::store::existing;
+use vibememory_core::naming::{
+    IgnoreReason, NamingInput, PathSyntax, Resolution, canonical_cwd, enc_from_transcript_path,
+    resolve_store_name,
+};
 
 /// The engine's own directory, under the home directory unless told otherwise.
 const ENGINE_DIR_VAR: &str = "VIBEMEMORY_DIR";
@@ -27,13 +33,20 @@ fn main() -> ExitCode {
             let dry_run = args.any(|arg| arg == "--dry-run");
             install(dry_run)
         }
+        Some("hook") => match args.next().as_deref() {
+            Some("session-start") => session_start_hook(),
+            other => {
+                eprintln!("unknown hook {other:?}; try session-start");
+                ExitCode::from(2)
+            }
+        },
         Some(other) => {
             eprintln!("unknown command {other:?}; try status, doctor or install");
             ExitCode::from(2)
         }
         None => {
             println!("vibememory {}", env!("CARGO_PKG_VERSION"));
-            println!("commands: status, doctor, install [--dry-run]");
+            println!("commands: status, doctor, install [--dry-run], hook session-start");
             ExitCode::SUCCESS
         }
     }
@@ -131,4 +144,99 @@ fn install(dry_run: bool) -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// How long the hook waits for git before deciding without it. The CLI gives a `SessionStart`
+/// hook ten seconds; spending most of that on one command would risk the session.
+const GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Set by the CLI when every working directory of a run shares one project directory.
+const PROJECT_DIR_NAME_VAR: &str = "CLAUDE_CODE_PROJECT_DIR_NAME";
+
+/// `SessionStart`: put the link in place before the CLI creates a real directory.
+///
+/// Always exits 0. A hook that fails takes the session with it, and no synchronisation is worth
+/// that; whatever went wrong is said through `additionalContext` instead.
+fn session_start_hook() -> ExitCode {
+    let mut text = String::new();
+    if let Err(error) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text) {
+        return say(&format!("VibeMemory could not read its input: {error}"));
+    }
+    let input = match parse_input(&text) {
+        Ok(input) => input,
+        Err(error) => return say(&error.message()),
+    };
+
+    let layout = layout();
+    let config = match read_config(&layout) {
+        Ok(config) => config,
+        Err(error) => return say(&format!("VibeMemory is not configured: {error}")),
+    };
+
+    let syntax = session_start::host_syntax();
+    // The encoded directory name comes from the transcript path the CLI itself reports: the
+    // encoding is its answer, never our guess.
+    let enc = match enc_from_transcript_path(&input.transcript_path, syntax) {
+        Ok(enc) => enc,
+        Err(error) => {
+            return say(&format!(
+                "VibeMemory could not read the transcript path: {error}"
+            ));
+        }
+    };
+    let cwd = canonical_cwd(&input.cwd, syntax);
+    let names = existing(&layout.store(), GIT_TIMEOUT);
+    // The CLI shares one project directory between every working directory of a run when this is
+    // set, so the core has to see it: without it the engine would name a store per directory and
+    // link them all to the same place.
+    let project_dir_name = std::env::var(PROJECT_DIR_NAME_VAR).ok();
+    let naming = NamingInput {
+        cwd: &cwd,
+        syntax,
+        project_dir_name: project_dir_name.as_deref(),
+    };
+    let resolution = resolve_store_name(&naming, || probe_git(&cwd), &config.naming, &names.names);
+
+    let decision = match resolution {
+        Ok(Resolution::Named { name, .. }) => {
+            session_start::decide(&layout, &enc, Some(&name), None)
+        }
+        Ok(Resolution::Ignored { reason }) => {
+            let reason = match reason {
+                IgnoreReason::Pattern(pattern) => format!("ignoreCwd matched {pattern}"),
+                IgnoreReason::ProjectDirName(name) => {
+                    format!("CLAUDE_CODE_PROJECT_DIR_NAME is {name}")
+                }
+            };
+            session_start::decide(&layout, &enc, None, Some(&reason))
+        }
+        Err(error) => return say(&format!("VibeMemory could not name this project: {error}")),
+    };
+
+    if let Err(error) = session_start::perform(&layout, &decision) {
+        return say(&format!(
+            "VibeMemory could not put the link in place: {error}"
+        ));
+    }
+    match decision.additional_context() {
+        Some(message) => say(&message),
+        None => ExitCode::SUCCESS,
+    }
+}
+
+/// Runs git for the naming rules, in the canonical working directory.
+fn probe_git(cwd: &str) -> vibememory_core::naming::GitProbe {
+    vibememory_cli::git::probe(std::path::Path::new(cwd), GIT_TIMEOUT)
+}
+
+/// Says one sentence to the session and exits 0, which is the only exit code a hook may use.
+fn say(message: &str) -> ExitCode {
+    let payload = serde_json::json!({
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": message,
+        }
+    });
+    println!("{payload}");
+    ExitCode::SUCCESS
 }

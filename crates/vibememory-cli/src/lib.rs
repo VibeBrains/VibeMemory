@@ -17,5 +17,6 @@
 
 pub mod config;
 pub mod git;
+pub mod hook;
 pub mod install;
 pub mod store;
