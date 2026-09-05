@@ -239,3 +239,74 @@ fn a_project_the_store_does_not_hold_yet_keeps_its_old_link() {
             .any(|(_, why)| why.contains("migrate first"))
     );
 }
+
+/// The CLI's registry entry for a session, as `sessions/<pid>.json` holds it.
+fn register_session(config_dir: &Path, pid: u32, cwd: &Path) {
+    let dir = config_dir.join("sessions");
+    fs::create_dir_all(&dir).expect("sessions dir");
+    fs::write(
+        dir.join(format!("{pid}.json")),
+        format!(
+            "{{\"pid\":\"{pid}\",\"sessionId\":\"s\",\"cwd\":\"{}\",\"kind\":\"interactive\"}}",
+            cwd.display()
+        ),
+    )
+    .expect("registry entry");
+}
+
+/// A project link named after a working directory, into the old shared store.
+fn link_for(m: &Machine, cwd: &Path) -> PathBuf {
+    let enc = vibememory_core::naming::encode_cwd(
+        &fs::canonicalize(cwd)
+            .expect("canonical")
+            .display()
+            .to_string(),
+    )
+    .expect("enc");
+    let link = m.config_dir.join("projects").join(enc.as_str());
+    std::os::unix::fs::symlink(m.from.join("projects/-ALL-/VibeIDE"), &link).expect("link");
+    link
+}
+
+#[test]
+fn a_link_of_a_session_running_on_this_machine_is_left_alone() {
+    let temp = TempDir::new("switch-live");
+    let m = old_machine(&temp);
+    // This very process, registered as working in the directory: the switch must find the link
+    // busy, because re-aiming it under a session writing through it loses the session.
+    let cwd = temp.dir("work/VibeIDE");
+    let live_link = link_for(&m, &cwd);
+    register_session(&m.config_dir, std::process::id(), &cwd);
+
+    let done = switch(&input(&m, false), false).expect("switch");
+    assert_eq!(
+        link_target(&live_link),
+        m.from.join("projects/-ALL-/VibeIDE"),
+        "the busy link is exactly as it was"
+    );
+    assert!(
+        done.skipped
+            .iter()
+            .any(|(p, why)| p == &live_link && why.contains("running")),
+        "{:?}",
+        done.skipped
+    );
+    assert_eq!(
+        link_target(&m.config_dir.join("projects").join(ENC)),
+        m.store.join("projects/VibeIDE"),
+        "every other link still moves"
+    );
+}
+
+#[test]
+fn a_registry_entry_of_a_dead_process_does_not_block_anything() {
+    let temp = TempDir::new("switch-dead");
+    let m = old_machine(&temp);
+    let cwd = temp.dir("work/VibeIDE");
+    let link = link_for(&m, &cwd);
+    // The registry keeps entries of processes that crashed; a pid nobody has is not a session.
+    register_session(&m.config_dir, 999_999, &cwd);
+
+    switch(&input(&m, false), false).expect("switch");
+    assert_eq!(link_target(&link), m.store.join("projects/VibeIDE"));
+}

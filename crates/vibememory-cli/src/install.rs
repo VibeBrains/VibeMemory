@@ -102,6 +102,8 @@ pub enum Step {
     Schedule,
     /// The engine's hooks in `settings.json`.
     Hooks,
+    /// The store's own files committed, so a clone starts with them.
+    ScaffoldCommitted,
     /// `~/.claude/projects/<enc>` → `<store>/projects/<name>`.
     ProjectLink {
         /// The encoded directory name the CLI uses.
@@ -123,6 +125,7 @@ impl Step {
             Self::SkillsLink => "skills link".to_owned(),
             Self::Schedule => "scheduled tick".to_owned(),
             Self::Hooks => "hooks in settings.json".to_owned(),
+            Self::ScaffoldCommitted => "store scaffolding committed".to_owned(),
             Self::ProjectLink { enc, name } => format!("link {enc} -> projects/{name}"),
         }
     }
@@ -226,6 +229,11 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
     actions.push(Action {
         step: Step::Hooks,
         state: hooks_state(layout),
+    });
+    // Last: it commits what the steps above created.
+    actions.push(Action {
+        step: Step::ScaffoldCommitted,
+        state: scaffolding_state(&store, &config.machine_id),
     });
     // The scheduled tick exists only where there is a scheduler this build knows about.
     if cfg!(target_os = "macos") {
@@ -380,10 +388,6 @@ impl Applied {
 #[must_use]
 pub fn apply(layout: &Layout, actions: &[Action], dry_run: bool) -> Applied {
     let mut applied = Applied::default();
-    // Store paths this run created, so they can be committed: a `.gitattributes` that is not
-    // in a commit never reaches the other machine, and a clone without it merges without the
-    // drivers — conflict markers in transcripts.
-    let mut created: Vec<String> = Vec::new();
     for action in actions {
         let what = action.step.describe();
         match &action.state {
@@ -396,43 +400,13 @@ pub fn apply(layout: &Layout, actions: &[Action], dry_run: bool) -> Applied {
                     continue;
                 }
                 match perform(layout, &action.step) {
-                    Ok(()) => {
-                        created.extend(store_paths_of(layout, &action.step));
-                        applied.performed.push(what);
-                    }
+                    Ok(()) => applied.performed.push(what),
                     Err(error) => applied.failed.push((what, error)),
                 }
             }
         }
     }
-    if !dry_run
-        && !created.is_empty()
-        && let Err(error) = commit_scaffolding(&layout.store(), &created)
-    {
-        applied
-            .failed
-            .push(("commit of the store's scaffolding".to_owned(), error));
-    }
     applied
-}
-
-/// The store-relative paths a step leaves behind, for the commit.
-fn store_paths_of(layout: &Layout, step: &Step) -> Vec<String> {
-    match step {
-        Step::Gitattributes => vec![".gitattributes".to_owned()],
-        Step::StoreDir { relative } => vec![format!("{relative}/.keep")],
-        Step::ManagedCopy { name } => {
-            let in_store = layout.store().join("config").join(name);
-            if in_store.is_file() {
-                vec![format!("config/{name}")]
-            } else {
-                Vec::new()
-            }
-        }
-        Step::SkillsLink => vec!["config/skills/.keep".to_owned()],
-        Step::ProjectLink { name, .. } => vec![format!("projects/{name}/.keep")],
-        Step::GitSetting { .. } | Step::Schedule | Step::Hooks => Vec::new(),
-    }
 }
 
 /// Stages exactly these paths and commits when the index then differs from HEAD. Never
@@ -492,6 +466,9 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
         ),
         Step::Schedule => write_new(&schedule_path(layout), launch_agent(layout).as_bytes()),
         Step::Hooks => write_hooks(layout),
+        Step::ScaffoldCommitted => {
+            commit_scaffolding(&store, &scaffolding_paths(&machine_id_of(&store)))
+        }
         Step::SkillsLink => make_link(
             &store.join("config/skills"),
             &layout.config_dir.join("skills"),
@@ -869,4 +846,55 @@ fn nothing_to_share(path: &Path, bytes: &[u8]) -> bool {
     serde_json::from_slice::<serde_json::Value>(bytes)
         .map(without_engine_hooks)
         .is_ok_and(|shared| shared.as_object().is_some_and(serde_json::Map::is_empty))
+}
+
+/// The store's own files: what every clone needs before it holds a single transcript. A
+/// `.gitattributes` outside any commit never reaches the other machine, and a clone without it
+/// merges transcripts without the drivers — conflict markers inside.
+fn scaffolding_paths(machine_id: &str) -> Vec<String> {
+    let mut paths = vec![".gitattributes".to_owned()];
+    paths.extend(
+        store_dirs(machine_id)
+            .into_iter()
+            .map(|dir| format!("{dir}/.keep")),
+    );
+    paths.extend(MANAGED_FILES.iter().map(|name| format!("config/{name}")));
+    paths
+}
+
+/// The one machine directory of a store, which names the machine that owns it.
+fn machine_id_of(store: &Path) -> String {
+    std::fs::read_dir(store.join("machines"))
+        .ok()
+        .and_then(|mut entries| entries.next())
+        .and_then(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// Whether every scaffolding file that exists is committed and unchanged.
+fn scaffolding_state(store: &Path, machine_id: &str) -> State {
+    if !store.join(".git").exists() {
+        return State::Missing;
+    }
+    let existing: Vec<String> = scaffolding_paths(machine_id)
+        .into_iter()
+        .filter(|path| store.join(path).exists())
+        .collect();
+    if existing.is_empty() {
+        return State::Missing;
+    }
+    let mut args = vec!["status", "--porcelain", "--"];
+    args.extend(existing.iter().map(String::as_str));
+    match crate::git::run_with_timeout(
+        crate::git::command(store, &args),
+        std::time::Duration::from_mins(1),
+    ) {
+        Ok(Some(output)) if output.trim().is_empty() => State::Satisfied,
+        Ok(Some(_)) => State::Missing,
+        Ok(None) => State::Unknown {
+            reason: "git could not report the status of the store".to_owned(),
+        },
+        Err(reason) => State::Unknown { reason },
+    }
 }

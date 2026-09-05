@@ -79,6 +79,55 @@ pub struct SwitchInput<'a> {
     pub engine_dir: &'a Path,
 }
 
+/// The encoded project directories of sessions running on this machine right now, read from the
+/// CLI's own registry `sessions/<pid>.json`.
+///
+/// A local pid is the right witness here and nowhere else: the switch re-aims links on this
+/// machine, and the session that would lose its transcript is a session of this machine. The
+/// registry keeps crash leftovers, so a pid that is gone is not a session.
+#[must_use]
+pub fn live_project_dirs(config_dir: &Path) -> Vec<(String, String)> {
+    let Ok(entries) = std::fs::read_dir(config_dir.join("sessions")) else {
+        return Vec::new();
+    };
+    let mut live = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "json") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        // The registry writes the pid as a string; a number is accepted in case that changes.
+        let pid = value.get("pid").and_then(|pid| {
+            pid.as_str()
+                .and_then(|text| text.parse::<u32>().ok())
+                .or_else(|| pid.as_u64().and_then(|n| u32::try_from(n).ok()))
+        });
+        let cwd = value.get("cwd").and_then(serde_json::Value::as_str);
+        let (Some(pid), Some(cwd)) = (pid, cwd) else {
+            continue;
+        };
+        if !crate::process::is_running(pid) {
+            continue;
+        }
+        let physical =
+            std::fs::canonicalize(cwd).map_or_else(|_| cwd.to_owned(), |p| p.display().to_string());
+        let canonical = vibememory_core::naming::canonical_cwd(
+            &physical,
+            vibememory_core::naming::PathSyntax::Posix,
+        );
+        if let Ok(enc) = vibememory_core::naming::encode_cwd(&canonical) {
+            live.push((enc.as_str().to_owned(), cwd.to_owned()));
+        }
+    }
+    live
+}
+
 /// Plans and, unless `dry_run`, performs the switch.
 ///
 /// # Errors
@@ -104,11 +153,22 @@ fn relink_projects(
     done: &mut Switched,
 ) -> Result<(), String> {
     let old_all = canonical(&input.from.join("projects").join(ALL_DIR));
+    let live = live_project_dirs(input.config_dir);
     for entry in list(&input.config_dir.join("projects"))? {
         let link = entry.path();
         let Ok(metadata) = std::fs::symlink_metadata(&link) else {
             continue;
         };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if let Some((_, cwd)) = live.iter().find(|(enc, _)| *enc == name) {
+            done.skipped.push((
+                link,
+                format!(
+                    "a session is running in {cwd} right now; re-aiming its link would lose it"
+                ),
+            ));
+            continue;
+        }
         if !metadata.is_symlink() {
             if metadata.is_dir() {
                 done.real_directories.push(link);

@@ -407,7 +407,11 @@ impl TickLock {
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let holder = std::fs::read_to_string(&path).unwrap_or_default();
-                if holder.trim().parse::<u32>().is_ok_and(is_running) {
+                if holder
+                    .trim()
+                    .parse::<u32>()
+                    .is_ok_and(crate::process::is_running)
+                {
                     return Err(format!("another tick is running (pid {})", holder.trim()));
                 }
                 // The holder is gone: its lock is a leftover, not a claim.
@@ -424,27 +428,6 @@ impl Drop for TickLock {
         let _ = std::fs::remove_file(&self.path);
     }
 }
-
-/// Whether a process with this id exists. Signal 0 asks the kernel without touching the process.
-fn is_running(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        // `kill -0` is the portable existence check; it needs no permission to answer for a
-        // process of the same user.
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        true
-    }
-}
-
 /// Writes the memory projection of every project in the store.
 ///
 /// Without this, records that arrived from another machine would sit in the journal unseen until

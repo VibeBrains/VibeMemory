@@ -395,3 +395,36 @@ fn install_commits_what_it_scaffolds_so_a_clone_gets_the_drivers() {
         String::from_utf8_lossy(&status.stdout)
     );
 }
+
+#[test]
+fn scaffolding_left_uncommitted_by_an_earlier_run_is_committed_by_the_next() {
+    let temp = TempDir::new("install-recommit");
+    let layout = layout(&temp);
+    let _ = apply(&layout, &plan(&layout, &config(), &[]), false);
+    // An earlier version of install left these outside any commit. Simulate it: unstage
+    // everything so the files exist but are untracked.
+    let reset = std::process::Command::new("git")
+        .args(["rm", "-r", "--cached", "--quiet", "."])
+        .current_dir(layout.store())
+        .status()
+        .expect("git rm --cached");
+    assert!(reset.success());
+    let actions = plan(&layout, &config(), &[]);
+    assert_eq!(
+        state_of(&actions, &Step::ScaffoldCommitted),
+        &State::Missing,
+        "doctor must see uncommitted scaffolding"
+    );
+
+    let _ = apply(&layout, &actions, false);
+    let status = std::process::Command::new("git")
+        .args(["status", "--short"])
+        .current_dir(layout.store())
+        .output()
+        .expect("git status");
+    assert!(
+        status.stdout.is_empty(),
+        "the next install commits what the earlier one left: {}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+}

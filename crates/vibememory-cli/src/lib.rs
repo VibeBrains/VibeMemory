@@ -28,6 +28,7 @@ pub mod merge_driver;
 pub mod merge_report;
 pub mod migrate;
 pub mod outbox;
+pub mod process;
 pub mod relink;
 pub mod sha256;
 pub mod store;
