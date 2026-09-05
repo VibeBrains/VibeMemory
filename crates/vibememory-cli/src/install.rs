@@ -591,7 +591,8 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<(), String> {
 #[must_use]
 pub fn schedule_path(layout: &Layout) -> PathBuf {
     match real_launch_agents_dir(layout) {
-        Some(dir) => dir.join(SCHEDULE_LABEL).with_extension("plist"),
+        // `with_extension` would eat the `.tick`: the label's own dots are part of its name.
+        Some(dir) => dir.join(format!("{SCHEDULE_LABEL}.plist")),
         None => layout
             .engine_dir
             .join("LaunchAgents")

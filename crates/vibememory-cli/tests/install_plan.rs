@@ -276,7 +276,13 @@ fn the_scheduled_tick_is_written_and_names_this_engine_directory() {
     let layout = layout(&temp);
     let _ = apply(&layout, &plan(&layout, &config(), &[]), false);
 
-    let text = fs::read_to_string(schedule_path(&layout)).expect("the agent must be written");
+    let path = schedule_path(&layout);
+    assert_eq!(
+        path.file_name().expect("name"),
+        "dev.vibememory.tick.plist",
+        "the label's own dots are part of its name"
+    );
+    let text = fs::read_to_string(&path).expect("the agent must be written");
     assert!(text.contains("<key>StartInterval</key><integer>120</integer>"));
     assert!(
         text.contains("<string>tick</string>"),
