@@ -41,6 +41,19 @@ const GIT_SETTINGS: &[(&str, &str, &str)] = &[
 pub const GITATTRIBUTES: &str =
     "* -text\n* merge=vibememory-keepboth\n**/*.jsonl merge=vibememory-jsonl\n";
 
+/// The merge drivers git must know about, as `merge.<name>.driver` settings. `%O %A %B %P` is
+/// git's own vocabulary: base, ours, theirs, and the path inside the repository.
+const MERGE_DRIVERS: &[(&str, &str)] = &[
+    (
+        "merge.vibememory-jsonl.driver",
+        "vibememory merge-driver jsonl %O %A %B %P",
+    ),
+    (
+        "merge.vibememory-keepboth.driver",
+        "vibememory merge-driver keepboth %O %A %B %P",
+    ),
+];
+
 /// Files of the config directory the store manages as copies.
 const MANAGED_FILES: &[&str] = &["CLAUDE.md", "settings.json"];
 
@@ -166,6 +179,12 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
     let mut actions = Vec::new();
 
     for (key, value, _why) in GIT_SETTINGS {
+        actions.push(Action {
+            step: Step::GitSetting { key, value },
+            state: git_setting_state(&store, key, value),
+        });
+    }
+    for (key, value) in MERGE_DRIVERS {
         actions.push(Action {
             step: Step::GitSetting { key, value },
             state: git_setting_state(&store, key, value),

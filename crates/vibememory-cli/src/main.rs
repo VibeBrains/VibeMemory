@@ -38,6 +38,8 @@ fn main() -> ExitCode {
             let dry_run = args.any(|arg| arg == "--dry-run");
             install(dry_run)
         }
+        Some("forget") => forget_command(args.next().as_deref()),
+        Some("merge-driver") => merge_driver_command(&args.collect::<Vec<String>>()),
         Some("hook") => match args.next().as_deref() {
             Some("session-start") => session_start_hook(),
             Some("stop") => session_progress_hook(false),
@@ -57,7 +59,10 @@ fn main() -> ExitCode {
         }
         None => {
             println!("vibememory {}", env!("CARGO_PKG_VERSION"));
-            println!("commands: status, doctor, install [--dry-run], hook session-start");
+            println!(
+                "commands: status, doctor, install [--dry-run], hook <event>, \
+                 merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>"
+            );
             ExitCode::SUCCESS
         }
     }
@@ -409,4 +414,96 @@ fn other_machines_tails(
         }
     }
     found
+}
+
+/// `merge-driver jsonl|keepboth %O %A %B %P` — what git spawns while merging.
+///
+/// Exit 0 means the result is in `%A`; exit 1 means the merge could not be done and `%A` was left
+/// exactly as git wrote it, so the caller can abort with a clean working tree.
+fn merge_driver_command(args: &[String]) -> ExitCode {
+    let [name, base, ours, theirs, path] = args else {
+        eprintln!("usage: vibememory merge-driver <jsonl|keepboth> %O %A %B %P");
+        return ExitCode::FAILURE;
+    };
+    let Some(driver) = vibememory_cli::merge_driver::Driver::parse(name) else {
+        eprintln!("unknown driver {name:?}: expected jsonl or keepboth");
+        return ExitCode::FAILURE;
+    };
+    let layout = layout();
+    let machine = read_config(&layout).map_or_else(|_| "unknown".to_owned(), |c| c.machine_id);
+    let stamp = format!(
+        "{machine}-{}",
+        vibememory_cli::clock::now().replace(':', "-")
+    );
+
+    match vibememory_cli::merge_driver::run(
+        driver,
+        std::path::Path::new(base),
+        std::path::Path::new(ours),
+        std::path::Path::new(theirs),
+        path,
+        &stamp,
+    ) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(error) => {
+            // The message goes to git's stderr, which ends up in the tick's log. `%A` is
+            // untouched, so `git merge --abort` restores the tree exactly.
+            eprintln!("vibememory merge-driver: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `forget <session-id>` — ask every machine to drop a session.
+///
+/// Writes a tombstone into this machine's outbox and stops there. The removal itself belongs to
+/// the tick: deleting the file here would meet the other machine's copy as a tree conflict that
+/// no merge driver is ever asked about.
+fn forget_command(session_id: Option<&str>) -> ExitCode {
+    let Some(session_id) = session_id else {
+        eprintln!("usage: vibememory forget <session-id>");
+        return ExitCode::from(2);
+    };
+    let layout = layout();
+    let config = match read_config(&layout) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("config: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let Ok(store) = std::fs::canonicalize(layout.store()) else {
+        eprintln!("the store is not there yet; run `vibememory install` first");
+        return ExitCode::FAILURE;
+    };
+    let path = find_transcript(&store, session_id).unwrap_or_default();
+    match vibememory_cli::forget::forget(
+        &store,
+        &config.machine_id,
+        session_id,
+        &path,
+        &vibememory_cli::clock::now(),
+    ) {
+        Ok(()) => {
+            println!("recorded: {session_id} will be removed on every machine at its next tick");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("forget: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Where a session's transcript sits inside the store, if this machine has it.
+fn find_transcript(store: &std::path::Path, session_id: &str) -> Option<String> {
+    let projects = store.join("projects");
+    for project in std::fs::read_dir(projects).ok()?.filter_map(Result::ok) {
+        let candidate = project.path().join(format!("{session_id}.jsonl"));
+        if candidate.exists() {
+            let relative = candidate.strip_prefix(store).ok()?;
+            return Some(relative.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    None
 }

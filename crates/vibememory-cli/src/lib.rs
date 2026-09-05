@@ -17,7 +17,9 @@
 
 pub mod clock;
 pub mod config;
+pub mod forget;
 pub mod git;
 pub mod hook;
 pub mod install;
+pub mod merge_driver;
 pub mod store;
