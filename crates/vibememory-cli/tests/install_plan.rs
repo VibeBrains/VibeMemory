@@ -433,3 +433,27 @@ fn scaffolding_left_uncommitted_by_an_earlier_run_is_committed_by_the_next() {
         String::from_utf8_lossy(&status.stdout)
     );
 }
+
+#[test]
+fn a_hook_from_an_earlier_install_is_replaced_not_accumulated() {
+    let temp = TempDir::new("install-hooks-replace");
+    let layout = layout(&temp);
+    fs::write(
+        layout.config_dir.join("settings.json"),
+        r#"{"hooks":{"Stop":[{"matcher":"*","hooks":[{"type":"command","command":"VIBEMEMORY_DIR=/old/engine /old/build/vibememory hook stop","timeout":20}]}]}}"#,
+    )
+    .expect("write");
+
+    let _ = apply(&layout, &plan(&layout, &config(), &[]), false);
+
+    let text = fs::read_to_string(layout.config_dir.join("settings.json")).expect("read");
+    assert!(
+        !text.contains("/old/build/vibememory"),
+        "two entries per event would run two engines, one of them dead: {text}"
+    );
+    assert_eq!(
+        text.matches(" hook stop\"").count(),
+        1,
+        "exactly one Stop hook of the engine: {text}"
+    );
+}

@@ -102,6 +102,9 @@ pub enum Step {
     Schedule,
     /// The engine's hooks in `settings.json`.
     Hooks,
+    /// A copy of this binary under the engine directory, so hooks and the scheduler survive a
+    /// rebuild or a `cargo clean` of wherever it was built.
+    Binary,
     /// The store's own files committed, so a clone starts with them.
     ScaffoldCommitted {
         /// Whose `machines/<id>` directory belongs to the scaffolding.
@@ -129,6 +132,7 @@ impl Step {
             Self::Schedule => "scheduled tick".to_owned(),
             Self::Hooks => "hooks in settings.json".to_owned(),
             Self::ScaffoldCommitted { .. } => "store scaffolding committed".to_owned(),
+            Self::Binary => "engine binary in place".to_owned(),
             Self::ProjectLink { enc, name } => format!("link {enc} -> projects/{name}"),
         }
     }
@@ -228,6 +232,11 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
             &layout.config_dir.join("skills"),
             &store.join("config/skills"),
         ),
+    });
+    // The binary first: the hooks and the scheduler name it.
+    actions.push(Action {
+        step: Step::Binary,
+        state: binary_state(layout),
     });
     actions.push(Action {
         step: Step::Hooks,
@@ -469,7 +478,8 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
             &layout.config_dir.join(name),
             &store.join("config").join(name),
         ),
-        Step::Schedule => write_new(&schedule_path(layout), launch_agent(layout).as_bytes()),
+        Step::Schedule => install_schedule(layout),
+        Step::Binary => install_binary(layout),
         Step::Hooks => write_hooks(layout),
         Step::ScaffoldCommitted { machine_id } => {
             commit_scaffolding(&store, &scaffolding_paths(machine_id))
@@ -580,10 +590,89 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<(), String> {
 /// redirected, so a test never writes into the real `~/Library/LaunchAgents`.
 #[must_use]
 pub fn schedule_path(layout: &Layout) -> PathBuf {
-    layout
-        .engine_dir
-        .join("LaunchAgents")
-        .join("dev.vibememory.tick.plist")
+    match real_launch_agents_dir(layout) {
+        Some(dir) => dir.join(SCHEDULE_LABEL).with_extension("plist"),
+        None => layout
+            .engine_dir
+            .join("LaunchAgents")
+            .join(format!("{SCHEDULE_LABEL}.plist")),
+    }
+}
+
+/// The label launchd knows the tick by.
+pub const SCHEDULE_LABEL: &str = "dev.vibememory.tick";
+
+/// `~/Library/LaunchAgents`, but only for the real engine directory: a redirected engine — a
+/// test, a dry run in a scratch directory — keeps its agent beside itself and never touches
+/// launchd. The real one is the engine under the home directory, and nothing else.
+fn real_launch_agents_dir(layout: &Layout) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    (layout.engine_dir == home.join(".vibememory"))
+        .then(|| home.join("Library").join("LaunchAgents"))
+}
+
+/// Writes the agent and, for the real engine, hands it to launchd.
+fn install_schedule(layout: &Layout) -> Result<(), String> {
+    let path = schedule_path(layout);
+    write_new(&path, launch_agent(layout).as_bytes())?;
+    if real_launch_agents_dir(layout).is_none() {
+        return Ok(());
+    }
+    // `bootstrap` loads it now and on every login; an agent already loaded says so and that is
+    // not a failure worth stopping install for.
+    let uid = std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .map_err(|e| e.to_string())?;
+    let domain = format!("gui/{}", String::from_utf8_lossy(&uid.stdout).trim());
+    let _ = std::process::Command::new("launchctl")
+        .args(["bootstrap", &domain, &path.display().to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    Ok(())
+}
+
+/// Where the engine's own copy of the binary lives.
+#[must_use]
+pub fn installed_binary(layout: &Layout) -> PathBuf {
+    layout.engine_dir.join("bin").join("vibememory")
+}
+
+/// Whether the installed copy is this binary, byte for byte.
+fn binary_state(layout: &Layout) -> State {
+    let Ok(this) = std::env::current_exe().and_then(std::fs::read) else {
+        return State::Unknown {
+            reason: "this binary could not be read".to_owned(),
+        };
+    };
+    match std::fs::read(installed_binary(layout)) {
+        Ok(there) if there == this => State::Satisfied,
+        Ok(_) => State::Missing, // an older build: replaced, never kept
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => State::Missing,
+        Err(error) => State::Unknown {
+            reason: error.to_string(),
+        },
+    }
+}
+
+/// Copies this binary into the engine directory, through a temporary file and a rename so a
+/// hook that fires mid-copy runs either the old binary or the new one, never half of one.
+fn install_binary(layout: &Layout) -> Result<(), String> {
+    let source = std::env::current_exe().map_err(|e| e.to_string())?;
+    let target = installed_binary(layout);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let temporary = target.with_extension("new");
+    std::fs::copy(&source, &temporary).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(&temporary, &target).map_err(|e| e.to_string())
 }
 
 /// The `LaunchAgent` itself: run at load, then every two minutes.
@@ -592,10 +681,7 @@ pub fn schedule_path(layout: &Layout) -> PathBuf {
 /// the lag after opening the lid is one interval and not a storm of catch-up runs.
 #[must_use]
 pub fn launch_agent(layout: &Layout) -> String {
-    let binary = std::env::current_exe().map_or_else(
-        |_| "vibememory".to_owned(),
-        |path| path.display().to_string(),
-    );
+    let binary = installed_binary(layout).display().to_string();
     let engine = layout.engine_dir.display();
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -626,13 +712,10 @@ const HOOK_EVENTS: &[(&str, &str)] = &[
 /// The command line of one hook: this binary, the subcommand, and the engine directory so a
 /// redirected engine keeps working under the CLI, which does not pass the variable through.
 fn hook_command(layout: &Layout, subcommand: &str) -> String {
-    let binary = std::env::current_exe().map_or_else(
-        |_| "vibememory".to_owned(),
-        |path| path.display().to_string(),
-    );
     format!(
-        "VIBEMEMORY_DIR={} {binary} hook {subcommand}",
-        layout.engine_dir.display()
+        "VIBEMEMORY_DIR={} {} hook {subcommand}",
+        layout.engine_dir.display(),
+        installed_binary(layout).display()
     )
 }
 
@@ -725,6 +808,27 @@ fn write_hooks(layout: &Layout) -> Result<(), String> {
         let matchers = matchers
             .as_array_mut()
             .ok_or_else(|| format!("settings.json: hooks.{event} is not an array"))?;
+        // Ours from an earlier install — another binary path, another engine directory — go
+        // away first: two entries per event would run two engines, one of them dead.
+        for matcher in matchers.iter_mut() {
+            if let Some(list) = matcher
+                .get_mut("hooks")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                list.retain(|hook| {
+                    !hook
+                        .get("command")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|c| is_engine_hook(c) && c != command)
+                });
+            }
+        }
+        matchers.retain(|matcher| {
+            matcher
+                .get("hooks")
+                .and_then(serde_json::Value::as_array)
+                .is_none_or(|list| !list.is_empty())
+        });
         let present = matchers.iter().any(|matcher| {
             matcher
                 .get("hooks")
