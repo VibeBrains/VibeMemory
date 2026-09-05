@@ -18,7 +18,9 @@ use std::path::Path;
 
 use support::TempDir;
 use vibememory_cli::config::Config;
-use vibememory_cli::install::{Action, GITATTRIBUTES, Layout, State, Step, apply, plan};
+use vibememory_cli::install::{
+    Action, GITATTRIBUTES, Layout, State, Step, apply, launch_agent, plan, schedule_path,
+};
 use vibememory_core::naming::PathSyntax;
 
 const CONFIG_TEXT: &str = r#"{"machineId":"mac-test","remote":"ssh://git@host/store.git"}"#;
@@ -256,4 +258,28 @@ fn git_config(store: &Path, key: &str) -> String {
         .output()
         .expect("run git config");
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn the_scheduled_tick_is_written_and_names_this_engine_directory() {
+    let temp = TempDir::new("install-schedule");
+    let layout = layout(&temp);
+    let _ = apply(&layout, &plan(&layout, &config(), &[]), false);
+
+    let text = fs::read_to_string(schedule_path(&layout)).expect("the agent must be written");
+    assert!(text.contains("<key>StartInterval</key><integer>120</integer>"));
+    assert!(
+        text.contains("<string>tick</string>"),
+        "it must run the tick"
+    );
+    assert!(
+        text.contains(&layout.engine_dir.display().to_string()),
+        "an agent that does not name its engine directory would tick the wrong store"
+    );
+    assert_eq!(text, launch_agent(&layout));
+
+    // Second run: nothing to do, and the file is not rewritten.
+    let second = plan(&layout, &config(), &[]);
+    assert!(second.iter().all(Action::is_satisfied), "{second:?}");
 }

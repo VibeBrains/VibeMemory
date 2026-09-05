@@ -1,0 +1,287 @@
+//! The tick, driven against two real clones of one bare repository — the closest thing to two
+//! machines that fits inside a test.
+
+// The test drives real git, so the purity gate is lifted here.
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::disallowed_methods,
+    clippy::disallowed_types
+)]
+
+mod support;
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use support::{TempDir, git, git_repo_with_commit};
+use vibememory_cli::forget::forget;
+use vibememory_cli::hook::stop::{Live, LiveSession};
+use vibememory_cli::tick::{TickLock, run};
+
+const STAMP: &str = "2026-09-05T10:00:00Z";
+const SESSION: &str = "11111111-1111-4111-8111-111111111111";
+
+fn relative() -> String {
+    format!("projects/Project/{SESSION}.jsonl")
+}
+
+/// A bare repository and two clones of it, as two machines share one store.
+struct Pair {
+    mac: PathBuf,
+    other: PathBuf,
+}
+
+fn two_machines(temp: &TempDir) -> Pair {
+    let bare = temp.dir("remote.git");
+    git(
+        &bare,
+        &["init", "--bare", "--quiet", "--initial-branch=main"],
+    );
+
+    let mac = temp.dir("mac");
+    git_repo_with_commit(&mac);
+    git(&mac, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    let path = relative();
+    write_commit(&mac, &path, "{\"uuid\":\"one\"}\n", "first record");
+    git(
+        &mac,
+        &["remote", "add", "origin", &bare.display().to_string()],
+    );
+    git(&mac, &["push", "--quiet", "-u", "origin", "main"]);
+
+    let other = temp.path().join("other");
+    git(
+        temp.path(),
+        &[
+            "clone",
+            "--quiet",
+            &bare.display().to_string(),
+            &other.display().to_string(),
+        ],
+    );
+    git(&other, &["config", "user.email", "test@example.invalid"]);
+    git(&other, &["config", "user.name", "test"]);
+    Pair { mac, other }
+}
+
+fn write_commit(store: &Path, relative: &str, contents: &str, message: &str) {
+    let path = store.join(relative);
+    fs::create_dir_all(path.parent().expect("parent")).expect("dirs");
+    fs::write(&path, contents).expect("write");
+    git(store, &["add", relative]);
+    git(store, &["commit", "--quiet", "-m", message]);
+}
+
+fn mark_live(store: &Path, machine: &str, session: &str) {
+    let dir = store.join("machines").join(machine);
+    fs::create_dir_all(&dir).expect("dirs");
+    let mut live = Live::default();
+    live.sessions.insert(
+        session.to_owned(),
+        LiveSession {
+            at: STAMP.to_owned(),
+            cwd: "/x".to_owned(),
+        },
+    );
+    fs::write(
+        dir.join("live.json"),
+        serde_json::to_string(&live).expect("encode"),
+    )
+    .expect("write live");
+}
+
+#[test]
+fn what_the_other_machine_wrote_arrives() {
+    let temp = TempDir::new("tick-arrives");
+    let pair = two_machines(&temp);
+    write_commit(
+        &pair.other,
+        &relative(),
+        "{\"uuid\":\"one\"}\n{\"uuid\":\"two\"}\n",
+        "their record",
+    );
+    git(&pair.other, &["push", "--quiet", "origin", "main"]);
+
+    let ticked = run(&pair.mac, "mac-test", STAMP);
+    assert!(ticked.problems.is_empty(), "{:?}", ticked.problems);
+    assert!(ticked.merged, "the tick must merge what it fetched");
+    let here = fs::read_to_string(pair.mac.join(relative())).expect("read");
+    assert!(here.contains("two"), "their record is here now: {here}");
+}
+
+#[test]
+fn a_session_live_on_this_machine_holds_the_merge_back() {
+    let temp = TempDir::new("tick-live");
+    let pair = two_machines(&temp);
+    write_commit(
+        &pair.other,
+        &relative(),
+        "{\"uuid\":\"one\"}\n{\"uuid\":\"two\"}\n",
+        "their record",
+    );
+    git(&pair.other, &["push", "--quiet", "origin", "main"]);
+    mark_live(&pair.mac, "mac-test", SESSION);
+
+    let ticked = run(&pair.mac, "mac-test", STAMP);
+    assert!(!ticked.merged, "a live session may not be merged into");
+    assert_eq!(ticked.held_back, vec![SESSION.to_owned()]);
+    let here = fs::read_to_string(pair.mac.join(relative())).expect("read");
+    assert!(
+        !here.contains("two"),
+        "the file under active append is untouched: {here}"
+    );
+
+    // When the session ends, the same tick does the work it held back.
+    fs::write(
+        pair.mac.join("machines").join("mac-test").join("live.json"),
+        "{\"sessions\":{}}",
+    )
+    .expect("write");
+    let ticked = run(&pair.mac, "mac-test", STAMP);
+    assert!(ticked.merged, "nothing is live any more, so it merges");
+}
+
+#[test]
+fn a_deleted_transcript_is_put_back_instead_of_pushed() {
+    let temp = TempDir::new("tick-restore");
+    let pair = two_machines(&temp);
+    // Something removed the file: a sweeper, a sync client, somebody tidying up. Pushing that
+    // deletion would take the records off every machine.
+    fs::remove_file(pair.mac.join(relative())).expect("remove");
+
+    let ticked = run(&pair.mac, "mac-test", STAMP);
+    assert_eq!(ticked.restored, vec![relative()]);
+    assert!(
+        pair.mac.join(relative()).exists(),
+        "the transcript must be back"
+    );
+}
+
+#[test]
+fn a_forget_removes_the_transcript_on_this_machine_too() {
+    let temp = TempDir::new("tick-forget");
+    let pair = two_machines(&temp);
+    forget(&pair.mac, "other-machine", SESSION, &relative(), STAMP).expect("forget");
+
+    let ticked = run(&pair.mac, "mac-test", STAMP);
+    assert_eq!(ticked.forgotten, vec![SESSION.to_owned()]);
+    assert!(
+        !pair.mac.join(relative()).exists(),
+        "a forgotten session leaves no file behind"
+    );
+    // And the removal must not come back as a restore on the next tick.
+    let again = run(&pair.mac, "mac-test", STAMP);
+    assert!(
+        again.restored.is_empty(),
+        "the push-guard must not resurrect what was forgotten: {:?}",
+        again.restored
+    );
+}
+
+#[test]
+fn a_store_without_a_remote_is_not_a_problem() {
+    let temp = TempDir::new("tick-local");
+    let store = temp.dir("store");
+    git_repo_with_commit(&store);
+    write_commit(&store, &relative(), "{\"uuid\":\"one\"}\n", "first");
+
+    let ticked = run(&store, "mac-test", STAMP);
+    assert!(ticked.problems.is_empty(), "{:?}", ticked.problems);
+    assert!(!ticked.fetched && !ticked.pushed);
+}
+
+#[test]
+fn a_merge_that_cannot_be_done_is_aborted_and_leaves_a_clean_tree() {
+    let temp = TempDir::new("tick-abort");
+    let pair = two_machines(&temp);
+    // No merge driver is configured in this clone — the state a machine is in before `install`
+    // has run. Both sides then change the same lines, and git cannot resolve it alone.
+    write_commit(
+        &pair.other,
+        &relative(),
+        "{\"uuid\":\"theirs\"}\n",
+        "their rewrite",
+    );
+    git(&pair.other, &["push", "--quiet", "origin", "main"]);
+    write_commit(
+        &pair.mac,
+        &relative(),
+        "{\"uuid\":\"ours\"}\n",
+        "our rewrite",
+    );
+
+    let ticked = run(&pair.mac, "mac-test", STAMP);
+    assert!(!ticked.merged, "an unresolvable merge is not a merge");
+    assert!(
+        !ticked.problems.is_empty(),
+        "the tick must say why nothing happened"
+    );
+
+    let here = fs::read_to_string(pair.mac.join(relative())).expect("read");
+    assert!(
+        !here.contains("<<<<"),
+        "the tree must be left without conflict markers: {here}"
+    );
+    assert_eq!(here, "{\"uuid\":\"ours\"}\n", "our version is untouched");
+    // A repository left mid-merge would make every later commit record somebody's guess.
+    assert!(
+        !pair.mac.join(".git").join("MERGE_HEAD").exists(),
+        "the repository must not be left in the middle of a merge"
+    );
+}
+
+#[test]
+fn two_ticks_do_not_run_over_each_other() {
+    let temp = TempDir::new("tick-lock");
+    let engine = temp.dir("engine");
+
+    let held = TickLock::take(&engine).expect("first");
+    TickLock::take(&engine).expect_err("a second tick must stand aside");
+    drop(held);
+    TickLock::take(&engine).expect("once the first has finished, the next one runs");
+}
+
+#[test]
+fn a_lock_left_by_a_dead_process_is_taken_over() {
+    let temp = TempDir::new("tick-stale");
+    let engine = temp.dir("engine");
+    // A machine that lost power leaves this behind. Nobody should have to remove it by hand.
+    fs::write(engine.join("tick.lock"), b"999999").expect("write stale lock");
+
+    TickLock::take(&engine).expect("a lock whose holder is gone is not a claim");
+}
+
+#[test]
+fn nothing_incoming_is_not_reported_as_a_merge() {
+    let temp = TempDir::new("tick-quiet");
+    let pair = two_machines(&temp);
+    // This machine is ahead, the other has written nothing. A two-dot diff would show our own
+    // commit as a difference and make the tick claim a merge that never happened — and, worse,
+    // hold back the merge of a session that is live here because of our own records.
+    write_commit(
+        &pair.mac,
+        &relative(),
+        "{\"uuid\":\"one\"}\n{\"uuid\":\"ours\"}\n",
+        "our record",
+    );
+    mark_live(&pair.mac, "mac-test", SESSION);
+
+    let ticked = run(&pair.mac, "mac-test", STAMP);
+    assert!(!ticked.merged, "there was nothing to merge");
+    assert!(
+        ticked.held_back.is_empty(),
+        "our own records may not hold back our own merges: {:?}",
+        ticked.held_back
+    );
+    assert!(ticked.pushed, "but what we wrote does go out");
+
+    // And a tick with nothing of its own to send says so by staying quiet.
+    let again = run(&pair.mac, "mac-test", STAMP);
+    assert!(
+        !again.pushed,
+        "a log that says `pushed` every two minutes cannot show a stuck machine"
+    );
+}

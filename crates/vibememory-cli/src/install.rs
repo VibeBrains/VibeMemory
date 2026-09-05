@@ -98,6 +98,8 @@ pub enum Step {
     },
     /// `~/.claude/skills` → `<store>/config/skills`.
     SkillsLink,
+    /// The scheduled tick: a `LaunchAgent` on macOS.
+    Schedule,
     /// `~/.claude/projects/<enc>` → `<store>/projects/<name>`.
     ProjectLink {
         /// The encoded directory name the CLI uses.
@@ -117,6 +119,7 @@ impl Step {
             Self::StoreDir { relative } => format!("directory {relative}"),
             Self::ManagedCopy { name } => format!("managed copy of {name}"),
             Self::SkillsLink => "skills link".to_owned(),
+            Self::Schedule => "scheduled tick".to_owned(),
             Self::ProjectLink { enc, name } => format!("link {enc} -> projects/{name}"),
         }
     }
@@ -217,6 +220,13 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
             &store.join("config/skills"),
         ),
     });
+    // The scheduled tick exists only where there is a scheduler this build knows about.
+    if cfg!(target_os = "macos") {
+        actions.push(Action {
+            step: Step::Schedule,
+            state: file_state(&schedule_path(layout), &launch_agent(layout)),
+        });
+    }
     for (enc, name) in links {
         let state = link_state(
             &layout.config_dir.join("projects").join(enc),
@@ -398,6 +408,7 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
             &layout.config_dir.join(name),
             &store.join("config").join(name),
         ),
+        Step::Schedule => write_new(&schedule_path(layout), launch_agent(layout).as_bytes()),
         Step::SkillsLink => make_link(
             &store.join("config/skills"),
             &layout.config_dir.join("skills"),
@@ -493,4 +504,43 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<(), String> {
         Ok(None) => Err(format!("git {} refused", args.join(" "))),
         Err(reason) => Err(reason),
     }
+}
+
+/// Where the `LaunchAgent` of this machine lives. Under the engine directory when that has been
+/// redirected, so a test never writes into the real `~/Library/LaunchAgents`.
+#[must_use]
+pub fn schedule_path(layout: &Layout) -> PathBuf {
+    layout
+        .engine_dir
+        .join("LaunchAgents")
+        .join("dev.vibememory.tick.plist")
+}
+
+/// The `LaunchAgent` itself: run at load, then every two minutes.
+///
+/// `StartInterval` is skipped while the machine sleeps rather than fired repeatedly on waking, so
+/// the lag after opening the lid is one interval and not a storm of catch-up runs.
+#[must_use]
+pub fn launch_agent(layout: &Layout) -> String {
+    let binary = std::env::current_exe().map_or_else(
+        |_| "vibememory".to_owned(),
+        |path| path.display().to_string(),
+    );
+    let engine = layout.engine_dir.display();
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \
+         \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+         <plist version=\"1.0\">\n\
+         <dict>\n\
+         \t<key>Label</key><string>dev.vibememory.tick</string>\n\
+         \t<key>ProgramArguments</key>\n\
+         \t<array><string>{binary}</string><string>tick</string></array>\n\
+         \t<key>EnvironmentVariables</key>\n\
+         \t<dict><key>VIBEMEMORY_DIR</key><string>{engine}</string></dict>\n\
+         \t<key>RunAtLoad</key><true/>\n\
+         \t<key>StartInterval</key><integer>120</integer>\n\
+         </dict>\n\
+         </plist>\n"
+    )
 }

@@ -38,6 +38,7 @@ fn main() -> ExitCode {
             let dry_run = args.any(|arg| arg == "--dry-run");
             install(dry_run)
         }
+        Some("tick") => tick_command(),
         Some("forget") => forget_command(args.next().as_deref()),
         Some("merge-driver") => merge_driver_command(&args.collect::<Vec<String>>()),
         Some("hook") => match args.next().as_deref() {
@@ -61,7 +62,7 @@ fn main() -> ExitCode {
             println!("vibememory {}", env!("CARGO_PKG_VERSION"));
             println!(
                 "commands: status, doctor, install [--dry-run], hook <event>, \
-                 merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>"
+                 merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>, tick"
             );
             ExitCode::SUCCESS
         }
@@ -506,4 +507,55 @@ fn find_transcript(store: &std::path::Path, session_id: &str) -> Option<String> 
         }
     }
     None
+}
+
+/// `tick` — fetch, merge what is safe to merge, push, and keep the store honest.
+fn tick_command() -> ExitCode {
+    let layout = layout();
+    let config = match read_config(&layout) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("config: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let Ok(store) = std::fs::canonicalize(layout.store()) else {
+        eprintln!("the store is not there yet; run `vibememory install` first");
+        return ExitCode::FAILURE;
+    };
+    let _lock = match vibememory_cli::tick::TickLock::take(&layout.engine_dir) {
+        Ok(lock) => lock,
+        Err(error) => {
+            // Not an error: the tick runs every two minutes, and one of them being slow is
+            // normal.
+            println!("skipped: {error}");
+            return ExitCode::SUCCESS;
+        }
+    };
+
+    let ticked =
+        vibememory_cli::tick::run(&store, &config.machine_id, &vibememory_cli::clock::now());
+    if ticked.merged {
+        println!("merged what the other machines wrote");
+    }
+    for session in &ticked.held_back {
+        println!("held back: {session} is live here, so its records wait for it to finish");
+    }
+    for session in &ticked.forgotten {
+        println!("forgotten: {session}");
+    }
+    for path in &ticked.restored {
+        println!("restored: {path} was deleted in the working copy and put back");
+    }
+    if ticked.pushed {
+        println!("pushed");
+    }
+    for problem in &ticked.problems {
+        eprintln!("problem: {problem}");
+    }
+    if ticked.problems.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }

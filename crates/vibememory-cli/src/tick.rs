@@ -1,0 +1,372 @@
+//! The tick: the only thing that talks to the network, and the only thing allowed to merge.
+//!
+//! It runs every two minutes, so its first duty is to be harmless when it has nothing to do and
+//! when something is wrong. Every step below either does its work or reports and stops; none of
+//! them destroys anything, and the one step that could — merging somebody else's records into a
+//! file this machine is writing — refuses unless it can prove the session is not live here.
+
+use std::collections::BTreeSet;
+use std::path::Path;
+use std::time::Duration;
+
+use crate::forget::Forgotten;
+use crate::git;
+use crate::hook::stop::Live;
+
+/// How long any one git command of the tick may take. Longer than a hook's, because nobody is
+/// waiting: the tick runs in the background.
+const TIMEOUT: Duration = Duration::from_mins(2);
+/// The branch the store lives on.
+const BRANCH: &str = "main";
+/// Where the store's own commits go.
+const REMOTE: &str = "origin";
+
+/// What one tick did, in the order it did it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Ticked {
+    /// Whether new commits were fetched.
+    pub fetched: bool,
+    /// Whether the fetched commits were merged.
+    pub merged: bool,
+    /// Sessions whose files the incoming commits touch and which are live here, so the merge was
+    /// held back. Named for the log: a merge that never happens is a synchronisation that never
+    /// happens, and somebody has to be able to see why.
+    pub held_back: Vec<String>,
+    /// Transcripts removed because a machine asked to forget them.
+    pub forgotten: Vec<String>,
+    /// Files under `projects/` that were deleted in the working copy and put back.
+    pub restored: Vec<String>,
+    /// Whether anything was pushed.
+    pub pushed: bool,
+    /// What went wrong, if anything. A tick reports and returns; it never panics a machine.
+    pub problems: Vec<String>,
+}
+
+/// Runs one tick over the store.
+///
+/// `live` is what this machine believes about its own sessions; it decides whether a merge is
+/// safe, and it is read from the store rather than from a process list because a session lives
+/// across machines, not inside one pid.
+#[must_use]
+pub fn run(store: &Path, machine_id: &str, stamp: &str) -> Ticked {
+    let mut result = Ticked {
+        fetched: fetch(store),
+        ..Ticked::default()
+    };
+
+    match merge_if_safe(store, machine_id) {
+        Ok(Merge::Merged) => result.merged = true,
+        Ok(Merge::HeldBack { sessions }) => result.held_back = sessions,
+        Ok(Merge::NothingToDo) => {}
+        Err(problem) => result.problems.push(problem),
+    }
+
+    match apply_tombstones(store, stamp) {
+        Ok(removed) => result.forgotten = removed,
+        Err(problem) => result.problems.push(problem),
+    }
+
+    match restore_deleted_transcripts(store) {
+        Ok(restored) => result.restored = restored,
+        Err(problem) => result.problems.push(problem),
+    }
+
+    result.pushed = push(store);
+
+    result
+}
+
+/// Fetches from the remote. No remote at all is not a problem: a store can be local for a while.
+fn fetch(store: &Path) -> bool {
+    if !has_remote(store) {
+        return false;
+    }
+    // A refusal here is the network, a locked repository, a rejected key: all of them mean
+    // "later", and the tick runs again in two minutes.
+    matches!(
+        git::run_with_timeout(git::command(store, &["fetch", "--quiet", REMOTE]), TIMEOUT),
+        Ok(Some(_))
+    )
+}
+
+/// What the merge step decided.
+enum Merge {
+    Merged,
+    NothingToDo,
+    HeldBack { sessions: Vec<String> },
+}
+
+/// Merges what was fetched, unless it touches a session that is live on this machine.
+///
+/// The guard is fail-closed on purpose: if the incoming commits touch the transcript of a session
+/// this machine is writing right now, merging would put another machine's records into a file
+/// under active append, and the result would be decided by whoever wrote last. Waiting costs two
+/// minutes; the other outcome costs records.
+fn merge_if_safe(store: &Path, machine_id: &str) -> Result<Merge, String> {
+    let target = format!("{REMOTE}/{BRANCH}");
+    // Nothing to merge is the common case, and it must be cheap and silent: without this the
+    // tick would report a merge on every run and lie in the log.
+    let behind = git::run_with_timeout(
+        git::command(store, &["rev-list", "--count", &format!("HEAD..{target}")]),
+        TIMEOUT,
+    )
+    .unwrap_or(None)
+    .and_then(|text| text.trim().parse::<u64>().ok())
+    .unwrap_or(0);
+    if behind == 0 {
+        return Ok(Merge::NothingToDo);
+    }
+    let Some(incoming) = changed_paths(store, &target)? else {
+        return Ok(Merge::NothingToDo);
+    };
+    if incoming.is_empty() {
+        return Ok(Merge::NothingToDo);
+    }
+
+    let live = live_sessions(store, machine_id);
+    let touched: Vec<String> = live
+        .iter()
+        .filter(|session| incoming.iter().any(|path| path.contains(session.as_str())))
+        .cloned()
+        .collect();
+    if !touched.is_empty() {
+        return Ok(Merge::HeldBack { sessions: touched });
+    }
+
+    if let Ok(Some(_)) = git::run_with_timeout(
+        git::command(store, &["merge", "--quiet", "--no-edit", &target]),
+        TIMEOUT,
+    ) {
+        return Ok(Merge::Merged);
+    }
+    // A merge that could not be completed leaves the repository mid-merge, and nothing else may
+    // run until that is undone: a commit with MERGE_HEAD would record somebody's guess.
+    let _ = git::run_with_timeout(git::command(store, &["merge", "--abort"]), TIMEOUT);
+    Err("the merge was aborted; the working tree is as it was".to_owned())
+}
+
+/// Paths the target holds that HEAD does not, or `None` when the target does not exist yet.
+fn changed_paths(store: &Path, target: &str) -> Result<Option<Vec<String>>, String> {
+    if git::run_with_timeout(
+        git::command(store, &["rev-parse", "--verify", "--quiet", target]),
+        TIMEOUT,
+    )
+    .unwrap_or(None)
+    .is_none()
+    {
+        return Ok(None);
+    }
+    // Three dots on purpose: `HEAD..target` in a diff would also list what *this* machine changed
+    // since the merge base, so our own live session would look like an incoming change and hold
+    // its own merge back for ever.
+    let range = format!("HEAD...{target}");
+    let listed = git::run_with_timeout(
+        git::command(store, &["diff", "--name-only", &range]),
+        TIMEOUT,
+    )?;
+    Ok(listed.map(|text| {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }))
+}
+
+/// Sessions this machine believes are running right now.
+fn live_sessions(store: &Path, machine_id: &str) -> BTreeSet<String> {
+    let path = store.join("machines").join(machine_id).join("live.json");
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Live>(&text).ok())
+        .map(|live| live.sessions.into_keys().collect())
+        .unwrap_or_default()
+}
+
+/// Removes the transcripts every machine has asked to forget, and commits the removal.
+fn apply_tombstones(store: &Path, stamp: &str) -> Result<Vec<String>, String> {
+    let mut removed = Vec::new();
+    let Ok(machines) = std::fs::read_dir(store.join("machines")) else {
+        return Ok(removed);
+    };
+    for machine in machines.filter_map(Result::ok) {
+        let file = machine.path().join(crate::forget::FORGOTTEN_FILE);
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let Ok(forgotten) = serde_json::from_str::<Forgotten>(&text) else {
+            continue;
+        };
+        for (session, tombstone) in forgotten.sessions {
+            if tombstone.path.is_empty() {
+                continue;
+            }
+            let path = store.join(&tombstone.path);
+            if !path.exists() {
+                continue;
+            }
+            std::fs::remove_file(&path).map_err(|error| error.to_string())?;
+            git::run_with_timeout(
+                git::command(
+                    store,
+                    &[
+                        "rm",
+                        "--quiet",
+                        "--cached",
+                        "--ignore-unmatch",
+                        &tombstone.path,
+                    ],
+                ),
+                TIMEOUT,
+            )?;
+            removed.push(session);
+        }
+    }
+    if !removed.is_empty() {
+        let message = format!("vibememory: forgot {} session(s) at {stamp}", removed.len());
+        git::run_with_timeout(
+            git::command(store, &["commit", "--quiet", "-m", &message]),
+            TIMEOUT,
+        )?;
+    }
+    Ok(removed)
+}
+
+/// Puts back transcripts that vanished from the working copy without a tombstone.
+///
+/// A file can disappear for reasons nobody chose: a retention sweeper, a synchronisation client,
+/// somebody tidying a directory. Pushing that deletion would spread it to every machine, and the
+/// records would be gone for good — so the only deletion the engine honours is the one that came
+/// through `forget`.
+fn restore_deleted_transcripts(store: &Path) -> Result<Vec<String>, String> {
+    let listed = git::run_with_timeout(
+        git::command(store, &["ls-files", "--deleted", "--", "projects"]),
+        TIMEOUT,
+    )?;
+    let Some(text) = listed else {
+        return Ok(Vec::new());
+    };
+    let missing: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if missing.is_empty() {
+        return Ok(Vec::new());
+    }
+    for path in &missing {
+        git::run_with_timeout(
+            git::command(store, &["checkout", "--", path.as_str()]),
+            TIMEOUT,
+        )?;
+    }
+    Ok(missing)
+}
+
+/// Pushes, when there is anything to push and somewhere to push it.
+fn push(store: &Path) -> bool {
+    if !has_remote(store) {
+        return false;
+    }
+    // Nothing of ours to send is the common case; saying "pushed" then would make the log useless
+    // for telling a working machine from a stuck one.
+    let ahead = git::run_with_timeout(
+        git::command(
+            store,
+            &["rev-list", "--count", &format!("{REMOTE}/{BRANCH}..HEAD")],
+        ),
+        TIMEOUT,
+    )
+    .unwrap_or(None)
+    .and_then(|text| text.trim().parse::<u64>().ok())
+    .unwrap_or(0);
+    if ahead == 0 {
+        return false;
+    }
+    matches!(
+        git::run_with_timeout(
+            git::command(store, &["push", "--quiet", REMOTE, BRANCH]),
+            TIMEOUT,
+        ),
+        Ok(Some(_))
+    )
+}
+
+/// Whether the store has a remote configured at all.
+fn has_remote(store: &Path) -> bool {
+    git::run_with_timeout(git::command(store, &["remote"]), TIMEOUT)
+        .ok()
+        .flatten()
+        .is_some_and(|text| !text.trim().is_empty())
+}
+
+/// A lock held for the duration of one tick.
+///
+/// Two ticks in one store would fetch and merge over each other. The lock names the process that
+/// holds it, and a lock whose process is gone is taken over: a machine that lost power must not
+/// need a person to start synchronising again.
+#[derive(Debug)]
+pub struct TickLock {
+    path: std::path::PathBuf,
+}
+
+impl TickLock {
+    /// Takes the lock, or reports who holds it.
+    ///
+    /// # Errors
+    ///
+    /// The text naming the holder, when another tick of this machine is running.
+    pub fn take(engine_dir: &Path) -> Result<Self, String> {
+        std::fs::create_dir_all(engine_dir).map_err(|error| error.to_string())?;
+        let path = engine_dir.join("tick.lock");
+        let pid = std::process::id();
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                use std::io::Write;
+                let _ = write!(file, "{pid}");
+                Ok(Self { path })
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let holder = std::fs::read_to_string(&path).unwrap_or_default();
+                if holder.trim().parse::<u32>().is_ok_and(is_running) {
+                    return Err(format!("another tick is running (pid {})", holder.trim()));
+                }
+                // The holder is gone: its lock is a leftover, not a claim.
+                std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+                Self::take(engine_dir)
+            }
+            Err(error) => Err(error.to_string()),
+        }
+    }
+}
+
+impl Drop for TickLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Whether a process with this id exists. Signal 0 asks the kernel without touching the process.
+fn is_running(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // `kill -0` is the portable existence check; it needs no permission to answer for a
+        // process of the same user.
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
+}
