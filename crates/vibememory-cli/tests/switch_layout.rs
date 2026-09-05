@@ -1,0 +1,241 @@
+//! `switch`: link surgery on a miniature of the old layout, recorded so it can be undone.
+
+// The test builds links and directories, so the purity gate is lifted here.
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::disallowed_methods,
+    clippy::disallowed_types
+)]
+
+mod support;
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use support::TempDir;
+use vibememory_cli::switch::{Change, SwitchInput, rollback, switch};
+
+const ENC: &str = "-work-VibeIDE";
+
+/// The machine as the old scheme left it: links into the synced folder everywhere.
+struct Machine {
+    config_dir: PathBuf,
+    store: PathBuf,
+    from: PathBuf,
+    desktop: PathBuf,
+    engine: PathBuf,
+}
+
+fn old_machine(temp: &TempDir) -> Machine {
+    let from = temp.dir("old-claude");
+    let store = temp.dir("store");
+    let config_dir = temp.dir("claude");
+    let engine = temp.dir("engine");
+    // The old shared store and the new store both hold the project.
+    fs::create_dir_all(from.join("projects/-ALL-/VibeIDE")).expect("old store");
+    fs::create_dir_all(store.join("projects/VibeIDE")).expect("new store");
+    fs::create_dir_all(config_dir.join("projects")).expect("projects");
+    std::os::unix::fs::symlink(
+        from.join("projects/-ALL-/VibeIDE"),
+        config_dir.join("projects").join(ENC),
+    )
+    .expect("project link");
+    // A real directory the CLI created before any link existed.
+    fs::create_dir_all(config_dir.join("projects/-real-Project")).expect("real dir");
+    // The files and the skills, linked into the synced folder; the store has its copies.
+    for name in ["CLAUDE.md", "settings.json"] {
+        fs::write(from.join(name), format!("old {name}\n")).expect("old file");
+        fs::create_dir_all(store.join("config")).expect("config");
+        fs::write(store.join("config").join(name), format!("store {name}\n")).expect("store file");
+        std::os::unix::fs::symlink(from.join(name), config_dir.join(name)).expect("file link");
+    }
+    fs::create_dir_all(from.join("skills")).expect("old skills");
+    fs::create_dir_all(store.join("config/skills")).expect("store skills");
+    std::os::unix::fs::symlink(from.join("skills"), config_dir.join("skills"))
+        .expect("skills link");
+    // The Desktop store, a link into the synced folder.
+    fs::create_dir_all(from.join("claude-code-sessions")).expect("old desktop");
+    let desktop = temp.path().join("Claude").join("claude-code-sessions");
+    fs::create_dir_all(desktop.parent().expect("parent")).expect("app dir");
+    std::os::unix::fs::symlink(from.join("claude-code-sessions"), &desktop).expect("desktop link");
+    Machine {
+        config_dir,
+        store,
+        from,
+        desktop,
+        engine,
+    }
+}
+
+fn input(m: &Machine, desktop_running: bool) -> SwitchInput<'_> {
+    SwitchInput {
+        config_dir: &m.config_dir,
+        store: &m.store,
+        from: &m.from,
+        desktop_store: Some(&m.desktop),
+        desktop_running,
+        engine_dir: &m.engine,
+    }
+}
+
+fn link_target(path: &Path) -> PathBuf {
+    fs::read_link(path).expect("read link")
+}
+
+#[test]
+fn a_dry_run_describes_everything_and_changes_nothing() {
+    let temp = TempDir::new("switch-dry");
+    let m = old_machine(&temp);
+    let done = switch(&input(&m, false), true).expect("dry run");
+
+    assert_eq!(done.changes.len(), 5, "{:?}", done.changes);
+    assert_eq!(done.real_directories.len(), 1);
+    assert_eq!(
+        link_target(&m.config_dir.join("projects").join(ENC)),
+        m.from.join("projects/-ALL-/VibeIDE"),
+        "a dry run re-aims nothing"
+    );
+    assert!(
+        fs::symlink_metadata(&m.desktop).expect("stat").is_symlink(),
+        "and moves nothing"
+    );
+    assert!(!m.engine.join("switch-rollback.json").exists());
+}
+
+#[test]
+fn the_switch_re_aims_links_materializes_files_and_records_everything() {
+    let temp = TempDir::new("switch-apply");
+    let m = old_machine(&temp);
+    let done = switch(&input(&m, false), false).expect("switch");
+
+    assert_eq!(
+        link_target(&m.config_dir.join("projects").join(ENC)),
+        m.store.join("projects/VibeIDE"),
+        "the project link points into the store"
+    );
+    let settings = m.config_dir.join("settings.json");
+    assert!(
+        !fs::symlink_metadata(&settings).expect("stat").is_symlink(),
+        "settings.json is a real file now"
+    );
+    assert_eq!(
+        fs::read_to_string(&settings).expect("read"),
+        "store settings.json\n",
+        "holding the store's copy"
+    );
+    assert_eq!(
+        link_target(&m.config_dir.join("skills")),
+        m.store.join("config/skills")
+    );
+    assert!(
+        m.desktop.is_dir() && !fs::symlink_metadata(&m.desktop).expect("stat").is_symlink(),
+        "the Desktop store is a real directory"
+    );
+    assert!(
+        m.desktop
+            .with_file_name("claude-code-sessions.bak-vibememory")
+            .exists(),
+        "the old link is kept, not deleted"
+    );
+    assert!(
+        m.config_dir.join("projects/-real-Project").is_dir(),
+        "a real directory is left for import"
+    );
+
+    let recorded: Vec<Change> = serde_json::from_str(
+        &fs::read_to_string(m.engine.join("switch-rollback.json")).expect("rollback file"),
+    )
+    .expect("parse");
+    assert_eq!(
+        recorded, done.changes,
+        "the rollback file holds every change"
+    );
+}
+
+#[test]
+fn a_rollback_puts_the_machine_back_exactly() {
+    let temp = TempDir::new("switch-rollback");
+    let m = old_machine(&temp);
+    switch(&input(&m, false), false).expect("switch");
+    let undone = rollback(&m.engine).expect("rollback");
+    assert_eq!(undone.len(), 5);
+
+    assert_eq!(
+        link_target(&m.config_dir.join("projects").join(ENC)),
+        m.from.join("projects/-ALL-/VibeIDE")
+    );
+    assert_eq!(
+        link_target(&m.config_dir.join("settings.json")),
+        m.from.join("settings.json"),
+        "the file is a link into the old folder again"
+    );
+    assert_eq!(
+        link_target(&m.config_dir.join("skills")),
+        m.from.join("skills")
+    );
+    assert!(
+        fs::symlink_metadata(&m.desktop).expect("stat").is_symlink(),
+        "the Desktop store is the old link again"
+    );
+    assert!(
+        !m.engine.join("switch-rollback.json").exists(),
+        "nothing left to roll back"
+    );
+}
+
+#[test]
+fn the_desktop_store_is_not_touched_while_desktop_runs() {
+    let temp = TempDir::new("switch-desktop-live");
+    let m = old_machine(&temp);
+    let done = switch(&input(&m, true), false).expect("switch");
+    assert!(
+        fs::symlink_metadata(&m.desktop).expect("stat").is_symlink(),
+        "Desktop rewrites a card on every focus; pulling the directory from under it loses one"
+    );
+    assert!(
+        done.skipped.iter().any(|(path, _)| path == &m.desktop),
+        "and the person is told why: {:?}",
+        done.skipped
+    );
+    assert!(
+        done.changes
+            .iter()
+            .all(|c| !matches!(c, Change::DesktopStore { .. })),
+        "everything else still happens"
+    );
+}
+
+#[test]
+fn a_link_into_somewhere_else_is_left_alone() {
+    let temp = TempDir::new("switch-foreign");
+    let m = old_machine(&temp);
+    let elsewhere = temp.dir("elsewhere");
+    let foreign = m.config_dir.join("projects").join("-foreign");
+    std::os::unix::fs::symlink(&elsewhere, &foreign).expect("foreign link");
+
+    let done = switch(&input(&m, false), false).expect("switch");
+    assert_eq!(link_target(&foreign), elsewhere, "not ours to move");
+    assert!(done.skipped.iter().any(|(path, _)| path == &foreign));
+}
+
+#[test]
+fn a_project_the_store_does_not_hold_yet_keeps_its_old_link() {
+    let temp = TempDir::new("switch-unmigrated");
+    let m = old_machine(&temp);
+    fs::remove_dir_all(m.store.join("projects/VibeIDE")).expect("not migrated yet");
+
+    let done = switch(&input(&m, false), false).expect("switch");
+    assert_eq!(
+        link_target(&m.config_dir.join("projects").join(ENC)),
+        m.from.join("projects/-ALL-/VibeIDE"),
+        "a link to nothing is a link the CLI replaces with a real directory"
+    );
+    assert!(
+        done.skipped
+            .iter()
+            .any(|(_, why)| why.contains("migrate first"))
+    );
+}

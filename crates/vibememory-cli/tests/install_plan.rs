@@ -231,10 +231,19 @@ fn the_managed_copy_travels_in_both_directions() {
     let in_store = layout.store().join("config").join("settings.json");
     fs::write(&in_store, b"{}\n").expect("write");
     let _ = apply(&layout, &plan(&layout, &config(), &[]), false);
+    // The store's copy comes back, and this machine's hooks are added on top of it: what the
+    // machine holds is the shared settings plus its own hooks, never less.
+    let local: serde_json::Value =
+        serde_json::from_slice(&fs::read(layout.config_dir.join("settings.json")).expect("read"))
+            .expect("json");
     assert_eq!(
-        fs::read(layout.config_dir.join("settings.json")).expect("read"),
-        b"{}\n",
-        "a file only the store has comes back to the machine"
+        vibememory_cli::install::without_engine_hooks(local.clone()),
+        serde_json::json!({}),
+        "a file only the store has comes back to the machine: {local}"
+    );
+    assert!(
+        local.get("hooks").is_some(),
+        "with this machine's hooks on top: {local}"
     );
 }
 
@@ -282,4 +291,76 @@ fn the_scheduled_tick_is_written_and_names_this_engine_directory() {
     // Second run: nothing to do, and the file is not rewritten.
     let second = plan(&layout, &config(), &[]);
     assert!(second.iter().all(Action::is_satisfied), "{second:?}");
+}
+
+#[test]
+fn the_store_never_carries_this_machines_hook_commands() {
+    let temp = TempDir::new("install-hooks-store");
+    let layout = layout(&temp);
+    // A settings file with somebody's own hook in it, which must survive untouched.
+    fs::write(
+        layout.config_dir.join("settings.json"),
+        r#"{"theme":"dark","hooks":{"Stop":[{"matcher":"*","hooks":[{"type":"command","command":"say done"}]}]}}"#,
+    )
+    .expect("write");
+
+    let _ = apply(&layout, &plan(&layout, &config(), &[]), false);
+
+    let local = fs::read_to_string(layout.config_dir.join("settings.json")).expect("local");
+    for subcommand in ["session-start", "stop", "session-end", "user-prompt-submit"] {
+        assert!(
+            local.contains(&format!(" hook {subcommand}\"")),
+            "the {subcommand} hook is installed: {local}"
+        );
+    }
+    assert!(
+        local.contains("say done"),
+        "the person's own hook survives: {local}"
+    );
+
+    let shared: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(layout.store().join("config").join("settings.json"))
+            .expect("store copy"),
+    )
+    .expect("json");
+    assert_eq!(
+        shared,
+        serde_json::json!({
+            "theme": "dark",
+            "hooks": {"Stop": [{"matcher": "*", "hooks": [{"type": "command", "command": "say done"}]}]}
+        }),
+        "the store gets everything but this machine's hooks: a hook command names this machine's \
+         binary, on another machine it fails, and a failing UserPromptSubmit hook stops sessions"
+    );
+
+    // With the hooks in place the machine is settled: nothing left to do.
+    let again = plan(&layout, &config(), &[]);
+    let pending: Vec<&Action> = again.iter().filter(|a| !a.is_satisfied()).collect();
+    assert!(pending.is_empty(), "{pending:?}");
+}
+
+#[test]
+fn hooks_are_refused_while_settings_is_a_link_into_a_synced_folder() {
+    let temp = TempDir::new("install-hooks-link");
+    let layout = layout(&temp);
+    let elsewhere = temp.dir("synced");
+    fs::write(elsewhere.join("settings.json"), "{}\n").expect("write");
+    std::os::unix::fs::symlink(
+        elsewhere.join("settings.json"),
+        layout.config_dir.join("settings.json"),
+    )
+    .expect("link");
+
+    let actions = plan(&layout, &config(), &[]);
+    let state = state_of(&actions, &Step::Hooks);
+    assert!(
+        matches!(state, State::Conflict { .. }),
+        "writing through that link would put this machine's hooks on the other machine: {state:?}"
+    );
+    let _ = apply(&layout, &actions, false);
+    assert_eq!(
+        fs::read_to_string(elsewhere.join("settings.json")).expect("read"),
+        "{}\n",
+        "the synced file must be exactly as it was"
+    );
 }

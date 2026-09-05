@@ -100,6 +100,8 @@ pub enum Step {
     SkillsLink,
     /// The scheduled tick: a `LaunchAgent` on macOS.
     Schedule,
+    /// The engine's hooks in `settings.json`.
+    Hooks,
     /// `~/.claude/projects/<enc>` → `<store>/projects/<name>`.
     ProjectLink {
         /// The encoded directory name the CLI uses.
@@ -120,6 +122,7 @@ impl Step {
             Self::ManagedCopy { name } => format!("managed copy of {name}"),
             Self::SkillsLink => "skills link".to_owned(),
             Self::Schedule => "scheduled tick".to_owned(),
+            Self::Hooks => "hooks in settings.json".to_owned(),
             Self::ProjectLink { enc, name } => format!("link {enc} -> projects/{name}"),
         }
     }
@@ -220,6 +223,10 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
             &store.join("config/skills"),
         ),
     });
+    actions.push(Action {
+        step: Step::Hooks,
+        state: hooks_state(layout),
+    });
     // The scheduled tick exists only where there is a scheduler this build knows about.
     if cfg!(target_os = "macos") {
         actions.push(Action {
@@ -319,7 +326,7 @@ fn link_state(link: &Path, target: &Path) -> State {
 /// copies is the tick's business, not the installer's.
 fn managed_copy_state(local: &Path, in_store: &Path) -> State {
     match (std::fs::read(local), std::fs::read(in_store)) {
-        (Ok(here), Ok(there)) if here == there => State::Satisfied,
+        (Ok(here), Ok(there)) if same_managed_content(local, &here, &there) => State::Satisfied,
         (Ok(_), Ok(_)) => State::Conflict {
             found: "the copies differ; the tick reconciles them".to_owned(),
         },
@@ -327,6 +334,9 @@ fn managed_copy_state(local: &Path, in_store: &Path) -> State {
         // meaningless file on every machine — so this is a resting state, not work left undone.
         // Calling it missing would make `install` perform the same no-op for ever.
         (Err(_), Err(_)) => State::Satisfied,
+        // Only this machine has it, and once its own hooks are taken out nothing remains: a
+        // settings file the engine itself created has nothing to share.
+        (Ok(here), Err(_)) if nothing_to_share(local, &here) => State::Satisfied,
         // Exactly one side has it: the copy has to be made.
         _ => State::Missing,
     }
@@ -409,6 +419,7 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
             &store.join("config").join(name),
         ),
         Step::Schedule => write_new(&schedule_path(layout), launch_agent(layout).as_bytes()),
+        Step::Hooks => write_hooks(layout),
         Step::SkillsLink => make_link(
             &store.join("config/skills"),
             &layout.config_dir.join("skills"),
@@ -445,9 +456,14 @@ fn copy_managed(local: &Path, in_store: &Path) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     match (local.exists(), in_store.exists()) {
-        (true, false) => std::fs::copy(local, in_store)
-            .map(|_| ())
-            .map_err(|e| e.to_string()),
+        (true, false) => {
+            let bytes = std::fs::read(local).map_err(|e| e.to_string())?;
+            // What goes into the store is this machine's settings minus this machine's hooks:
+            // a hook command names this machine's binary and engine directory, and on another
+            // machine that command fails — and a failing UserPromptSubmit hook stops sessions.
+            let shared = for_the_store(local, &bytes);
+            std::fs::write(in_store, shared).map_err(|e| e.to_string())
+        }
         (false, true) => {
             if let Some(parent) = local.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -543,4 +559,242 @@ pub fn launch_agent(layout: &Layout) -> String {
          </dict>\n\
          </plist>\n"
     )
+}
+
+/// The events the engine listens to, with the subcommand each runs.
+const HOOK_EVENTS: &[(&str, &str)] = &[
+    ("SessionStart", "session-start"),
+    ("Stop", "stop"),
+    ("SessionEnd", "session-end"),
+    ("UserPromptSubmit", "user-prompt-submit"),
+];
+
+/// The command line of one hook: this binary, the subcommand, and the engine directory so a
+/// redirected engine keeps working under the CLI, which does not pass the variable through.
+fn hook_command(layout: &Layout, subcommand: &str) -> String {
+    let binary = std::env::current_exe().map_or_else(
+        |_| "vibememory".to_owned(),
+        |path| path.display().to_string(),
+    );
+    format!(
+        "VIBEMEMORY_DIR={} {binary} hook {subcommand}",
+        layout.engine_dir.display()
+    )
+}
+
+/// Whether `settings.json` carries every hook of the engine.
+///
+/// A `settings.json` that is a symlink pointing outside the config directory is a conflict, not
+/// a place to write: it is the old scheme's link into a synced folder, and hooks written through
+/// it would reach another machine with this machine's binary path — and a hook that fails there
+/// stops that machine's sessions.
+fn hooks_state(layout: &Layout) -> State {
+    let path = layout.config_dir.join("settings.json");
+    if let Ok(metadata) = std::fs::symlink_metadata(&path)
+        && metadata.is_symlink()
+        && let Ok(target) = std::fs::read_link(&path)
+        && !target.starts_with(&layout.config_dir)
+    {
+        return State::Conflict {
+            found: format!("a link to {}", target.display()),
+        };
+    }
+    let settings: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str(&text) {
+            Ok(value) => value,
+            Err(error) => {
+                return State::Conflict {
+                    found: format!("settings.json is not valid JSON: {error}"),
+                };
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            serde_json::Value::Object(serde_json::Map::new())
+        }
+        Err(error) => {
+            return State::Unknown {
+                reason: error.to_string(),
+            };
+        }
+    };
+    let all_present = HOOK_EVENTS.iter().all(|(event, subcommand)| {
+        let wanted = hook_command(layout, subcommand);
+        settings
+            .get("hooks")
+            .and_then(|hooks| hooks.get(event))
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|matchers| {
+                matchers.iter().any(|matcher| {
+                    matcher
+                        .get("hooks")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|list| {
+                            list.iter().any(|hook| {
+                                hook.get("command").and_then(serde_json::Value::as_str)
+                                    == Some(wanted.as_str())
+                            })
+                        })
+                })
+            })
+    });
+    if all_present {
+        State::Satisfied
+    } else {
+        State::Missing
+    }
+}
+
+/// Adds the engine's hooks to `settings.json`, keeping everything else in it exactly as it is.
+fn write_hooks(layout: &Layout) -> Result<(), String> {
+    let path = layout.config_dir.join("settings.json");
+    let mut settings: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|error| error.to_string())?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            serde_json::Value::Object(serde_json::Map::new())
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    let root = settings
+        .as_object_mut()
+        .ok_or_else(|| "settings.json is not an object".to_owned())?;
+    let hooks = root
+        .entry("hooks")
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    let hooks = hooks
+        .as_object_mut()
+        .ok_or_else(|| "settings.json: `hooks` is not an object".to_owned())?;
+    for (event, subcommand) in HOOK_EVENTS {
+        let command = hook_command(layout, subcommand);
+        let matchers = hooks
+            .entry(*event)
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+        let matchers = matchers
+            .as_array_mut()
+            .ok_or_else(|| format!("settings.json: hooks.{event} is not an array"))?;
+        let present = matchers.iter().any(|matcher| {
+            matcher
+                .get("hooks")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|list| {
+                    list.iter().any(|hook| {
+                        hook.get("command").and_then(serde_json::Value::as_str)
+                            == Some(command.as_str())
+                    })
+                })
+        });
+        if !present {
+            matchers.push(serde_json::json!({
+                "matcher": "*",
+                "hooks": [{ "type": "command", "command": command, "timeout": 20 }]
+            }));
+        }
+    }
+    let text = serde_json::to_string_pretty(&settings).map_err(|error| error.to_string())?;
+    let temporary = path.with_extension("json.vibememory");
+    std::fs::write(&temporary, text.as_bytes()).map_err(|error| error.to_string())?;
+    std::fs::rename(&temporary, &path).map_err(|error| error.to_string())
+}
+
+/// The prefix every hook command of the engine carries: the engine directory, exported for the
+/// subprocess because the CLI does not pass the variable through.
+const ENGINE_HOOK_PREFIX: &str = "VIBEMEMORY_DIR=";
+
+/// Whether a hook command is one of ours. Decided by its shape, not by the binary's file name:
+/// the binary is `vibememory` in an installation and something else under `cargo test`, and a
+/// rule that only recognised the former would leave the latter's hooks in the store.
+fn is_engine_hook(command: &str) -> bool {
+    command.starts_with(ENGINE_HOOK_PREFIX)
+        && HOOK_EVENTS
+            .iter()
+            .any(|(_, subcommand)| command.ends_with(&format!(" hook {subcommand}")))
+}
+
+/// Whether a managed file is `settings.json`, the one file whose comparison is structural.
+fn is_settings(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "settings.json")
+}
+
+/// Whether two copies of a managed file say the same thing. For `settings.json` that means the
+/// same JSON once the engine's own hooks are removed from both — they are this machine's, never
+/// the store's — and formatting does not count. For everything else it means the same bytes.
+fn same_managed_content(path: &Path, here: &[u8], there: &[u8]) -> bool {
+    if !is_settings(path) {
+        return here == there;
+    }
+    match (
+        serde_json::from_slice::<serde_json::Value>(here),
+        serde_json::from_slice::<serde_json::Value>(there),
+    ) {
+        (Ok(a), Ok(b)) => without_engine_hooks(a) == without_engine_hooks(b),
+        _ => here == there,
+    }
+}
+
+/// The bytes of a managed file as they may enter the store.
+fn for_the_store(path: &Path, bytes: &[u8]) -> Vec<u8> {
+    if !is_settings(path) {
+        return bytes.to_vec();
+    }
+    match serde_json::from_slice::<serde_json::Value>(bytes) {
+        Ok(value) => {
+            let shared = without_engine_hooks(value);
+            serde_json::to_vec_pretty(&shared).unwrap_or_else(|_| bytes.to_vec())
+        }
+        Err(_) => bytes.to_vec(),
+    }
+}
+
+/// `settings.json` without the engine's hooks. Matchers, events and the `hooks` object itself
+/// disappear when the removal empties them, so a file that held nothing but our hooks compares
+/// equal to one that never had them.
+#[must_use]
+pub fn without_engine_hooks(mut settings: serde_json::Value) -> serde_json::Value {
+    let Some(root) = settings.as_object_mut() else {
+        return settings;
+    };
+    let Some(hooks) = root
+        .get_mut("hooks")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return settings;
+    };
+    for matchers in hooks.values_mut() {
+        if let Some(list) = matchers.as_array_mut() {
+            for matcher in list.iter_mut() {
+                if let Some(inner) = matcher
+                    .get_mut("hooks")
+                    .and_then(serde_json::Value::as_array_mut)
+                {
+                    inner.retain(|hook| {
+                        !hook
+                            .get("command")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(is_engine_hook)
+                    });
+                }
+            }
+            list.retain(|matcher| {
+                matcher
+                    .get("hooks")
+                    .and_then(serde_json::Value::as_array)
+                    .is_none_or(|inner| !inner.is_empty())
+            });
+        }
+    }
+    hooks.retain(|_, matchers| matchers.as_array().is_none_or(|list| !list.is_empty()));
+    if hooks.is_empty() {
+        root.remove("hooks");
+    }
+    settings
+}
+
+/// Whether a local managed file holds nothing the store would want: for `settings.json`, an
+/// empty object once the engine's hooks are removed.
+fn nothing_to_share(path: &Path, bytes: &[u8]) -> bool {
+    if !is_settings(path) {
+        return false;
+    }
+    serde_json::from_slice::<serde_json::Value>(bytes)
+        .map(without_engine_hooks)
+        .is_ok_and(|shared| shared.as_object().is_some_and(serde_json::Map::is_empty))
 }

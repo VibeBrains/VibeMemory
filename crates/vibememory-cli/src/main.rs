@@ -45,6 +45,7 @@ fn main() -> ExitCode {
         }
         Some("tick") => tick_command(),
         Some("migrate") => migrate_command(&args.collect::<Vec<String>>()),
+        Some("switch") => switch_command(&args.collect::<Vec<String>>()),
         Some("relink") => relink_command(&args.collect::<Vec<String>>(), false),
         Some("import") => relink_command(&args.collect::<Vec<String>>(), true),
         Some("forget") => forget_command(args.next().as_deref()),
@@ -72,7 +73,7 @@ fn main() -> ExitCode {
                 "commands: status, doctor, install [--dry-run], hook <event>, \
                  merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>, tick, \
                  relink <enc> <name> <cwd>, import <enc> <name> <cwd>, \
-                 migrate --from <dir> [--apply]"
+                 migrate --from <dir> [--apply], switch --from <dir> [--apply|--rollback]"
             );
             ExitCode::SUCCESS
         }
@@ -956,4 +957,98 @@ fn migrate_command(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `switch --from <dir> [--apply|--rollback]` — this machine from the old synced folder to the
+/// store. Without `--apply` it only says what it would do.
+fn switch_command(args: &[String]) -> ExitCode {
+    let layout = layout();
+    if args.iter().any(|arg| arg == "--rollback") {
+        return match vibememory_cli::switch::rollback(&layout.engine_dir) {
+            Ok(undone) => {
+                println!("rolled back {} change(s)", undone.len());
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("rollback: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    let (from, apply_it) = match migrate_args(args) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            eprintln!("{}", message.replace("migrate", "switch"));
+            return ExitCode::from(2);
+        }
+    };
+    let config = match read_config(&layout) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("config: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let Ok(store) = std::fs::canonicalize(layout.store()) else {
+        eprintln!("the store is not there yet; run `vibememory install` first");
+        return ExitCode::FAILURE;
+    };
+    let desktop = desktop_store_link(&config);
+    let input = vibememory_cli::switch::SwitchInput {
+        config_dir: &layout.config_dir,
+        store: &store,
+        from: &from,
+        desktop_store: desktop.as_deref(),
+        desktop_running: desktop_is_running(),
+        engine_dir: &layout.engine_dir,
+    };
+    match vibememory_cli::switch::switch(&input, !apply_it) {
+        Ok(done) => {
+            let verb = if apply_it { "did" } else { "would" };
+            for change in &done.changes {
+                println!("{verb}: {change:?}");
+            }
+            for (path, why) in &done.skipped {
+                println!("left alone: {} — {why}", path.display());
+            }
+            for path in &done.real_directories {
+                println!(
+                    "real directory, use `vibememory import`: {}",
+                    path.display()
+                );
+            }
+            if !apply_it {
+                println!("dry run: nothing was changed. Add --apply to switch.");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("switch: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The Desktop store path even when it is still a symlink (the tick wants a directory; the
+/// switch wants the link itself).
+fn desktop_store_link(config: &Config) -> Option<PathBuf> {
+    match &config.desktop_store {
+        DesktopStore::Path(path) => Some(PathBuf::from(path)),
+        DesktopStore::Auto => {
+            let home = std::env::var("HOME").ok()?;
+            Some(vibememory_cli::desktop_store::default_store(
+                std::path::Path::new(&home),
+            ))
+        }
+    }
+}
+
+/// Whether Claude Desktop has a process right now.
+fn desktop_is_running() -> bool {
+    std::process::Command::new("pgrep")
+        .args(["-x", "Claude"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
