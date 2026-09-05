@@ -434,3 +434,58 @@ fn what_the_hooks_wrote_into_the_outbox_is_committed_by_the_tick() {
         "an unchanged outbox makes no commit"
     );
 }
+
+#[test]
+fn side_files_of_ended_sessions_are_committed_but_a_live_session_is_left_alone() {
+    let temp = TempDir::new("tick-project-files");
+    let pair = two_machines(&temp);
+    let project = pair.mac.join("projects/Project");
+    // An ended session's side file and the hook's marker: nobody else commits these.
+    fs::create_dir_all(project.join("ended-session/tool-results")).expect("dirs");
+    fs::write(project.join("ended-session/tool-results/r1.txt"), b"done\n").expect("write");
+    fs::write(project.join(".keep"), b"").expect("write");
+    // A live session: its transcript is the Stop hook's business, and its side files are being
+    // written right now.
+    mark_live(&pair.mac, "mac-test", SESSION);
+    fs::write(
+        project.join(format!("{SESSION}.jsonl")),
+        b"{\"uuid\":\"half",
+    )
+    .expect("write");
+    fs::create_dir_all(project.join(SESSION).join("tool-results")).expect("dirs");
+    fs::write(
+        project.join(SESSION).join("tool-results/r2.txt"),
+        b"writing\n",
+    )
+    .expect("write");
+
+    let ticked = tick(&pair.mac, &temp);
+    assert_eq!(ticked.project_files_committed, 2, "{ticked:?}");
+    let output = std::process::Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", "HEAD"])
+        .current_dir(&pair.mac)
+        .output()
+        .expect("ls-tree");
+    let tree = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        tree.contains("projects/Project/ended-session/tool-results/r1.txt"),
+        "{tree}"
+    );
+    assert!(tree.contains("projects/Project/.keep"), "{tree}");
+    // The transcript was committed long before this tick; what matters is that the half record
+    // written since did not travel — HEAD must still hold the old bytes.
+    let head_version = std::process::Command::new("git")
+        .args(["show", &format!("HEAD:projects/Project/{SESSION}.jsonl")])
+        .current_dir(&pair.mac)
+        .output()
+        .expect("git show");
+    assert_eq!(
+        String::from_utf8_lossy(&head_version.stdout),
+        "{\"uuid\":\"one\"}\n",
+        "a live transcript is never git-added: half a record would travel"
+    );
+    assert!(
+        !tree.contains(&format!("projects/Project/{SESSION}/")),
+        "a live session's side files are being written this very moment: {tree}"
+    );
+}

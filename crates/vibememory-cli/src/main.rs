@@ -744,6 +744,12 @@ fn tick_command() -> ExitCode {
             ticked.imported.history_in, ticked.imported.tasks_in
         );
     }
+    if ticked.project_files_committed > 0 {
+        println!(
+            "project files committed: {}",
+            ticked.project_files_committed
+        );
+    }
     if ticked.outbox_committed > 0 {
         println!("outbox committed: {} file(s)", ticked.outbox_committed);
     }

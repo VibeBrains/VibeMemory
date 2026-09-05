@@ -44,6 +44,9 @@ pub struct Ticked {
     pub projected_memory: Vec<String>,
     /// Files of this machine's outbox (`machines/<id>/**`) committed by this tick.
     pub outbox_committed: usize,
+    /// Files under `projects/` committed by this tick: side files, `.keep` markers, imported
+    /// directories, memory — everything a session is not writing right now.
+    pub project_files_committed: usize,
     /// Sessions dropped from this machine's live list because nothing has confirmed them for
     /// longer than a machine that crashed would take to come back.
     pub stale_sessions: Vec<String>,
@@ -87,6 +90,7 @@ pub fn run(
         ..Ticked::default()
     };
 
+    let live = live_sessions(store, machine_id);
     match merge_if_safe(store, machine_id) {
         Ok(Merge::Merged) => result.merged = true,
         Ok(Merge::HeldBack { sessions }) => result.held_back = sessions,
@@ -107,7 +111,6 @@ pub fn run(
         Err(problem) => result.problems.push(problem),
     }
 
-    let live = live_sessions(store, machine_id);
     match crate::outbox::publish(config_dir, store, machine_id, roots) {
         Ok(moved) => result.published = moved,
         Err(problem) => result.problems.push(problem),
@@ -139,6 +142,11 @@ pub fn run(
 
     match restore_deleted_transcripts(store) {
         Ok(restored) => result.restored = restored,
+        Err(problem) => result.problems.push(problem),
+    }
+
+    match commit_project_files(store, &live, stamp) {
+        Ok(files) => result.project_files_committed = files,
         Err(problem) => result.problems.push(problem),
     }
 
@@ -627,4 +635,47 @@ fn commit_own_outbox(store: &Path, machine_id: &str, stamp: &str) -> Result<usiz
     )?
     .ok_or_else(|| "git refused to commit the outbox".to_owned())?;
     Ok(changed.len())
+}
+
+/// Commits what appeared under `projects/` outside any live session: side files of ended
+/// sessions, `.keep` markers the hook wrote, directories `import` brought in, memory files.
+///
+/// A session live on this machine is left entirely alone — its transcript is committed by the
+/// `Stop` hook as a snapshot cut at the last newline, and its side files are being written this
+/// very moment. Everything else is nobody's but the tick's to commit, and without this it would
+/// stay on one machine for ever.
+fn commit_project_files(
+    store: &Path,
+    live: &BTreeSet<String>,
+    stamp: &str,
+) -> Result<usize, String> {
+    let changed = git::changed_paths(store, "projects", TIMEOUT)?;
+    let ours: Vec<&str> = changed
+        .iter()
+        .map(String::as_str)
+        .filter(|path| !belongs_to_live_session(path, live))
+        .collect();
+    if ours.is_empty() {
+        return Ok(0);
+    }
+    for chunk in ours.chunks(200) {
+        let mut args = vec!["add", "--"];
+        args.extend(chunk.iter().copied());
+        git::run_with_timeout(git::command(store, &args), TIMEOUT)?
+            .ok_or_else(|| "git refused to stage project files".to_owned())?;
+    }
+    let message = format!("vibememory: {} project file(s) at {stamp}", ours.len());
+    git::run_with_timeout(
+        git::command(store, &["commit", "--quiet", "-m", &message]),
+        TIMEOUT,
+    )?
+    .ok_or_else(|| "git refused to commit project files".to_owned())?;
+    Ok(ours.len())
+}
+
+/// Whether a store path is a live session's transcript (`<sid>.jsonl`) or lies inside its side
+/// directory (`<sid>/…`).
+fn belongs_to_live_session(path: &str, live: &BTreeSet<String>) -> bool {
+    live.iter()
+        .any(|sid| path.contains(&format!("/{sid}.jsonl")) || path.contains(&format!("/{sid}/")))
 }
