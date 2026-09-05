@@ -411,7 +411,12 @@ fn scaffolding_left_uncommitted_by_an_earlier_run_is_committed_by_the_next() {
     assert!(reset.success());
     let actions = plan(&layout, &config(), &[]);
     assert_eq!(
-        state_of(&actions, &Step::ScaffoldCommitted),
+        state_of(
+            &actions,
+            &Step::ScaffoldCommitted {
+                machine_id: "mac-test".to_owned(),
+            },
+        ),
         &State::Missing,
         "doctor must see uncommitted scaffolding"
     );

@@ -310,3 +310,32 @@ fn a_registry_entry_of_a_dead_process_does_not_block_anything() {
     switch(&input(&m, false), false).expect("switch");
     assert_eq!(link_target(&link), m.store.join("projects/VibeIDE"));
 }
+
+#[test]
+fn a_live_desktop_spawned_session_means_desktop_is_running() {
+    let temp = TempDir::new("switch-desktop-registry");
+    let config_dir = temp.dir("claude");
+    let dir = config_dir.join("sessions");
+    fs::create_dir_all(&dir).expect("sessions dir");
+    // This very process, registered the way Desktop registers the sessions it spawns.
+    fs::write(
+        dir.join(format!("{}.json", std::process::id())),
+        format!(
+            "{{\"pid\":\"{}\",\"cwd\":\"/x\",\"entrypoint\":\"claude-desktop\"}}",
+            std::process::id()
+        ),
+    )
+    .expect("registry entry");
+    assert!(
+        vibememory_cli::switch::desktop_session_live(&config_dir),
+        "a session Desktop spawned cannot be alive while Desktop is not"
+    );
+
+    // The same entry with a dead pid says nothing.
+    fs::write(
+        dir.join(format!("{}.json", std::process::id())),
+        "{\"pid\":\"999999\",\"cwd\":\"/x\",\"entrypoint\":\"claude-desktop\"}",
+    )
+    .expect("registry entry");
+    assert!(!vibememory_cli::switch::desktop_session_live(&config_dir));
+}

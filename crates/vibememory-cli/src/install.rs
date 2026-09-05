@@ -103,7 +103,10 @@ pub enum Step {
     /// The engine's hooks in `settings.json`.
     Hooks,
     /// The store's own files committed, so a clone starts with them.
-    ScaffoldCommitted,
+    ScaffoldCommitted {
+        /// Whose `machines/<id>` directory belongs to the scaffolding.
+        machine_id: String,
+    },
     /// `~/.claude/projects/<enc>` → `<store>/projects/<name>`.
     ProjectLink {
         /// The encoded directory name the CLI uses.
@@ -125,7 +128,7 @@ impl Step {
             Self::SkillsLink => "skills link".to_owned(),
             Self::Schedule => "scheduled tick".to_owned(),
             Self::Hooks => "hooks in settings.json".to_owned(),
-            Self::ScaffoldCommitted => "store scaffolding committed".to_owned(),
+            Self::ScaffoldCommitted { .. } => "store scaffolding committed".to_owned(),
             Self::ProjectLink { enc, name } => format!("link {enc} -> projects/{name}"),
         }
     }
@@ -232,7 +235,9 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
     });
     // Last: it commits what the steps above created.
     actions.push(Action {
-        step: Step::ScaffoldCommitted,
+        step: Step::ScaffoldCommitted {
+            machine_id: config.machine_id.clone(),
+        },
         state: scaffolding_state(&store, &config.machine_id),
     });
     // The scheduled tick exists only where there is a scheduler this build knows about.
@@ -466,8 +471,8 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
         ),
         Step::Schedule => write_new(&schedule_path(layout), launch_agent(layout).as_bytes()),
         Step::Hooks => write_hooks(layout),
-        Step::ScaffoldCommitted => {
-            commit_scaffolding(&store, &scaffolding_paths(&machine_id_of(&store)))
+        Step::ScaffoldCommitted { machine_id } => {
+            commit_scaffolding(&store, &scaffolding_paths(machine_id))
         }
         Step::SkillsLink => make_link(
             &store.join("config/skills"),
@@ -860,16 +865,6 @@ fn scaffolding_paths(machine_id: &str) -> Vec<String> {
     );
     paths.extend(MANAGED_FILES.iter().map(|name| format!("config/{name}")));
     paths
-}
-
-/// The one machine directory of a store, which names the machine that owns it.
-fn machine_id_of(store: &Path) -> String {
-    std::fs::read_dir(store.join("machines"))
-        .ok()
-        .and_then(|mut entries| entries.next())
-        .and_then(Result::ok)
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .unwrap_or_default()
 }
 
 /// Whether every scaffolding file that exists is committed and unchanged.

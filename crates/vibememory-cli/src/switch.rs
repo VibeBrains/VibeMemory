@@ -128,6 +128,37 @@ pub fn live_project_dirs(config_dir: &Path) -> Vec<(String, String)> {
     live
 }
 
+/// Whether Desktop has a session alive on this machine, by the CLI's own registry: a live pid
+/// whose `entrypoint` is `claude-desktop` was spawned by Desktop, and Desktop is therefore
+/// running whatever the process list says. The process list alone is not enough — `pgrep` did
+/// not see the Desktop process on the first real run, while its two child sessions were there.
+#[must_use]
+pub fn desktop_session_live(config_dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(config_dir.join("sessions")) else {
+        return false;
+    };
+    entries.filter_map(Result::ok).any(|entry| {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "json") {
+            return false;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return false;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+            return false;
+        };
+        let spawned_by_desktop =
+            value.get("entrypoint").and_then(serde_json::Value::as_str) == Some("claude-desktop");
+        let pid = value.get("pid").and_then(|pid| {
+            pid.as_str()
+                .and_then(|text| text.parse::<u32>().ok())
+                .or_else(|| pid.as_u64().and_then(|n| u32::try_from(n).ok()))
+        });
+        spawned_by_desktop && pid.is_some_and(crate::process::is_running)
+    })
+}
+
 /// Plans and, unless `dry_run`, performs the switch.
 ///
 /// # Errors

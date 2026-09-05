@@ -999,7 +999,7 @@ fn switch_command(args: &[String]) -> ExitCode {
         store: &store,
         from: &from,
         desktop_store: desktop.as_deref(),
-        desktop_running: desktop_is_running(),
+        desktop_running: desktop_is_running(&layout.config_dir),
         engine_dir: &layout.engine_dir,
     };
     match vibememory_cli::switch::switch(&input, !apply_it) {
@@ -1043,12 +1043,18 @@ fn desktop_store_link(config: &Config) -> Option<PathBuf> {
     }
 }
 
-/// Whether Claude Desktop has a process right now.
-fn desktop_is_running() -> bool {
-    std::process::Command::new("pgrep")
-        .args(["-x", "Claude"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+/// Whether Claude Desktop is running: its process in the process list, or a session it spawned
+/// still alive in the CLI's registry. Either is enough — on the first real run `pgrep` missed the
+/// Desktop process entirely while two of its sessions were plainly there.
+fn desktop_is_running(config_dir: &std::path::Path) -> bool {
+    let in_process_list = std::process::Command::new("ps")
+        .args(["-axo", "comm"])
+        .output()
+        .is_ok_and(|output| {
+            String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+                line.trim_end()
+                    .ends_with("/Claude.app/Contents/MacOS/Claude")
+            })
+        });
+    in_process_list || vibememory_cli::switch::desktop_session_live(config_dir)
 }
