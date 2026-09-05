@@ -74,7 +74,7 @@ fn two_machines(temp: &TempDir) -> Pair {
 fn tick(store: &Path, temp: &TempDir) -> Ticked {
     let config_dir = temp.dir("claude");
     let roots = Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix);
-    run(store, &config_dir, "mac-test", &roots, STAMP)
+    run(store, &config_dir, "mac-test", &roots, None, STAMP)
 }
 
 fn write_commit(store: &Path, relative: &str, contents: &str, message: &str) {

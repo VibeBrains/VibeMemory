@@ -116,6 +116,7 @@ fn the_reconciler_creates_the_link_another_machine_needs() {
         &config_dir,
         "mac-test",
         &roots(&projects_root),
+        None,
         STAMP,
     );
     assert_eq!(ticked.linked, vec![ENC.to_owned()], "{ticked:?}");
@@ -139,6 +140,7 @@ fn the_reconciler_creates_the_link_another_machine_needs() {
         &config_dir,
         "mac-test",
         &roots(&projects_root),
+        None,
         STAMP,
     );
     assert!(again.linked.is_empty(), "{:?}", again.linked);
@@ -164,6 +166,7 @@ fn a_working_directory_this_machine_does_not_have_is_left_alone() {
         &config_dir,
         "mac-test",
         &roots(&projects_root),
+        None,
         STAMP,
     );
     assert!(
@@ -201,6 +204,7 @@ fn two_machines_that_name_one_directory_differently_are_reported_not_resolved() 
         &config_dir,
         "mac-test",
         &roots(&projects_root),
+        None,
         STAMP,
     );
     assert_eq!(

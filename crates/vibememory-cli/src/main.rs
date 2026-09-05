@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use vibememory_cli::config::Config;
+use vibememory_cli::config::{Config, DesktopStore};
 use vibememory_cli::hook::parse_input;
 use vibememory_cli::hook::prompt_gate::{Gate, decide};
 use vibememory_cli::hook::session_start::{self, Decision};
@@ -420,6 +420,18 @@ fn linked_name(decision: &Decision) -> Option<String> {
     }
 }
 
+/// Where Desktop keeps its cards, when this machine has them at all.
+fn desktop_store_path(config: &Config) -> Option<PathBuf> {
+    let path = match &config.desktop_store {
+        DesktopStore::Path(path) => PathBuf::from(path),
+        DesktopStore::Auto => {
+            let home = std::env::var("HOME").ok()?;
+            vibememory_cli::desktop_store::default_store(std::path::Path::new(&home))
+        }
+    };
+    path.is_dir().then_some(path)
+}
+
 /// The named roots of this machine, as the core wants them.
 fn roots_of(config: &Config) -> vibememory_core::desktop::roots::Roots {
     vibememory_core::desktop::roots::Roots::new(
@@ -657,11 +669,13 @@ fn tick_command() -> ExitCode {
     };
 
     let roots = roots_of(&config);
+    let desktop = desktop_store_path(&config);
     let ticked = vibememory_cli::tick::run(
         &store,
         &layout.config_dir,
         &config.machine_id,
         &roots,
+        desktop.as_deref(),
         &vibememory_cli::clock::now(),
     );
     if ticked.merged {
@@ -672,6 +686,18 @@ fn tick_command() -> ExitCode {
     }
     for session in &ticked.forgotten {
         println!("forgotten: {session}");
+    }
+    if ticked.cards_out > 0 || ticked.cards_in > 0 {
+        println!(
+            "Desktop cards: {} published, {} brought in",
+            ticked.cards_out, ticked.cards_in
+        );
+    }
+    if ticked.imported.history_in > 0 || ticked.imported.tasks_in > 0 {
+        println!(
+            "brought in: {} history line(s), {} task file(s)",
+            ticked.imported.history_in, ticked.imported.tasks_in
+        );
     }
     for enc in &ticked.linked {
         println!("linked: {enc}");

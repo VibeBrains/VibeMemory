@@ -42,6 +42,14 @@ pub struct Ticked {
     pub restored: Vec<String>,
     /// Projects whose memory projection was rewritten from records that arrived from elsewhere.
     pub projected_memory: Vec<String>,
+    /// Desktop cards published to the outbox.
+    pub cards_out: usize,
+    /// Desktop cards written into the local Desktop store.
+    pub cards_in: usize,
+    /// What this machine put into its outbox for the others.
+    pub published: crate::outbox::Moved,
+    /// What it took from theirs.
+    pub imported: crate::outbox::Moved,
     /// Links created ahead of any session that might need them.
     pub linked: Vec<String>,
     /// Encoded directories where this machine and another disagree about the store name. Never
@@ -65,6 +73,7 @@ pub fn run(
     config_dir: &Path,
     machine_id: &str,
     roots: &Roots,
+    desktop_store: Option<&Path>,
     stamp: &str,
 ) -> Ticked {
     let mut result = Ticked {
@@ -90,6 +99,31 @@ pub fn run(
             result.disagreements.append(&mut outcome.disagreements);
         }
         Err(problem) => result.problems.push(problem),
+    }
+
+    let live = live_sessions(store, machine_id);
+    match crate::outbox::publish(config_dir, store, machine_id, roots) {
+        Ok(moved) => result.published = moved,
+        Err(problem) => result.problems.push(problem),
+    }
+    match crate::outbox::import(config_dir, store, machine_id, roots, &live) {
+        Ok(moved) => result.imported = moved,
+        // The CLI holding its own lock is not a failure: the next tick is two minutes away.
+        Err(problem) => result.problems.push(problem),
+    }
+
+    if let Some(desktop) = desktop_store {
+        match crate::desktop_store::publish(desktop, store, machine_id, roots) {
+            Ok(cards) => result.cards_out = cards.exported.len(),
+            Err(problem) => result.problems.push(problem),
+        }
+        let confirmed = confirmed_transcripts(store, machine_id);
+        match crate::desktop_store::import(desktop, store, machine_id, roots, &|id| {
+            confirmed.get(id).cloned()
+        }) {
+            Ok(cards) => result.cards_in = cards.imported.len(),
+            Err(problem) => result.problems.push(problem),
+        }
     }
 
     match project_memory(store, machine_id, stamp) {
@@ -506,4 +540,22 @@ fn symlink_dir(target: &Path, link: &Path) -> Result<(), String> {
     {
         std::os::windows::fs::symlink_dir(target, link).map_err(|error| error.to_string())
     }
+}
+
+/// The transcripts this machine has actually confirmed, from its own `links.json`: a card may only
+/// come in when a session here proved the link its transcript needs.
+fn confirmed_transcripts(
+    store: &Path,
+    machine_id: &str,
+) -> std::collections::HashMap<String, String> {
+    crate::links_file::read(store, machine_id)
+        .links
+        .into_iter()
+        .filter_map(|record| {
+            let path = record.confirmed_by?;
+            // The confirmed path names the transcript file; its stem is the session id.
+            let id = Path::new(&path).file_stem()?.to_string_lossy().into_owned();
+            Some((id, path))
+        })
+        .collect()
 }

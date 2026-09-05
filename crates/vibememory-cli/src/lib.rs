@@ -17,6 +17,7 @@
 
 pub mod clock;
 pub mod config;
+pub mod desktop_store;
 pub mod forget;
 pub mod git;
 pub mod hook;
@@ -24,5 +25,6 @@ pub mod install;
 pub mod links_file;
 pub mod memory;
 pub mod merge_driver;
+pub mod outbox;
 pub mod store;
 pub mod tick;
