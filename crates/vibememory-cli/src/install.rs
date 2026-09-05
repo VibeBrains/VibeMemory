@@ -380,6 +380,10 @@ impl Applied {
 #[must_use]
 pub fn apply(layout: &Layout, actions: &[Action], dry_run: bool) -> Applied {
     let mut applied = Applied::default();
+    // Store paths this run created, so they can be committed: a `.gitattributes` that is not
+    // in a commit never reaches the other machine, and a clone without it merges without the
+    // drivers — conflict markers in transcripts.
+    let mut created: Vec<String> = Vec::new();
     for action in actions {
         let what = action.step.describe();
         match &action.state {
@@ -392,13 +396,81 @@ pub fn apply(layout: &Layout, actions: &[Action], dry_run: bool) -> Applied {
                     continue;
                 }
                 match perform(layout, &action.step) {
-                    Ok(()) => applied.performed.push(what),
+                    Ok(()) => {
+                        created.extend(store_paths_of(layout, &action.step));
+                        applied.performed.push(what);
+                    }
                     Err(error) => applied.failed.push((what, error)),
                 }
             }
         }
     }
+    if !dry_run
+        && !created.is_empty()
+        && let Err(error) = commit_scaffolding(&layout.store(), &created)
+    {
+        applied
+            .failed
+            .push(("commit of the store's scaffolding".to_owned(), error));
+    }
     applied
+}
+
+/// The store-relative paths a step leaves behind, for the commit.
+fn store_paths_of(layout: &Layout, step: &Step) -> Vec<String> {
+    match step {
+        Step::Gitattributes => vec![".gitattributes".to_owned()],
+        Step::StoreDir { relative } => vec![format!("{relative}/.keep")],
+        Step::ManagedCopy { name } => {
+            let in_store = layout.store().join("config").join(name);
+            if in_store.is_file() {
+                vec![format!("config/{name}")]
+            } else {
+                Vec::new()
+            }
+        }
+        Step::SkillsLink => vec!["config/skills/.keep".to_owned()],
+        Step::ProjectLink { name, .. } => vec![format!("projects/{name}/.keep")],
+        Step::GitSetting { .. } | Step::Schedule | Step::Hooks => Vec::new(),
+    }
+}
+
+/// Stages exactly these paths and commits when the index then differs from HEAD. Never
+/// `git add -A`: the store may already hold a live transcript or two.
+fn commit_scaffolding(store: &Path, paths: &[String]) -> Result<(), String> {
+    let timeout = std::time::Duration::from_mins(1);
+    let existing: Vec<&str> = paths
+        .iter()
+        .map(String::as_str)
+        .filter(|path| store.join(path).exists())
+        .collect();
+    if existing.is_empty() {
+        return Ok(());
+    }
+    let mut args = vec!["add", "--"];
+    args.extend(existing.iter().copied());
+    crate::git::run_with_timeout(crate::git::command(store, &args), timeout)?
+        .ok_or_else(|| "git refused to stage the scaffolding".to_owned())?;
+    let has_head = crate::git::run_with_timeout(
+        crate::git::command(store, &["rev-parse", "--verify", "--quiet", "HEAD"]),
+        timeout,
+    )?
+    .is_some();
+    let dirty = !has_head
+        || crate::git::run_with_timeout(
+            crate::git::command(store, &["diff-index", "--quiet", "--cached", "HEAD", "--"]),
+            timeout,
+        )?
+        .is_none();
+    if !dirty {
+        return Ok(());
+    }
+    crate::git::run_with_timeout(
+        crate::git::command(store, &["commit", "--quiet", "-m", "vibememory: install"]),
+        timeout,
+    )?
+    .ok_or_else(|| "git refused to commit the scaffolding".to_owned())?;
+    Ok(())
 }
 
 /// Makes one step true.

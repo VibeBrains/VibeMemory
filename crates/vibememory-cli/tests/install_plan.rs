@@ -364,3 +364,34 @@ fn hooks_are_refused_while_settings_is_a_link_into_a_synced_folder() {
         "the synced file must be exactly as it was"
     );
 }
+
+#[test]
+fn install_commits_what_it_scaffolds_so_a_clone_gets_the_drivers() {
+    let temp = TempDir::new("install-commit");
+    let layout = layout(&temp);
+    let _ = apply(&layout, &plan(&layout, &config(), &[]), false);
+
+    let output = std::process::Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", "HEAD"])
+        .current_dir(layout.store())
+        .output()
+        .expect("git ls-tree");
+    let tree = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        tree.contains(".gitattributes"),
+        "a .gitattributes outside any commit never reaches the other machine, and a clone \
+         without it merges transcripts without the drivers: {tree}"
+    );
+    assert!(tree.contains("projects/.keep"), "{tree}");
+
+    let status = std::process::Command::new("git")
+        .args(["status", "--short"])
+        .current_dir(layout.store())
+        .output()
+        .expect("git status");
+    assert!(
+        status.stdout.is_empty(),
+        "nothing install made may be left uncommitted: {}",
+        String::from_utf8_lossy(&status.stdout)
+    );
+}
