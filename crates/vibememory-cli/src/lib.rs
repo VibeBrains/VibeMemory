@@ -21,6 +21,7 @@ pub mod forget;
 pub mod git;
 pub mod hook;
 pub mod install;
+pub mod memory;
 pub mod merge_driver;
 pub mod store;
 pub mod tick;

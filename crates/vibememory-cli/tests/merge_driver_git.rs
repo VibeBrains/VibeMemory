@@ -19,13 +19,26 @@ use std::path::Path;
 use support::{TempDir, git, git_repo_with_commit};
 
 /// Registers the drivers in the repository, pointing at the binary this test run built.
-fn register_drivers(store: &Path) {
+/// `engine` is where a quarantined version will land.
+fn register_drivers_with_engine(store: &Path, engine: &Path) {
     let binary = env!("CARGO_BIN_EXE_vibememory");
+    git(
+        store,
+        &[
+            "config",
+            "--local",
+            "vibememory.engineDir",
+            &engine.display().to_string(),
+        ],
+    );
     for (key, driver) in [
         ("merge.vibememory-jsonl.driver", "jsonl"),
         ("merge.vibememory-keepboth.driver", "keepboth"),
     ] {
-        let value = format!("{binary} merge-driver {driver} %O %A %B %P");
+        let value = format!(
+            "VIBEMEMORY_DIR={} {binary} merge-driver {driver} %O %A %B %P",
+            engine.display()
+        );
         git(store, &["config", "--local", key, &value]);
     }
     fs::write(
@@ -35,6 +48,12 @@ fn register_drivers(store: &Path) {
     .expect("write attributes");
     git(store, &["add", ".gitattributes"]);
     git(store, &["commit", "--quiet", "-m", "attributes"]);
+}
+
+/// The common case: the quarantine directory is of no interest to the test.
+fn register_drivers(store: &Path) {
+    let engine = store.join("..").join("engine-default");
+    register_drivers_with_engine(store, &engine);
 }
 
 fn record(uuid: &str, at: &str) -> String {
@@ -229,5 +248,36 @@ fn an_unreadable_input_leaves_ours_untouched() {
         fs::read_to_string(&ours).expect("read"),
         untouched,
         "%A must be exactly as git wrote it when the driver refuses"
+    );
+}
+
+#[test]
+fn the_losing_memory_version_is_written_into_the_quarantine() {
+    let temp = TempDir::new("driver-quarantine");
+    let store = temp.dir("store");
+    let engine = temp.dir("engine");
+    git_repo_with_commit(&store);
+    let relative = "projects/Project/memory/note.md";
+    commit_file(&store, relative, "base text\n", "base");
+    register_drivers_with_engine(&store, &engine);
+
+    git(&store, &["checkout", "--quiet", "-b", "other"]);
+    commit_file(&store, relative, "their text\n", "their edit");
+    git(&store, &["checkout", "--quiet", "-"]);
+    commit_file(&store, relative, "our text\n", "our edit");
+    git(&store, &["merge", "--quiet", "--no-edit", "other"]);
+
+    assert_eq!(read(&store, relative), "our text\n");
+    let set_aside = vibememory_cli::memory::quarantined(&engine);
+    assert_eq!(
+        set_aside.len(),
+        1,
+        "the other machine's version must be on disk, not merely reported: {set_aside:?}"
+    );
+    let contents = fs::read_to_string(engine.join("quarantine").join(&set_aside[0]))
+        .expect("read the quarantined file");
+    assert_eq!(
+        contents, "their text\n",
+        "what was set aside must be the version that lost"
     );
 }

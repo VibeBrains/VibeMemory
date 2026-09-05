@@ -18,6 +18,10 @@ use vibememory_cli::hook::stop::{
 };
 use vibememory_cli::hook::stop::{Tail, Tails};
 use vibememory_cli::install::{Layout, State, apply, plan};
+use vibememory_cli::memory::{
+    COWORK_MEMORY_VAR, JOURNAL_FILE, MemoryLocation, REMOTE_MEMORY_VAR, memory_dir,
+    settings_memory_dir, sync,
+};
 use vibememory_cli::store::existing;
 use vibememory_core::naming::{
     IgnoreReason, NamingInput, PathSyntax, Resolution, canonical_cwd, enc_from_transcript_path,
@@ -318,10 +322,73 @@ fn session_progress_hook(ended: bool) -> ExitCode {
     if ended && let Err(error) = record_end(&store, &config.machine_id, &input.session_id) {
         return say(&format!("VibeMemory could not close this session: {error}"));
     }
+    // Memory is synchronised on the same events as the transcript: edits first, then the
+    // projection. A model that wrote a note during the turn has it recorded before the commit of
+    // the next stop, not two minutes later.
+    let notes = sync_memory(&layout, &config, &input.transcript_path, &stamp);
+
     // A push that does not happen costs nothing here: the commit is already on this disk, and the
     // tick pushes again in two minutes.
     let _ = push_if_due(&store, &layout.engine_dir, epoch_seconds(), PUSH_DEBOUNCE);
-    ExitCode::SUCCESS
+    match notes {
+        Some(message) => say(&message),
+        None => ExitCode::SUCCESS,
+    }
+}
+
+/// Reads memory edits back into the journal and writes the projection out again.
+///
+/// Returns a sentence for the session only when there is something it must know: versions two
+/// machines wrote at once, or a document the engine could not read. Everything else is silent.
+fn sync_memory(
+    layout: &Layout,
+    config: &Config,
+    transcript_path: &str,
+    stamp: &str,
+) -> Option<String> {
+    let syntax = session_start::host_syntax();
+    let enc = enc_from_transcript_path(transcript_path, syntax).ok()?;
+    let cowork = std::env::var(COWORK_MEMORY_VAR).ok();
+    let remote = std::env::var(REMOTE_MEMORY_VAR).ok();
+    let settings = settings_memory_dir(&layout.config_dir.join("settings.json"));
+    let location = MemoryLocation {
+        cowork_override: cowork.as_deref(),
+        remote_dir: remote.as_deref(),
+        settings_dir: settings.as_deref(),
+    };
+    let memory_dir = memory_dir(&location, &layout.config_dir, enc.as_str());
+
+    // The journal lives beside the transcripts of the project, in the store; the projection is
+    // wherever the CLI keeps it, which need not be the same place at all.
+    let journal = std::fs::canonicalize(&memory_dir)
+        .ok()
+        .and_then(|dir| dir.parent().map(|project| project.join(JOURNAL_FILE)))?;
+
+    let synced = match sync(&memory_dir, &journal, stamp, &config.machine_id) {
+        Ok(synced) => synced,
+        Err(error) => return Some(format!("VibeMemory could not synchronise memory: {error}")),
+    };
+    let mut notes = Vec::new();
+    if !synced.divergent.is_empty() {
+        notes.push(format!(
+            "VibeMemory: {} memory record(s) were written on two machines at once and both \
+             versions are kept ({}). The rival version sits next to each one as \
+             `<id>.rival-<version>.md`; please reconcile them.",
+            synced.divergent.len(),
+            synced.divergent.join(", ")
+        ));
+    }
+    for (name, error) in &synced.rejected {
+        notes.push(format!(
+            "VibeMemory could not read the memory document {name}: {error}. The file is left as \
+             it is."
+        ));
+    }
+    if notes.is_empty() {
+        None
+    } else {
+        Some(notes.join(" "))
+    }
 }
 
 /// The working directory in the form other machines can read, or the local one when no root
@@ -445,7 +512,28 @@ fn merge_driver_command(args: &[String]) -> ExitCode {
         path,
         &stamp,
     ) {
-        Ok(_) => ExitCode::SUCCESS,
+        Ok(outcome) => {
+            // The losing version is written to disk here, not inside the driver: the core has no
+            // file system, and a version that was only reported would be a version lost.
+            if let vibememory_cli::merge_driver::DriverOutcome::KeepBoth(outcome) = &outcome
+                && let Some(set_aside) = &outcome.quarantined
+            {
+                match vibememory_cli::memory::quarantine(
+                    &layout.engine_dir,
+                    &set_aside.name,
+                    &set_aside.bytes,
+                ) {
+                    Ok(path) => eprintln!("vibememory: set aside {}", path.display()),
+                    Err(error) => {
+                        // Losing the other machine's version is worse than failing the merge:
+                        // the caller aborts, and nothing is lost.
+                        eprintln!("vibememory merge-driver: could not quarantine: {error}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            ExitCode::SUCCESS
+        }
         Err(error) => {
             // The message goes to git's stderr, which ends up in the tick's log. `%A` is
             // untouched, so `git merge --abort` restores the tree exactly.
@@ -543,6 +631,9 @@ fn tick_command() -> ExitCode {
     }
     for session in &ticked.forgotten {
         println!("forgotten: {session}");
+    }
+    for project in &ticked.projected_memory {
+        println!("memory projected: {project}");
     }
     for path in &ticked.restored {
         println!("restored: {path} was deleted in the working copy and put back");

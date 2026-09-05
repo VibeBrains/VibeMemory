@@ -285,3 +285,42 @@ fn nothing_incoming_is_not_reported_as_a_merge() {
         "a log that says `pushed` every two minutes cannot show a stuck machine"
     );
 }
+
+#[test]
+fn memory_that_arrived_from_elsewhere_becomes_readable_files() {
+    let temp = TempDir::new("tick-memory");
+    let pair = two_machines(&temp);
+    // The other machine wrote a memory record. Its journal arrives with the merge; without a
+    // projection nobody could read it until a session happened to start in that project.
+    let journal = "projects/Project/memory.jsonl";
+    let event = "{\"uuid\":\"v1\",\"action\":\"upsert\",\"record\":{\"id\":\"store-naming\",\
+\"kind\":\"project\",\"project\":\"Project\",\"title\":\"Store naming\",\
+\"description\":\"where the name comes from\",\
+\"body\":\"The name follows the git common dir.\",\"links\":[],\"agent\":\"gpd\",\
+\"createdAt\":\"2026-09-05T09:00:00Z\",\"updatedAt\":\"2026-09-05T09:00:00Z\"}}\n";
+    write_commit(&pair.other, journal, event, "their memory");
+    git(&pair.other, &["push", "--quiet", "origin", "main"]);
+
+    let ticked = run(&pair.mac, "mac-test", STAMP);
+    assert!(ticked.merged, "the journal must arrive first");
+    assert_eq!(
+        ticked.projected_memory,
+        vec!["Project".to_owned()],
+        "the tick must say which project it made readable"
+    );
+
+    let index = fs::read_to_string(pair.mac.join("projects/Project/memory/MEMORY.md"))
+        .expect("the index must exist");
+    assert!(
+        index.contains("Store naming"),
+        "the record must be readable as markdown: {index}"
+    );
+
+    // And a second tick, with nothing new, writes nothing.
+    let again = run(&pair.mac, "mac-test", STAMP);
+    assert!(
+        again.projected_memory.is_empty(),
+        "an unchanged projection may not be rewritten every two minutes: {:?}",
+        again.projected_memory
+    );
+}

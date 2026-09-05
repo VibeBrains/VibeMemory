@@ -36,6 +36,8 @@ pub struct Ticked {
     pub forgotten: Vec<String>,
     /// Files under `projects/` that were deleted in the working copy and put back.
     pub restored: Vec<String>,
+    /// Projects whose memory projection was rewritten from records that arrived from elsewhere.
+    pub projected_memory: Vec<String>,
     /// Whether anything was pushed.
     pub pushed: bool,
     /// What went wrong, if anything. A tick reports and returns; it never panics a machine.
@@ -63,6 +65,11 @@ pub fn run(store: &Path, machine_id: &str, stamp: &str) -> Ticked {
 
     match apply_tombstones(store, stamp) {
         Ok(removed) => result.forgotten = removed,
+        Err(problem) => result.problems.push(problem),
+    }
+
+    match project_memory(store, machine_id, stamp) {
+        Ok(projected) => result.projected_memory = projected,
         Err(problem) => result.problems.push(problem),
     }
 
@@ -369,4 +376,29 @@ fn is_running(pid: u32) -> bool {
         let _ = pid;
         true
     }
+}
+
+/// Writes the memory projection of every project in the store.
+///
+/// Without this, records that arrived from another machine would sit in the journal unseen until
+/// somebody happened to start a session in that project — and memory that nobody can read is
+/// memory that was not synchronised. Only the default location is projected here: a session that
+/// moved its memory elsewhere projects it through its own hooks, which know where "elsewhere" is.
+fn project_memory(store: &Path, machine_id: &str, stamp: &str) -> Result<Vec<String>, String> {
+    let Ok(projects) = std::fs::read_dir(store.join("projects")) else {
+        return Ok(Vec::new());
+    };
+    let mut projected = Vec::new();
+    for project in projects.filter_map(Result::ok) {
+        let journal = project.path().join(crate::memory::JOURNAL_FILE);
+        if !journal.exists() {
+            continue;
+        }
+        let memory_dir = project.path().join("memory");
+        let synced = crate::memory::sync(&memory_dir, &journal, stamp, machine_id)?;
+        if !synced.written.is_empty() || synced.imported > 0 {
+            projected.push(project.file_name().to_string_lossy().into_owned());
+        }
+    }
+    Ok(projected)
 }
