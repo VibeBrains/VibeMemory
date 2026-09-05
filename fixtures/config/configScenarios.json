@@ -88,10 +88,14 @@
     {
       "id": "missing-remote",
       "provenance": "computed",
-      "note": "Без remote стор некуда толкать.",
+      "note": "Без remote стор локальный: машина сперва мигрирует, потом публикует — тик до тех пор не делает fetch/push. Это законное состояние, а не ошибка.",
       "text": "{\"machineId\": \"m\"}",
       "expect": {
-        "error": "missing"
+        "ok": {
+          "machineId": "m",
+          "roots": {},
+          "desktopStore": "auto"
+        }
       }
     },
     {
@@ -128,6 +132,15 @@
       "text": "{ machineId: mac }",
       "expect": {
         "error": "invalid"
+      }
+    },
+    {
+      "id": "blank-remote",
+      "provenance": "computed",
+      "note": "Объявленный, но пустой remote — ошибка: тик пытался бы пушить в никуда каждые две минуты.",
+      "text": "{\"machineId\": \"m\", \"remote\": \"   \"}",
+      "expect": {
+        "error": "missing"
       }
     }
   ]

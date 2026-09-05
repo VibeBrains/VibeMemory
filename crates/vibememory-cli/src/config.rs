@@ -47,8 +47,9 @@ pub struct RawConfig {
     /// Unique per machine; goes into the names of everything this machine writes into the store,
     /// so that two machines never collide by construction.
     pub machine_id: String,
-    /// The git remote of the store.
-    pub remote: String,
+    /// The git remote of the store. Absent while the store is local: a machine migrates first and
+    /// publishes later, and the tick simply neither fetches nor pushes until then.
+    pub remote: Option<String>,
     /// Named roots, so a working directory can be written portably as `{NAME}/rel` and mean the
     /// same project on the other machine.
     pub roots: BTreeMap<String, String>,
@@ -90,8 +91,8 @@ pub enum ConfigError {
 pub struct Config {
     /// Unique per machine.
     pub machine_id: String,
-    /// The git remote of the store.
-    pub remote: String,
+    /// The git remote of the store, when one has been declared.
+    pub remote: Option<String>,
     /// Named roots, canonical and absolute.
     pub roots: BTreeMap<String, String>,
     /// Where the Desktop descriptors live.
@@ -125,7 +126,13 @@ impl Config {
         if raw.machine_id.trim().is_empty() {
             return Err(ConfigError::Missing { field: "machineId" });
         }
-        if raw.remote.trim().is_empty() {
+        // A remote is optional, but a declared one must name something: an empty string would
+        // make the tick try to push to nowhere every two minutes.
+        if raw
+            .remote
+            .as_deref()
+            .is_some_and(|remote| remote.trim().is_empty())
+        {
             return Err(ConfigError::Missing { field: "remote" });
         }
         let mut roots = BTreeMap::new();
