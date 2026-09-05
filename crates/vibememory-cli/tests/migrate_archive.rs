@@ -350,3 +350,57 @@ fn two_memory_records_whose_names_nest_are_not_a_conflict_copy() {
         }
     );
 }
+
+#[test]
+fn a_memory_file_the_store_rewrote_since_does_not_stop_the_next_run() {
+    let temp = TempDir::new("migrate-rewritten");
+    let source = old_folder(&temp);
+    let store = store(&temp);
+    let engine = temp.dir("engine");
+    apply(
+        &source,
+        &store,
+        &engine,
+        &plan(&source, MACHINE).expect("plan"),
+        STAMP,
+    )
+    .expect("first");
+
+    // Between two runs the engine projected memory into the store: MEMORY.md is now the store's
+    // own rendering, and the old folder still holds the CLI's version. Meanwhile the other machine
+    // appended a record to a transcript. The next run must keep the store's MEMORY.md, set the
+    // old one aside, and still commit the record — a hash mismatch on a file that was decided by
+    // keep-both is not a mismatch at all.
+    write(
+        &store.join("projects/VibeIDE/memory/MEMORY.md"),
+        "# Memory\n\nprojected by the engine\n",
+    );
+    let transcript = source.join("projects/-ALL-/VibeIDE/s1.jsonl");
+    let mut text = fs::read_to_string(&transcript).expect("read");
+    text.push_str(&record("appended-elsewhere"));
+    fs::write(&transcript, text).expect("write");
+
+    let again = apply(
+        &source,
+        &store,
+        &engine,
+        &plan(&source, MACHINE).expect("plan"),
+        STAMP,
+    )
+    .expect("second");
+    assert!(again.mismatched.is_empty(), "{:?}", again.mismatched);
+    assert!(
+        again.committed,
+        "the appended record must reach a commit: {again:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(store.join("projects/VibeIDE/memory/MEMORY.md")).expect("read"),
+        "# Memory\n\nprojected by the engine\n",
+        "the store's version is the one that knows more"
+    );
+    assert!(
+        fs::read_to_string(store.join("projects/VibeIDE/s1.jsonl"))
+            .expect("read")
+            .contains("appended-elsewhere")
+    );
+}

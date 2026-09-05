@@ -275,6 +275,10 @@ pub struct Applied {
     pub unchanged: usize,
     /// Transcripts merged by union, with the records each side contributed.
     pub merged: Vec<(String, usize, usize)>,
+    /// Files decided whole by keep-both: the store's version stayed, the source's was set aside
+    /// or was identical. Verified by that contract, not by hash — the store's bytes are meant to
+    /// differ from the source's here.
+    pub kept_both: Vec<String>,
     /// Versions set aside in the quarantine.
     pub quarantined: Vec<String>,
     /// Cards repaired with a transcript id taken from another copy of the same card.
@@ -494,6 +498,7 @@ impl Run<'_> {
                 .merged
                 .iter()
                 .any(|(path, _, _)| *path == planned.dest)
+                || self.applied.kept_both.contains(&planned.dest)
             {
                 continue;
             }
@@ -579,6 +584,7 @@ fn merge_into(
     if changed {
         applied.copied += 1;
     }
+    applied.kept_both.push(store_path.to_owned());
     Ok(changed)
 }
 
