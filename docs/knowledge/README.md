@@ -21,6 +21,7 @@
 ## claudeDesktop — приложение и его стор сессий
 
 - [sessionStore.md](claudeDesktop/sessionStore.md) — стор карточек Claude Desktop (`claude-code-sessions/<acct>/<org>/local_*.json`, Mac — симлинк в OneDrive): поля дескриптора и их «горячесть», загрузка/дедуп конфликт-копий, сопоставление с транскриптом по `cliSessionId` через спавн встроенного CLI `--resume`, слепота сканов к симлинкам и правило единственности id, порча карточек (`transcriptUnavailable`, `clearStaleResumeHandle`), bring-home-копии, запрет симлинков под конфиг-корнем, junction в MSIX на Windows; цифры стора на 2026-09-02 (165→166 карточек, 67/353 дегидрированных транскриптов), сверены верификатором по живой машине и бандлам.
+- [probeSessions.md](claudeDesktop/probeSessions.md) — Desktop спавнит неинтерактивные CLI-«вспышки» ~300 мс в `$HOME`: без транскрипта и промптов, но с полным стартом и вызовом хуков (211 событий телеметрии, `tengu_run_hook` ×2); на машине владельца 30 таких следов из 90 `session-env`. Отсюда пустой стор по имени домашней папки и правило: `$HOME` — в `ignoreCwd`, а не хардкод в движке. Проверено, что это не планировщик VibeSter, не cron, не Cowork и не ручной запуск
 
 ## cloudSync — облачные папки как транспорт
 
