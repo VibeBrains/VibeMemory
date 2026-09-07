@@ -120,3 +120,26 @@ pub fn record(store: &Path, machine_id: &str, observation: &Observation<'_>) -> 
     std::fs::write(&temporary, text.as_bytes()).map_err(|error| error.to_string())?;
     std::fs::rename(&temporary, &file_path).map_err(|error| error.to_string())
 }
+
+/// Removes one record, because it says something that is not true.
+///
+/// A record is a statement to the other machines: "this encoded directory is that project, and
+/// this is the working directory it belongs to". A statement that cannot be confirmed is worse
+/// than none — the reconciler of another machine acts on it and creates a link somewhere wrong.
+///
+/// # Errors
+///
+/// The text of what went wrong.
+pub fn forget(store: &Path, machine_id: &str, enc: &str) -> Result<(), String> {
+    let file_path = path(store, machine_id);
+    let mut file = read(store, machine_id);
+    let before = file.links.len();
+    file.links.retain(|record| record.enc != enc);
+    if file.links.len() == before {
+        return Ok(());
+    }
+    let text = serde_json::to_string_pretty(&file).map_err(|error| error.to_string())?;
+    let temporary = file_path.with_extension("json.tmp");
+    std::fs::write(&temporary, text.as_bytes()).map_err(|error| error.to_string())?;
+    std::fs::rename(&temporary, &file_path).map_err(|error| error.to_string())
+}

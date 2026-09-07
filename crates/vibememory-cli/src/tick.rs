@@ -926,6 +926,8 @@ fn record_local_links(store: &Path, config_dir: &Path, machine_id: &str, roots: 
             // session's hook records it with certainty, and a guess is worse than silence.
             continue;
         };
+        // Re-derived: whatever the old record said about this link is superseded below.
+        untrue.retain(|wrong| *wrong != enc);
         let portable = roots.to_portable(&cwd).unwrap_or_else(|_| cwd.clone());
         // `reconciled`, not `observed`: this machine did not see the session that made the link,
         // it only sees the link. An observation by a real session outranks it later.
@@ -945,6 +947,13 @@ fn record_local_links(store: &Path, config_dir: &Path, machine_id: &str, roots: 
         {
             recorded += 1;
         }
+    }
+
+    // What could be neither confirmed nor re-derived is removed rather than left standing: a
+    // record naming the wrong directory is not a gap in the map, it is a wrong turn on it, and
+    // the other machine's reconciler follows it.
+    for enc in untrue {
+        let _ = crate::links_file::forget(store, machine_id, &enc);
     }
     recorded
 }
