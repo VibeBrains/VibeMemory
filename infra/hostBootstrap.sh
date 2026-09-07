@@ -94,6 +94,11 @@ git -C "$HOME/$repoPath" symbolic-ref HEAD "refs/heads/$branch"
 echo "3/5 HEAD указывает на $branch"
 echo "2/5 Настройки repo проставлены (autocrlf=false, filemode=false, gc.auto=0)"
 
+# The store holds transcripts of every session: prompts, code, file contents. On a box with one
+# account world-readable changes nothing today, but the day a second account appears it changes
+# everything — and nobody re-checks permissions on that day.
+chmod 700 "$HOME/$repoPath" "$(dirname "$HOME/$repoPath")"
+
 # Weekly repacking. `gc.auto=0` above keeps garbage collection out of the push path — a tick
 # must not wait for a repack — but a repository that is never packed grows without bound, and
 # this disk is 10 GiB. Once a week, at night, out of anyone's way.
