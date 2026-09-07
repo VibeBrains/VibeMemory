@@ -97,12 +97,17 @@ echo "2/5 Настройки repo проставлены (autocrlf=false, filemo
 # Weekly repacking. `gc.auto=0` above keeps garbage collection out of the push path — a tick
 # must not wait for a repack — but a repository that is never packed grows without bound, and
 # this disk is 10 GiB. Once a week, at night, out of anyone's way.
+# `set -e` kills the script on the first non-zero status, and both `crontab -l` (no crontab yet)
+# and `grep -q` (no match) return one legitimately. Hence `|| true` and an explicit `if`.
+# `git gc --quiet` and nothing else: `--auto=0` is not a thing — `--auto` takes no value, and the
+# weekly job would have failed silently every Sunday.
 if command -v crontab >/dev/null 2>&1; then
-  line="17 4 * * 0 git -C $HOME/$repoPath gc --quiet --auto=0 >/dev/null 2>&1"
-  if crontab -l 2>/dev/null | grep -Fq "$repoPath gc"; then
+  line="17 4 * * 0 git -C $HOME/$repoPath gc --quiet >/dev/null 2>&1"
+  current="$(crontab -l 2>/dev/null || true)"
+  if printf '%s\n' "$current" | grep -Fq "$repoPath gc"; then
     echo "4/5 Еженедельная упаковка уже в cron"
   else
-    (crontab -l 2>/dev/null; echo "$line") | crontab -
+    printf '%s\n%s\n' "$current" "$line" | grep -v '^$' | crontab -
     echo "4/5 Еженедельная упаковка добавлена в cron (вс 04:17)"
   fi
 else
