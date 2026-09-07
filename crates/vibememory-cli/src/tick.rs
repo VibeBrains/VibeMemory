@@ -776,7 +776,69 @@ fn import_real_directories(
     imported
 }
 
-/// The working directory a project directory's transcripts were written in.
+/// The working directory of a link, proven rather than guessed.
+///
+/// A store directory gathers the transcripts of every working directory that resolves to the
+/// same name — `VibeDub`, `VibeDub/server`, `VibeDub/web` — and of every machine, including
+/// Windows ones. Taking "the newest transcript's cwd" therefore produces a path that belongs to
+/// a different directory or a different machine: the first live run recorded `d:\Projects\…`
+/// as this Mac's working directory, and one cwd for three different links.
+///
+/// `enc` cannot be inverted, but it can be **recomputed**: the right cwd is the one that encodes
+/// to exactly this `enc`. Nothing else is accepted.
+fn working_directory_for(dir: &Path, enc: &str) -> Option<String> {
+    for cwd in working_directories_in(dir) {
+        let canonical = vibememory_core::naming::canonical_cwd(
+            &cwd,
+            vibememory_core::naming::PathSyntax::Posix,
+        );
+        if vibememory_core::naming::encode_cwd(&canonical)
+            .is_ok_and(|encoded| encoded.as_str() == enc)
+        {
+            return Some(cwd);
+        }
+    }
+    None
+}
+
+/// Every distinct `cwd` the transcripts of a directory mention, newest file first.
+fn working_directories_in(dir: &Path) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return found;
+    };
+    let mut transcripts: Vec<std::path::PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
+        .collect();
+    transcripts.sort_by_key(|path| {
+        std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+    });
+    for path in transcripts.iter().rev() {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in text.lines().take(50) {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if let Some(cwd) = value.get("cwd").and_then(serde_json::Value::as_str) {
+                let cwd = cwd.to_owned();
+                if !found.contains(&cwd) {
+                    found.push(cwd);
+                }
+                break;
+            }
+        }
+    }
+    found
+}
+
+/// The working directory a project directory's transcripts were written in, for a directory
+/// whose `enc` is not in question — the real `projects/<enc>` the CLI itself created.
 fn working_directory_of(dir: &Path) -> Option<String> {
     let mut transcripts: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
         .ok()?
@@ -816,9 +878,22 @@ fn working_directory_of(dir: &Path) -> Option<String> {
 /// The working directory comes from the transcripts in the store, the same way the tick names a
 /// real directory: `enc` cannot be inverted, but every record carries the `cwd` it was written in.
 fn record_local_links(store: &Path, config_dir: &Path, machine_id: &str, roots: &Roots) -> usize {
+    // A record whose cwd does not encode back to its own `enc` was written from a guess — by an
+    // earlier build of this function, or from a transcript of another machine. It is not trusted
+    // and is derived again.
     let known: BTreeSet<String> = crate::links_file::read(store, machine_id)
         .links
         .into_iter()
+        .filter(|record| {
+            let canonical = vibememory_core::naming::canonical_cwd(
+                &roots
+                    .to_local(&record.cwd)
+                    .unwrap_or_else(|_| record.cwd.clone()),
+                vibememory_core::naming::PathSyntax::Posix,
+            );
+            vibememory_core::naming::encode_cwd(&canonical)
+                .is_ok_and(|encoded| encoded.as_str() == record.enc)
+        })
         .map(|record| record.enc)
         .collect();
     let Ok(entries) = std::fs::read_dir(config_dir.join("projects")) else {
@@ -842,8 +917,10 @@ fn record_local_links(store: &Path, config_dir: &Path, machine_id: &str, roots: 
             continue;
         };
         let name = name.as_os_str().to_string_lossy().into_owned();
-        let Some(cwd) = working_directory_of(&target) else {
-            continue; // nothing written yet: the next session's hook records it with certainty
+        let Some(cwd) = working_directory_for(&target, &enc) else {
+            // Nothing in the store proves which directory this link belongs to: the next
+            // session's hook records it with certainty, and a guess is worse than silence.
+            continue;
         };
         let portable = roots.to_portable(&cwd).unwrap_or_else(|_| cwd.clone());
         // `reconciled`, not `observed`: this machine did not see the session that made the link,

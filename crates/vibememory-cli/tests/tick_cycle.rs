@@ -591,3 +591,66 @@ fn links_made_by_switch_are_recorded_so_the_other_machine_learns_them() {
     // Running again records nothing: a link already described is not described twice.
     assert_eq!(run(&machine, STAMP, CUTOFF).recorded_links, 0);
 }
+
+#[test]
+fn a_link_is_recorded_only_with_the_working_directory_that_encodes_to_it() {
+    let temp = TempDir::new("tick-record-exact");
+    let pair = two_machines(&temp);
+    let config_dir = temp.dir("claude");
+    // One store directory, three working directories — exactly what `VibeDub`, `VibeDub/server`
+    // and `VibeDub/web` look like — plus a transcript from a Windows machine.
+    let project = pair.mac.join("projects/Project");
+    fs::create_dir_all(&project).expect("dirs");
+    for (file, cwd) in [
+        ("windows.jsonl", "d:\\Projects\\Project"),
+        ("server.jsonl", "/work/Project/server"),
+        ("root.jsonl", "/work/Project"),
+    ] {
+        fs::write(
+            project.join(file),
+            format!("{{\"type\":\"user\",\"uuid\":\"a\",\"cwd\":\"{cwd}\"}}\n"),
+        )
+        .expect("transcript");
+    }
+    fs::create_dir_all(config_dir.join("projects")).expect("dirs");
+    for enc in ["-work-Project", "-work-Project-server"] {
+        std::os::unix::fs::symlink(&project, config_dir.join("projects").join(enc)).expect("link");
+    }
+
+    let naming = vibememory_core::naming::NamingConfig::default();
+    let machine = Machine {
+        store: &pair.mac,
+        config_dir: &config_dir,
+        machine_id: "mac-test",
+        roots: &Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix),
+        naming: &naming,
+        desktop_store: None,
+    };
+    let ticked = run(&machine, STAMP, CUTOFF);
+    assert_eq!(ticked.recorded_links, 2, "{ticked:?}");
+
+    let recorded = vibememory_cli::links_file::read(&pair.mac, "mac-test");
+    let by_enc = |enc: &str| {
+        recorded
+            .links
+            .iter()
+            .find(|record| record.enc == enc)
+            .unwrap_or_else(|| panic!("{enc} is recorded"))
+            .cwd
+            .clone()
+    };
+    assert_eq!(
+        by_enc("-work-Project"),
+        "/work/Project",
+        "each link gets its own directory, not the newest transcript's"
+    );
+    assert_eq!(by_enc("-work-Project-server"), "/work/Project/server");
+    assert!(
+        !recorded
+            .links
+            .iter()
+            .any(|record| record.cwd.contains("d:")),
+        "another machine's path is not this machine's working directory: {:?}",
+        recorded.links
+    );
+}
