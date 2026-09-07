@@ -546,3 +546,48 @@ fn a_real_directory_is_imported_by_the_tick_exactly_as_the_hook_promised() {
         "and the transcript must be in the store"
     );
 }
+
+#[test]
+fn links_made_by_switch_are_recorded_so_the_other_machine_learns_them() {
+    let temp = TempDir::new("tick-record-links");
+    let pair = two_machines(&temp);
+    let config_dir = temp.dir("claude");
+    // A link `switch` re-aimed: it exists on disk, and nothing has written it into links.json.
+    let project = pair.mac.join("projects/Project");
+    fs::create_dir_all(&project).expect("dirs");
+    fs::write(
+        project.join("s.jsonl"),
+        "{\"type\":\"user\",\"uuid\":\"a\",\"cwd\":\"/work/Project\"}\n",
+    )
+    .expect("transcript");
+    fs::create_dir_all(config_dir.join("projects")).expect("dirs");
+    std::os::unix::fs::symlink(&project, config_dir.join("projects").join("-work-Project"))
+        .expect("link");
+
+    let naming = vibememory_core::naming::NamingConfig::default();
+    let machine = Machine {
+        store: &pair.mac,
+        config_dir: &config_dir,
+        machine_id: "mac-test",
+        roots: &Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix),
+        naming: &naming,
+        desktop_store: None,
+    };
+    let ticked = run(&machine, STAMP, CUTOFF);
+    assert_eq!(ticked.recorded_links, 1, "{ticked:?}");
+
+    let recorded = vibememory_cli::links_file::read(&pair.mac, "mac-test");
+    assert_eq!(recorded.links.len(), 1);
+    assert_eq!(recorded.links[0].name, "Project");
+    assert_eq!(
+        recorded.links[0].cwd, "/work/Project",
+        "the working directory is read from the transcript itself"
+    );
+    assert!(
+        recorded.links[0].predicted,
+        "this machine saw the link, not the session that made it"
+    );
+
+    // Running again records nothing: a link already described is not described twice.
+    assert_eq!(run(&machine, STAMP, CUTOFF).recorded_links, 0);
+}

@@ -44,6 +44,8 @@ pub struct Ticked {
     pub projected_memory: Vec<String>,
     /// Files of this machine's outbox (`machines/<id>/**`) committed by this tick.
     pub outbox_committed: usize,
+    /// Links that existed on this machine but were missing from its `links.json`, now recorded.
+    pub recorded_links: usize,
     /// Real `projects/<enc>` directories copied into the store and replaced by links.
     pub imported_directories: Vec<String>,
     /// Files under `projects/` committed by this tick: side files, `.keep` markers, imported
@@ -124,6 +126,8 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         Ok(removed) => result.forgotten = removed,
         Err(problem) => result.problems.push(problem),
     }
+
+    result.recorded_links = record_local_links(store, config_dir, machine_id, roots);
 
     match reconcile_links(store, config_dir, machine_id, roots) {
         Ok(mut outcome) => {
@@ -800,4 +804,66 @@ fn working_directory_of(dir: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// Writes into `links.json` every link of this machine that is not there yet.
+///
+/// A record is how another machine learns that `projects/<name>` belongs to a working directory
+/// it may also have. The hook records the links it creates, but `switch` and `import` create
+/// them too — and a link nobody recorded teaches the other machines nothing. So the tick walks
+/// what is actually on disk and fills the gaps; it is the one place that sees the whole picture.
+///
+/// The working directory comes from the transcripts in the store, the same way the tick names a
+/// real directory: `enc` cannot be inverted, but every record carries the `cwd` it was written in.
+fn record_local_links(store: &Path, config_dir: &Path, machine_id: &str, roots: &Roots) -> usize {
+    let known: BTreeSet<String> = crate::links_file::read(store, machine_id)
+        .links
+        .into_iter()
+        .map(|record| record.enc)
+        .collect();
+    let Ok(entries) = std::fs::read_dir(config_dir.join("projects")) else {
+        return 0;
+    };
+    let mut recorded = 0;
+    for entry in entries.filter_map(Result::ok) {
+        let enc = entry.file_name().to_string_lossy().into_owned();
+        if known.contains(&enc) {
+            continue;
+        }
+        let link = entry.path();
+        let Ok(target) = std::fs::read_link(&link) else {
+            continue; // a real directory: the import step deals with it
+        };
+        // Only links into this store: one pointing elsewhere is not ours to describe.
+        let Ok(relative) = target.strip_prefix(store.join("projects")) else {
+            continue;
+        };
+        let Some(name) = relative.components().next() else {
+            continue;
+        };
+        let name = name.as_os_str().to_string_lossy().into_owned();
+        let Some(cwd) = working_directory_of(&target) else {
+            continue; // nothing written yet: the next session's hook records it with certainty
+        };
+        let portable = roots.to_portable(&cwd).unwrap_or_else(|_| cwd.clone());
+        // `reconciled`, not `observed`: this machine did not see the session that made the link,
+        // it only sees the link. An observation by a real session outranks it later.
+        if crate::links_file::record(
+            store,
+            machine_id,
+            &crate::links_file::Observation {
+                enc: &enc,
+                name: &name,
+                cwd: &portable,
+                syntax: vibememory_core::naming::PathSyntax::Posix,
+                source: vibememory_core::links::LinkSource::Reconciled,
+                confirmed_by: None,
+            },
+        )
+        .is_ok()
+        {
+            recorded += 1;
+        }
+    }
+    recorded
 }

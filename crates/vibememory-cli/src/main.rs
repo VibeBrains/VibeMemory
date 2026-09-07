@@ -738,63 +738,7 @@ fn tick_command() -> ExitCode {
                 - i64::try_from(vibememory_cli::tick::HEARTBEAT_STALE_AFTER.as_secs()).unwrap_or(0),
         ),
     );
-    if ticked.merged {
-        println!("merged what the other machines wrote");
-    }
-    for session in &ticked.held_back {
-        println!("held back: {session} is live here, so its records wait for it to finish");
-    }
-    for session in &ticked.forgotten {
-        println!("forgotten: {session}");
-    }
-    if ticked.cards_out > 0 || ticked.cards_in > 0 {
-        println!(
-            "Desktop cards: {} published, {} brought in",
-            ticked.cards_out, ticked.cards_in
-        );
-    }
-    if ticked.imported.history_in > 0 || ticked.imported.tasks_in > 0 {
-        println!(
-            "brought in: {} history line(s), {} task file(s)",
-            ticked.imported.history_in, ticked.imported.tasks_in
-        );
-    }
-    for imported in &ticked.imported_directories {
-        println!("imported: {imported}");
-    }
-    if ticked.project_files_committed > 0 {
-        println!(
-            "project files committed: {}",
-            ticked.project_files_committed
-        );
-    }
-    if ticked.outbox_committed > 0 {
-        println!("outbox committed: {} file(s)", ticked.outbox_committed);
-    }
-    for session in &ticked.stale_sessions {
-        println!("no longer live here: {session} has not been heard from in an hour");
-    }
-    for enc in &ticked.linked {
-        println!("linked: {enc}");
-    }
-    for enc in &ticked.disagreements {
-        println!(
-            "disagreement: {enc} resolves to a different store name here than on another \
-             machine; nothing was changed"
-        );
-    }
-    for project in &ticked.projected_memory {
-        println!("memory projected: {project}");
-    }
-    for path in &ticked.restored {
-        println!("restored: {path} was deleted in the working copy and put back");
-    }
-    if ticked.pushed {
-        println!("pushed");
-    }
-    for problem in &ticked.problems {
-        eprintln!("problem: {problem}");
-    }
+    report_tick(&ticked);
     if ticked.problems.is_empty() {
         ExitCode::SUCCESS
     } else {
@@ -858,6 +802,73 @@ fn relink_command(args: &[String], import: bool) -> ExitCode {
                 ExitCode::FAILURE
             }
         }
+    }
+}
+
+/// What one tick did, in the order it did it.
+fn report_tick(ticked: &vibememory_cli::tick::Ticked) {
+    if ticked.merged {
+        println!("merged what the other machines wrote");
+    }
+    for session in &ticked.held_back {
+        println!("held back: {session} is live here, so its records wait for it to finish");
+    }
+    for session in &ticked.forgotten {
+        println!("forgotten: {session}");
+    }
+    for path in &ticked.restored {
+        println!("restored: {path} was deleted in the working copy and put back");
+    }
+    if ticked.recorded_links > 0 {
+        println!(
+            "recorded {} link(s) other machines did not know about",
+            ticked.recorded_links
+        );
+    }
+    for imported in &ticked.imported_directories {
+        println!("imported: {imported}");
+    }
+    for enc in &ticked.linked {
+        println!("linked: {enc}");
+    }
+    for enc in &ticked.disagreements {
+        println!(
+            "disagreement: {enc} resolves to a different store name here than on another \
+             machine; nothing was changed"
+        );
+    }
+    for project in &ticked.projected_memory {
+        println!("memory projected: {project}");
+    }
+    if ticked.cards_out > 0 || ticked.cards_in > 0 {
+        println!(
+            "Desktop cards: {} published, {} brought in",
+            ticked.cards_out, ticked.cards_in
+        );
+    }
+    if ticked.imported.history_in > 0 || ticked.imported.tasks_in > 0 {
+        println!(
+            "brought in: {} history line(s), {} task file(s)",
+            ticked.imported.history_in, ticked.imported.tasks_in
+        );
+    }
+    if ticked.project_files_committed > 0 {
+        println!(
+            "project files committed: {}",
+            ticked.project_files_committed
+        );
+    }
+    if ticked.outbox_committed > 0 {
+        println!("outbox committed: {} file(s)", ticked.outbox_committed);
+    }
+    for session in &ticked.stale_sessions {
+        println!("no longer live here: {session} has not been heard from in an hour");
+    }
+    if ticked.pushed {
+        println!("pushed");
+    }
+    for problem in &ticked.problems {
+        eprintln!("problem: {problem}");
     }
 }
 
