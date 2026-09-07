@@ -20,7 +20,7 @@ use std::time::Duration;
 use support::{TempDir, git, git_repo_with_commit};
 
 use vibememory_cli::hook::stop::{
-    Live, Tails, commit_snapshot, push_if_due, record_end, record_progress,
+    Live, Tails, commit_snapshot, push_if_due, record_end, record_live, record_progress,
 };
 
 const STAMP: &str = "2026-09-05T09:00:00Z";
@@ -288,4 +288,36 @@ fn a_store_without_a_remote_does_not_bother_the_session() {
 
     push_if_due(&store, &engine, 1_000_000, Duration::from_secs(20))
         .expect("a missing remote is not an error the session should hear about");
+}
+
+#[test]
+fn a_session_is_live_from_its_start_not_from_its_first_stop() {
+    let temp = TempDir::new("stop-live-early");
+    let store = store(&temp);
+    // What SessionStart records: no transcript exists yet, and the session has written nothing.
+    record_live(&store, "mac-test", "session-1", "{PROJECTS}/Project", STAMP).expect("record");
+
+    let path = store.join("machines").join("mac-test").join("live.json");
+    let live: Live =
+        serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("parse");
+    assert_eq!(
+        live.sessions["session-1"].cwd, "{PROJECTS}/Project",
+        "until this exists, the tick treats the directory as idle and may move it"
+    );
+
+    // And the first Stop refreshes it rather than duplicating it.
+    let transcript = temp.path().join("live.jsonl");
+    fs::write(&transcript, live_transcript()).expect("write");
+    record_progress(
+        &store,
+        "mac-test",
+        "session-1",
+        "{PROJECTS}/Project",
+        &transcript,
+        STAMP,
+    )
+    .expect("progress");
+    let live: Live =
+        serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("parse");
+    assert_eq!(live.sessions.len(), 1);
 }

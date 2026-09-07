@@ -241,6 +241,17 @@ fn session_start_hook() -> ExitCode {
         Err(error) => return say(&format!("VibeMemory could not name this project: {error}")),
     };
 
+    // Before anything else that could take time: from this moment the tick knows the working
+    // directory is busy, whatever the session goes on to do.
+    if let Ok(store) = std::fs::canonicalize(layout.store()) {
+        let _ = vibememory_cli::hook::stop::record_live(
+            &store,
+            &config.machine_id,
+            &input.session_id,
+            &portable_cwd(&config, &cwd),
+            &vibememory_cli::clock::now(),
+        );
+    }
     if let Err(error) = session_start::perform(&layout, &decision) {
         return say(&format!(
             "VibeMemory could not put the link in place: {error}"

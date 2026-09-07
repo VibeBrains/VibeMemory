@@ -165,6 +165,38 @@ fn index_differs_from_head(store: &Path) -> Result<bool, String> {
     Ok(quiet.is_none())
 }
 
+/// Records that this session exists, before it has written anything.
+///
+/// `Stop` and `SessionEnd` also record liveness, but they fire at the end of a turn: a session
+/// that has only just started is invisible to every machine until then, and the tick — which
+/// copies real directories into the store and re-aims links — would treat its working directory
+/// as idle. Measured the hard way: the tick moved a directory out from under a session that had
+/// not finished its first turn.
+///
+/// # Errors
+///
+/// The text of what went wrong.
+pub fn record_live(
+    store: &Path,
+    machine_id: &str,
+    session_id: &str,
+    cwd: &str,
+    stamp: &str,
+) -> Result<(), String> {
+    let dir = store.join("machines").join(machine_id);
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let path = dir.join("live.json");
+    let mut live: Live = read_json(&path)?;
+    live.sessions.insert(
+        session_id.to_owned(),
+        LiveSession {
+            at: stamp.to_owned(),
+            cwd: cwd.to_owned(),
+        },
+    );
+    write_json(&path, &live)
+}
+
 /// Records that this session is alive, and how far its transcript has got.
 ///
 /// Both files are per-machine and rewritten whole: nobody else writes them, so there is nothing
