@@ -44,6 +44,8 @@ pub struct Ticked {
     pub projected_memory: Vec<String>,
     /// Files of this machine's outbox (`machines/<id>/**`) committed by this tick.
     pub outbox_committed: usize,
+    /// Real `projects/<enc>` directories copied into the store and replaced by links.
+    pub imported_directories: Vec<String>,
     /// Files under `projects/` committed by this tick: side files, `.keep` markers, imported
     /// directories, memory — everything a session is not writing right now.
     pub project_files_committed: usize,
@@ -76,15 +78,35 @@ pub struct Ticked {
 /// safe, and it is read from the store rather than from a process list because a session lives
 /// across machines, not inside one pid.
 #[must_use]
-pub fn run(
-    store: &Path,
-    config_dir: &Path,
-    machine_id: &str,
-    roots: &Roots,
-    desktop_store: Option<&Path>,
-    stamp: &str,
-    heartbeat_cutoff: &str,
-) -> Ticked {
+pub struct Machine<'a> {
+    /// The store clone.
+    pub store: &'a Path,
+    /// `~/.claude`.
+    pub config_dir: &'a Path,
+    /// This machine's name in the store.
+    pub machine_id: &'a str,
+    /// Named roots, for translating working directories.
+    pub roots: &'a Roots,
+    /// The naming rules, for a directory the tick has to name itself.
+    pub naming: &'a vibememory_core::naming::NamingConfig,
+    /// Where Desktop keeps its cards, when this machine has them.
+    pub desktop_store: Option<&'a Path>,
+}
+
+/// Runs one tick over the store.
+///
+/// `stamp` is the moment, `heartbeat_cutoff` the stamp before which a heartbeat of this machine
+/// is stale. Both come from the caller: the core has no clock and the engine keeps it that way.
+#[must_use]
+pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked {
+    let &Machine {
+        store,
+        config_dir,
+        machine_id,
+        roots,
+        naming,
+        desktop_store,
+    } = machine;
     let mut result = Ticked {
         fetched: fetch(store),
         ..Ticked::default()
@@ -144,6 +166,12 @@ pub fn run(
         Ok(restored) => result.restored = restored,
         Err(problem) => result.problems.push(problem),
     }
+
+    result
+        .imported_directories
+        .append(&mut import_real_directories(
+            store, config_dir, roots, naming,
+        ));
 
     match commit_project_files(store, &live, stamp) {
         Ok(files) => result.project_files_committed = files,
@@ -678,4 +706,98 @@ fn commit_project_files(
 fn belongs_to_live_session(path: &str, live: &BTreeSet<String>) -> bool {
     live.iter()
         .any(|sid| path.contains(&format!("/{sid}.jsonl")) || path.contains(&format!("/{sid}/")))
+}
+
+/// Copies real `projects/<enc>` directories into the store and puts links in their place.
+///
+/// This is what `SessionStart` promises when it finds one: the CLI created it before any link
+/// existed, and until it is copied its transcripts live on one disk only. The hook cannot do it —
+/// it runs inside the session that is writing there — so the tick does, and only for directories
+/// no machine reports a session in.
+///
+/// The working directory is read from the transcripts themselves: `enc` cannot be inverted, but
+/// every record carries the `cwd` it was written in.
+fn import_real_directories(
+    store: &Path,
+    config_dir: &Path,
+    roots: &Roots,
+    naming: &vibememory_core::naming::NamingConfig,
+) -> Vec<String> {
+    let mut imported = Vec::new();
+    let Ok(entries) = std::fs::read_dir(config_dir.join("projects")) else {
+        return imported;
+    };
+    let existing = crate::store::existing(store, TIMEOUT).names;
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if metadata.is_symlink() || !metadata.is_dir() {
+            continue;
+        }
+        let enc = entry.file_name().to_string_lossy().into_owned();
+        let Some(cwd) = working_directory_of(&path) else {
+            continue; // nothing but empty scaffolding: the hook will link it on the next start
+        };
+        let portable = roots.to_portable(&cwd).unwrap_or_else(|_| cwd.clone());
+        let syntax = vibememory_core::naming::PathSyntax::Posix;
+        let canonical = vibememory_core::naming::canonical_cwd(&cwd, syntax);
+        let input = vibememory_core::naming::NamingInput {
+            cwd: &canonical,
+            syntax,
+            project_dir_name: None,
+        };
+        let resolved = vibememory_core::naming::resolve_store_name(
+            &input,
+            || crate::git::probe(Path::new(&canonical), Duration::from_secs(10)),
+            naming,
+            &existing,
+        );
+        let Ok(vibememory_core::naming::Resolution::Named { name, .. }) = resolved else {
+            continue; // ignored, or the rules could not name it: not the tick's to decide
+        };
+        // A refusal means a live session somewhere, or a path this build does not handle: the
+        // hook already said so, and the next tick tries again.
+        if let Ok(outcome) =
+            crate::relink::import_real_directory(config_dir, store, &enc, name.as_str(), &portable)
+        {
+            imported.push(format!(
+                "{enc} -> projects/{} ({} file(s))",
+                name.as_str(),
+                outcome.copied.len()
+            ));
+        }
+    }
+    imported
+}
+
+/// The working directory a project directory's transcripts were written in.
+fn working_directory_of(dir: &Path) -> Option<String> {
+    let mut transcripts: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
+        .collect();
+    // Newest first: the most recent session knows the directory as it is called now.
+    transcripts.sort_by_key(|path| {
+        std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+    });
+    for path in transcripts.iter().rev() {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in text.lines().take(50) {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if let Some(cwd) = value.get("cwd").and_then(serde_json::Value::as_str) {
+                return Some(cwd.to_owned());
+            }
+        }
+    }
+    None
 }

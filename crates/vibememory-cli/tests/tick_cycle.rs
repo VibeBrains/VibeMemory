@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use support::{TempDir, git, git_repo_with_commit};
 use vibememory_cli::forget::forget;
 use vibememory_cli::hook::stop::{Live, LiveSession};
-use vibememory_cli::tick::{TickLock, Ticked, run};
+use vibememory_cli::tick::{Machine, TickLock, Ticked, run};
 use vibememory_core::desktop::roots::Roots;
 use vibememory_core::naming::PathSyntax;
 
@@ -75,7 +75,16 @@ fn two_machines(temp: &TempDir) -> Pair {
 fn tick(store: &Path, temp: &TempDir) -> Ticked {
     let config_dir = temp.dir("claude");
     let roots = Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix);
-    run(store, &config_dir, "mac-test", &roots, None, STAMP, CUTOFF)
+    let naming = vibememory_core::naming::NamingConfig::default();
+    let machine = Machine {
+        store,
+        config_dir: &config_dir,
+        machine_id: "mac-test",
+        roots: &roots,
+        naming: &naming,
+        desktop_store: None,
+    };
+    run(&machine, STAMP, CUTOFF)
 }
 
 fn write_commit(store: &Path, relative: &str, contents: &str, message: &str) {
@@ -383,15 +392,16 @@ fn a_fresh_heartbeat_is_left_alone() {
     // The cutoff is older than the heartbeat: the session is working right now.
     let config_dir = temp.dir("claude");
     let roots = Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix);
-    let ticked = run(
-        &pair.mac,
-        &config_dir,
-        "mac-test",
-        &roots,
-        None,
-        STAMP,
-        "2020-01-01T00:00:00Z",
-    );
+    let naming = vibememory_core::naming::NamingConfig::default();
+    let machine = Machine {
+        store: &pair.mac,
+        config_dir: &config_dir,
+        machine_id: "mac-test",
+        roots: &roots,
+        naming: &naming,
+        desktop_store: None,
+    };
+    let ticked = run(&machine, STAMP, "2020-01-01T00:00:00Z");
     assert!(
         ticked.stale_sessions.is_empty(),
         "a live session must not be declared dead: {:?}",
@@ -487,5 +497,52 @@ fn side_files_of_ended_sessions_are_committed_but_a_live_session_is_left_alone()
     assert!(
         !tree.contains(&format!("projects/Project/{SESSION}/")),
         "a live session's side files are being written this very moment: {tree}"
+    );
+}
+
+#[test]
+fn a_real_directory_is_imported_by_the_tick_exactly_as_the_hook_promised() {
+    let temp = TempDir::new("tick-import");
+    let pair = two_machines(&temp);
+    let config_dir = temp.dir("claude");
+    // What the CLI leaves when a session starts before any link exists: a real directory whose
+    // transcripts name the working directory they were written in.
+    let work = temp.dir("work/Project");
+    let physical = fs::canonicalize(&work).expect("canonical");
+    let enc = vibememory_core::naming::encode_cwd(&physical.display().to_string()).expect("enc");
+    let real = config_dir.join("projects").join(enc.as_str());
+    fs::create_dir_all(&real).expect("dirs");
+    fs::write(
+        real.join("old.jsonl"),
+        format!(
+            "{{\"type\":\"user\",\"uuid\":\"a\",\"cwd\":\"{}\"}}\n",
+            physical.display()
+        ),
+    )
+    .expect("transcript");
+
+    let naming = vibememory_core::naming::NamingConfig::default();
+    let machine = Machine {
+        store: &pair.mac,
+        config_dir: &config_dir,
+        machine_id: "mac-test",
+        roots: &Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix),
+        naming: &naming,
+        desktop_store: None,
+    };
+    let ticked = run(&machine, STAMP, CUTOFF);
+
+    assert_eq!(ticked.imported_directories.len(), 1, "{ticked:?}");
+    assert!(
+        fs::symlink_metadata(&real).expect("stat").is_symlink(),
+        "the CLI must find a link where its directory was"
+    );
+    assert_eq!(
+        fs::read_to_string(pair.mac.join("projects/Project/old.jsonl"))
+            .expect("read")
+            .lines()
+            .count(),
+        1,
+        "and the transcript must be in the store"
     );
 }

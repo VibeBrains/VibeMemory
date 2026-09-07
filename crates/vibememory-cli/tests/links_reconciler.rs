@@ -18,7 +18,7 @@ use std::path::Path;
 
 use support::{TempDir, git_repo_with_commit};
 use vibememory_cli::links_file::{Observation, read, record};
-use vibememory_cli::tick::run;
+use vibememory_cli::tick::{Machine, run};
 use vibememory_core::desktop::roots::Roots;
 use vibememory_core::links::LinkSource;
 use vibememory_core::naming::PathSyntax;
@@ -113,11 +113,14 @@ fn the_reconciler_creates_the_link_another_machine_needs() {
     .expect("their record");
 
     let ticked = run(
-        &store,
-        &config_dir,
-        "mac-test",
-        &roots(&projects_root),
-        None,
+        &Machine {
+            store: &store,
+            config_dir: &config_dir,
+            machine_id: "mac-test",
+            roots: &roots(&projects_root),
+            naming: &vibememory_core::naming::NamingConfig::default(),
+            desktop_store: None,
+        },
         STAMP,
         CUTOFF,
     );
@@ -138,11 +141,14 @@ fn the_reconciler_creates_the_link_another_machine_needs() {
 
     // Running again changes nothing.
     let again = run(
-        &store,
-        &config_dir,
-        "mac-test",
-        &roots(&projects_root),
-        None,
+        &Machine {
+            store: &store,
+            config_dir: &config_dir,
+            machine_id: "mac-test",
+            roots: &roots(&projects_root),
+            naming: &vibememory_core::naming::NamingConfig::default(),
+            desktop_store: None,
+        },
         STAMP,
         CUTOFF,
     );
@@ -165,11 +171,14 @@ fn a_working_directory_this_machine_does_not_have_is_left_alone() {
     .expect("their record");
 
     let ticked = run(
-        &store,
-        &config_dir,
-        "mac-test",
-        &roots(&projects_root),
-        None,
+        &Machine {
+            store: &store,
+            config_dir: &config_dir,
+            machine_id: "mac-test",
+            roots: &roots(&projects_root),
+            naming: &vibememory_core::naming::NamingConfig::default(),
+            desktop_store: None,
+        },
         STAMP,
         CUTOFF,
     );
@@ -204,11 +213,14 @@ fn two_machines_that_name_one_directory_differently_are_reported_not_resolved() 
     .expect("theirs");
 
     let ticked = run(
-        &store,
-        &config_dir,
-        "mac-test",
-        &roots(&projects_root),
-        None,
+        &Machine {
+            store: &store,
+            config_dir: &config_dir,
+            machine_id: "mac-test",
+            roots: &roots(&projects_root),
+            naming: &vibememory_core::naming::NamingConfig::default(),
+            desktop_store: None,
+        },
         STAMP,
         CUTOFF,
     );

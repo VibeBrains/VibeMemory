@@ -711,12 +711,16 @@ fn tick_command() -> ExitCode {
 
     let roots = roots_of(&config);
     let desktop = desktop_store_path(&config);
+    let machine = vibememory_cli::tick::Machine {
+        store: &store,
+        config_dir: &layout.config_dir,
+        machine_id: &config.machine_id,
+        roots: &roots,
+        naming: &config.naming,
+        desktop_store: desktop.as_deref(),
+    };
     let ticked = vibememory_cli::tick::run(
-        &store,
-        &layout.config_dir,
-        &config.machine_id,
-        &roots,
-        desktop.as_deref(),
+        &machine,
         &vibememory_cli::clock::now(),
         &vibememory_cli::clock::iso8601(
             epoch_seconds_signed()
@@ -743,6 +747,9 @@ fn tick_command() -> ExitCode {
             "brought in: {} history line(s), {} task file(s)",
             ticked.imported.history_in, ticked.imported.tasks_in
         );
+    }
+    for imported in &ticked.imported_directories {
+        println!("imported: {imported}");
     }
     if ticked.project_files_committed > 0 {
         println!(
