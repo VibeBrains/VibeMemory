@@ -63,16 +63,24 @@ say ""
 # rules are the ordinary ones and nothing needs escaping twice.
 ssh -o BatchMode=yes "$sshAlias" 'bash -s' -- "$repoPath" "$branch" "$mirror" <<'REMOTE'
 set -euo pipefail
-repoPath="$1"
-branch="$2"
-mirror="$3"
+# git is not on a fresh Debian by default; the server side says so plainly rather than failing
+# three commands later.
+# `${3:-}` and not `$3`: ssh glues the arguments into one command line, so an empty last
+# argument disappears entirely, and `set -u` then kills the script on the server. Found on the
+# first real run.
+repoPath="${1:?путь репозитория не передан}"
+branch="${2:?ветка не передана}"
+mirror="${3:-}"
 
-command -v git >/dev/null 2>&1 || { echo "На сервере нет git" >&2; exit 1; }
+command -v git >/dev/null 2>&1 || {
+  echo "На сервере нет git. Установите: sudo apt-get install -y git" >&2
+  exit 1
+}
 
 if [ -d "$HOME/$repoPath" ]; then
-  echo "1/3 Репозиторий уже есть: ~/$repoPath"
+  echo "1/5 Репозиторий уже есть: ~/$repoPath"
 else
-  echo "1/3 Создаю bare-репозиторий ~/$repoPath"
+  echo "1/5 Создаю bare-репозиторий ~/$repoPath"
   mkdir -p "$HOME/$repoPath"
   git init --bare --quiet --initial-branch="$branch" "$HOME/$repoPath"
 fi
@@ -83,7 +91,23 @@ git -C "$HOME/$repoPath" config core.autocrlf false
 git -C "$HOME/$repoPath" config core.filemode false
 git -C "$HOME/$repoPath" config gc.auto 0
 git -C "$HOME/$repoPath" symbolic-ref HEAD "refs/heads/$branch"
-echo "2/3 Настройки repo проставлены (autocrlf=false, filemode=false, gc.auto=0)"
+echo "3/5 HEAD указывает на $branch"
+echo "2/5 Настройки repo проставлены (autocrlf=false, filemode=false, gc.auto=0)"
+
+# Weekly repacking. `gc.auto=0` above keeps garbage collection out of the push path — a tick
+# must not wait for a repack — but a repository that is never packed grows without bound, and
+# this disk is 10 GiB. Once a week, at night, out of anyone's way.
+if command -v crontab >/dev/null 2>&1; then
+  line="17 4 * * 0 git -C $HOME/$repoPath gc --quiet --auto=0 >/dev/null 2>&1"
+  if crontab -l 2>/dev/null | grep -Fq "$repoPath gc"; then
+    echo "4/5 Еженедельная упаковка уже в cron"
+  else
+    (crontab -l 2>/dev/null; echo "$line") | crontab -
+    echo "4/5 Еженедельная упаковка добавлена в cron (вс 04:17)"
+  fi
+else
+  echo "4/5 crontab не найден — упаковку придётся запускать вручную: git -C ~/$repoPath gc"
+fi
 
 hook="$HOME/$repoPath/hooks/post-receive"
 if [ -n "$mirror" ]; then
@@ -93,14 +117,14 @@ set -euo pipefail
 git push --mirror '$mirror' >/dev/null 2>&1 || echo 'vibememory: зеркало недоступно, пуш принят' >&2
 "
   if [ -f "$hook" ] && [ "$(cat "$hook")" = "$wanted" ]; then
-    echo "3/3 Хук зеркала уже стоит и совпадает"
+    echo "5/5 Хук зеркала уже стоит и совпадает"
   else
     printf '%s' "$wanted" > "$hook"
     chmod +x "$hook"
-    echo "3/3 Хук зеркала записан"
+    echo "5/5 Хук зеркала записан"
   fi
 else
-  echo "3/3 Зеркало не настраивалось"
+  echo "5/5 Зеркало не настраивалось"
 fi
 
 echo

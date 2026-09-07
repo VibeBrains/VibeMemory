@@ -59,7 +59,25 @@ else
   fail "origin уже задан и указывает на «$current». Сначала разберитесь вручную: перенацеливать чужой remote скрипт не станет."
 fi
 
+# The first push of a store is hundreds of megabytes over a home uplink, and git cannot resume:
+# one dropped connection throws away everything transferred. Measured 2026-09-07 — 17 minutes,
+# then a broken pipe and an empty repository. So history goes in chunks: every push after the
+# first sends only what the previous one did not, and a failure costs one chunk, not the lot.
+readonly CHUNK=300
+
 say "2/3 Пушу ветку $branch (без force — история сервера главнее)"
+remoteHas="$(git -C "$store" ls-remote --heads origin "$branch" 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$remoteHas" = "0" ]; then
+  total="$(git -C "$store" rev-list --count "$branch")"
+  say "    первый push: $total коммит(ов), иду порциями по $CHUNK"
+  sent=0
+  for sha in $(git -C "$store" rev-list --reverse "$branch" | awk -v n="$CHUNK" 'NR % n == 0'); do
+    sent=$((sent + CHUNK))
+    say "    … до коммита $sent из $total"
+    git -C "$store" push --quiet origin "${sha}:refs/heads/${branch}" ||
+      fail "порция не ушла. Запустите скрипт снова — он продолжит с этого места."
+  done
+fi
 git -C "$store" push -u origin "$branch"
 
 # 3. The configuration last: a remote in config.json that does not work would make every tick

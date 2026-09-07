@@ -109,6 +109,8 @@ Host ${SSH_ALIAS}
     IdentitiesOnly yes
     AddKeysToAgent yes
     UseKeychain yes
+    ServerAliveInterval 30
+    ServerAliveCountMax 20
 EOF
 fi
 say ""
