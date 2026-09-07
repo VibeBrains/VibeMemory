@@ -787,18 +787,24 @@ fn import_real_directories(
 /// `enc` cannot be inverted, but it can be **recomputed**: the right cwd is the one that encodes
 /// to exactly this `enc`. Nothing else is accepted.
 fn working_directory_for(dir: &Path, enc: &str) -> Option<String> {
-    for cwd in working_directories_in(dir) {
-        let canonical = vibememory_core::naming::canonical_cwd(
-            &cwd,
-            vibememory_core::naming::PathSyntax::Posix,
-        );
-        if vibememory_core::naming::encode_cwd(&canonical)
-            .is_ok_and(|encoded| encoded.as_str() == enc)
-        {
-            return Some(cwd);
-        }
-    }
-    None
+    working_directories_in(dir)
+        .into_iter()
+        .find(|cwd| encodes_to(cwd, enc))
+}
+
+/// Whether a working directory encodes to this `enc`.
+///
+/// Both forms are tried: the path as the session wrote it, and its physical form. A machine
+/// where `~/Projects` is a symlink to another volume produced `enc` from one of them and writes
+/// the other into its transcripts — checking a single form would call a correct old record wrong.
+fn encodes_to(cwd: &str, enc: &str) -> bool {
+    let syntax = vibememory_core::naming::PathSyntax::Posix;
+    let physical =
+        std::fs::canonicalize(cwd).map_or_else(|_| cwd.to_owned(), |p| p.display().to_string());
+    [cwd.to_owned(), physical].into_iter().any(|candidate| {
+        let canonical = vibememory_core::naming::canonical_cwd(&candidate, syntax);
+        vibememory_core::naming::encode_cwd(&canonical).is_ok_and(|e| e.as_str() == enc)
+    })
 }
 
 /// Every distinct `cwd` the transcripts of a directory mention, newest file first.
@@ -881,21 +887,19 @@ fn record_local_links(store: &Path, config_dir: &Path, machine_id: &str, roots: 
     // A record whose cwd does not encode back to its own `enc` was written from a guess — by an
     // earlier build of this function, or from a transcript of another machine. It is not trusted
     // and is derived again.
-    let known: BTreeSet<String> = crate::links_file::read(store, machine_id)
-        .links
-        .into_iter()
-        .filter(|record| {
-            let canonical = vibememory_core::naming::canonical_cwd(
-                &roots
-                    .to_local(&record.cwd)
-                    .unwrap_or_else(|_| record.cwd.clone()),
-                vibememory_core::naming::PathSyntax::Posix,
-            );
-            vibememory_core::naming::encode_cwd(&canonical)
-                .is_ok_and(|encoded| encoded.as_str() == record.enc)
-        })
-        .map(|record| record.enc)
-        .collect();
+    let recorded = crate::links_file::read(store, machine_id).links;
+    let mut known: BTreeSet<String> = BTreeSet::new();
+    let mut untrue: Vec<String> = Vec::new();
+    for record in recorded {
+        let local = roots
+            .to_local(&record.cwd)
+            .unwrap_or_else(|_| record.cwd.clone());
+        if encodes_to(&local, &record.enc) {
+            known.insert(record.enc);
+        } else {
+            untrue.push(record.enc);
+        }
+    }
     let Ok(entries) = std::fs::read_dir(config_dir.join("projects")) else {
         return 0;
     };
