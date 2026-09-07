@@ -10,6 +10,7 @@ docs/
 │   ├── configSpec.md       # спека ~/.vibememory/config.json для модели (сейчас: nameOverrides, ignoreCwd)
 │   ├── desktopFixtures.md  # как добавить кейс в fixtures/desktop/, четыре списка кейсов, мутации гейта
 │   ├── exportFixtures.md   # как добавить кейс в fixtures/export/, метки provenance, мутационная проверка гейта
+│   ├── hostSetup.md        # хост стора: ключ (seedKey), bare-репозиторий и зеркало (hostBootstrap), привязка машины (connectStore)
 │   ├── linksFixtures.md    # как добавить кейс в fixtures/links/, два раздела файла, годные подделки
 │   ├── mergeFixtures.md    # как добавить кейс в fixtures/merge/, скраббер транскриптов, грамматика сценариев
 │   ├── namingFixtures.md   # как добавить кейс в fixtures/naming/, метки provenance, оракул, новая версия CLI

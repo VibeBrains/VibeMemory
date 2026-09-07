@@ -334,7 +334,17 @@
 
 ## Этап 3 — миграция Mac
 
-- [ ] Хост: bare-репо по SSH, `post-receive` → зеркало в приватный GitHub.
+- [x] **Хост: скрипты ключа, bare-репо и зеркала** — ✅ (2026-09-07, next) `infra/seedKey.sh`
+  (ключ ed25519, `ssh-copy-id`, алиас `vibememory`, проверка входа только по ключу — пароль
+  учётки вводит владелец в приглашение ssh, скрипт его не видит), `infra/hostBootstrap.sh`
+  (bare-репо `~/vibememory/store.git`, `core.autocrlf=false`/`filemode=false`/`gc.auto=0`,
+  необязательный `post-receive` с зеркалом в GitHub — недоступное зеркало push не отклоняет),
+  `infra/connectStore.sh` (origin, push без force, и только после удачного push — `remote` в
+  `config.json`: конфиг с нерабочим remote заставлял бы тик тратить две минуты на неудачу).
+  Мануал — [manuals/hostSetup.md](manuals/hostSetup.md). Прогон шага 1 — за владельцем: сервер
+  сейчас пускает только по паролю.
+- [ ] Прогнать `seedKey.sh` (владелец) → `hostBootstrap.sh` → `connectStore.sh` и убедиться, что
+  тик пушит.
 - [x] **Команда `migrate` построена и проверена на настоящем архиве (dry-run)** — ✅ (2026-09-05, next)
   `cli::migrate`: план только по метаданным (0,4 с на 4306 файлов), плейсхолдер облака узнаётся по
   `st_blocks == 0` при ненулевом размере (на APFS так же выглядит sparse-файл — этим и проверено),
