@@ -95,6 +95,10 @@ if grep -qiE "^host[[:space:]]+${SSH_ALIAS}\b" "$config"; then
   say "3/4 Алиас «${SSH_ALIAS}» уже в ~/.ssh/config."
 else
   say "3/4 Добавляю алиас «${SSH_ALIAS}» в ~/.ssh/config."
+  # AddKeysToAgent/UseKeychain matter when the key has a passphrase: without them every later
+  # non-interactive use (the tick, a script) fails with "Permission denied" right after the
+  # server has already accepted the key — it is the signature that cannot be made, not the key
+  # that is wrong. Measured 2026-09-07, and the message is misleading enough to be worth a line.
   cat >> "$config" <<EOF
 
 Host ${SSH_ALIAS}
@@ -103,6 +107,8 @@ Host ${SSH_ALIAS}
     Port ${sshPort}
     IdentityFile ${keyPath}
     IdentitiesOnly yes
+    AddKeysToAgent yes
+    UseKeychain yes
 EOF
 fi
 say ""
@@ -118,4 +124,21 @@ else
 fi
 
 say ""
+
+# A passphrase-protected key must be in the agent, or every non-interactive use fails.
+if ! ssh-keygen -y -P "" -f "$keyPath" >/dev/null 2>&1; then
+  if ssh-add -l 2>/dev/null | grep -q "$(ssh-keygen -lf "${keyPath}.pub" | awk '{print $2}')"; then
+    say "Ключ с парольной фразой и уже в ssh-agent — неинтерактивные запуски будут работать."
+  else
+    say "Ключ защищён парольной фразой, а в ssh-agent его нет."
+    say "Добавьте его один раз (фразу спросит ssh-add, скрипт её не видит):"
+    say ""
+    say "    ssh-add --apple-use-keychain ${keyPath}"
+    say ""
+    say "Без этого тик и скрипты будут получать «Permission denied» сразу после того, как"
+    say "сервер принял ключ: подписать вход без фразы нечем."
+  fi
+  say ""
+fi
+
 say "Дальше: ./infra/hostBootstrap.sh — заводит bare-репозиторий стора на сервере."
