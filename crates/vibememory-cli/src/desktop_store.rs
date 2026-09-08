@@ -96,6 +96,7 @@ pub fn import(
     let Ok(machines) = std::fs::read_dir(store.join("machines")) else {
         return Ok(cards);
     };
+    let incoming = incoming_dir(desktop_store);
     for machine in machines.filter_map(Result::ok) {
         if machine.file_name().to_string_lossy() == machine_id {
             continue;
@@ -118,7 +119,7 @@ pub fn import(
             };
             match import_verdict(&descriptor, local, facts) {
                 ImportVerdict::Import { descriptor } => {
-                    write_card(&desktop_store.join(&name), &descriptor)?;
+                    write_card(&incoming.join(&name), &descriptor)?;
                     cards.imported.push(name);
                 }
                 ImportVerdict::Skip { rule, .. } => cards.skipped.push((name, rule.to_owned())),
@@ -161,25 +162,87 @@ fn local_pair(roots: &Roots, descriptor: &Descriptor) -> Option<(String, Option<
     Some((cwd, origin))
 }
 
-/// Every card in a directory, by file name. A directory that is not there holds none.
+/// How deep below the store a card may sit. Desktop keeps them two levels down, under the
+/// account and the organisation; the outbox keeps them flat. One spare level is there so that a
+/// release that adds a level is still read, and nothing walks a whole home directory.
+const MAX_CARD_DEPTH: usize = 3;
+
+/// Every card at or below a directory, by file name. A directory that is not there holds none.
+///
+/// The search is recursive because Desktop does not keep cards where the store begins: they live
+/// in `<store>/<account>/<organisation>/`, and a reader that only looks at the top level finds an
+/// empty store on every real machine. The outbox is flat, and a flat directory is just the
+/// zero-depth case of the same walk.
 fn read_cards(dir: &Path) -> Vec<(String, Descriptor)> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
     let mut cards = Vec::new();
+    collect_cards(dir, MAX_CARD_DEPTH, &mut cards);
+    cards.sort_by(|left, right| left.0.cmp(&right.0));
+    cards
+}
+
+/// The walk behind `read_cards`, one directory per call.
+fn collect_cards(dir: &Path, depth: usize, cards: &mut Vec<(String, Descriptor)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            if depth > 0 {
+                collect_cards(&path, depth - 1, cards);
+            }
+            continue;
+        }
         let name = entry.file_name().to_string_lossy().into_owned();
         if !name.starts_with(CARD_PREFIX) || !name.ends_with(CARD_SUFFIX) {
             continue;
         }
         // A card this build cannot parse is left where it is: Desktop's format is undocumented
         // and changes, and refusing to touch what we do not understand costs nothing.
-        if let Some(descriptor) = read_card(&entry.path()) {
+        if let Some(descriptor) = read_card(&path) {
             cards.push((name, descriptor));
         }
     }
-    cards.sort_by(|left, right| left.0.cmp(&right.0));
-    cards
+}
+
+/// Where an arriving card has to be written for Desktop to see it.
+///
+/// Not the store's own root: Desktop reads `<store>/<account>/<organisation>/`, and a card in the
+/// root is invisible to it. The directory that already holds this machine's cards is the answer,
+/// because it is the one Desktop itself chose; when there is none — a machine that has never run
+/// Desktop — the root is all we can honestly guess.
+fn incoming_dir(desktop_store: &Path) -> PathBuf {
+    let mut found = Vec::new();
+    collect_card_dirs(desktop_store, MAX_CARD_DEPTH, &mut found);
+    found.sort();
+    found
+        .into_iter()
+        .max_by_key(|(count, _)| *count)
+        .map_or_else(|| desktop_store.to_path_buf(), |(_, dir)| dir)
+}
+
+/// Every directory holding cards, with how many it holds.
+fn collect_card_dirs(dir: &Path, depth: usize, found: &mut Vec<(usize, PathBuf)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut here = 0;
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            if depth > 0 {
+                collect_card_dirs(&path, depth - 1, found);
+            }
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with(CARD_PREFIX) && name.ends_with(CARD_SUFFIX) {
+            here += 1;
+        }
+    }
+    if here > 0 {
+        found.push((here, dir.to_path_buf()));
+    }
 }
 
 fn read_card(path: &Path) -> Option<Descriptor> {

@@ -24,6 +24,8 @@ use vibememory_core::naming::PathSyntax;
 
 const CARD: &str = "local_67c711c9.json";
 const CLI_SESSION: &str = "11111111-1111-4111-8111-111111111111";
+/// The two levels Desktop puts between its store and a card: an account and an organisation.
+const CARD_DIR: &str = "28c0ec84/9e0b6fd7";
 
 fn roots(local_root: &Path) -> Roots {
     let mut entries = BTreeMap::new();
@@ -224,5 +226,64 @@ fn a_card_this_build_cannot_read_is_left_where_it_is() {
         fs::read_to_string(desktop.join(CARD)).expect("read"),
         "{ not json",
         "Desktop's format is undocumented and changes; what we cannot read we do not touch"
+    );
+}
+
+#[test]
+fn cards_are_found_and_written_where_desktop_actually_keeps_them() {
+    let temp = TempDir::new("cards-nested");
+    let desktop = temp.dir("desktop");
+    let store = temp.dir("store");
+    let projects = temp.dir("Projects");
+    let project = projects.join("VibeIDE");
+    fs::create_dir_all(&project).expect("the directory exists here");
+    // Desktop's own layout: the store's root holds no cards at all.
+    let nested = desktop.join(CARD_DIR);
+    fs::create_dir_all(&nested).expect("nested");
+    fs::write(
+        nested.join(CARD),
+        card(&project.display().to_string(), Some(CLI_SESSION), false),
+    )
+    .expect("write card");
+
+    let published = publish(&desktop, &store, "mac-test", &roots(&projects)).expect("publish");
+    assert_eq!(
+        published.exported,
+        vec![CARD.to_owned()],
+        "a reader that only looks at the root finds an empty store on every real machine"
+    );
+
+    // The other machine's card comes back in — and has to land beside the cards Desktop reads,
+    // not in the root, where Desktop would never look at it.
+    let theirs = "local_ab000000.json";
+    fs::create_dir_all(store.join("projects").join("VibeIDE")).expect("dirs");
+    fs::write(
+        store
+            .join("projects")
+            .join("VibeIDE")
+            .join(format!("{CLI_SESSION}.jsonl")),
+        b"{}\n",
+    )
+    .expect("transcript");
+    fs::create_dir_all(outbox(&store, "gpd-win")).expect("dirs");
+    fs::write(
+        outbox(&store, "gpd-win").join(theirs),
+        card("{PROJECTS}/VibeIDE", Some(CLI_SESSION), false),
+    )
+    .expect("their card");
+
+    let imported = import(&desktop, &store, "mac-test", &roots(&projects), &|id| {
+        (id == CLI_SESSION).then(|| format!("/x/.claude/projects/-p/{id}.jsonl"))
+    })
+    .expect("import");
+
+    assert_eq!(imported.imported, vec![theirs.to_owned()]);
+    assert!(
+        nested.join(theirs).is_file(),
+        "the card must arrive where Desktop reads its cards"
+    );
+    assert!(
+        !desktop.join(theirs).exists(),
+        "and not in the store's root, where nothing would ever see it"
     );
 }

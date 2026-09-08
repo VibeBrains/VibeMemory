@@ -19,6 +19,9 @@ use support::TempDir;
 use vibememory_cli::switch::{Change, SwitchInput, rollback, switch};
 
 const ENC: &str = "-work-VibeIDE";
+/// The two levels Desktop puts between its store and a card: an account and an organisation.
+const CARD_DIR: &str = "28c0ec84/9e0b6fd7";
+const CARD: &str = "local_67c711c9.json";
 
 /// The machine as the old scheme left it: links into the synced folder everywhere.
 struct Machine {
@@ -56,8 +59,14 @@ fn old_machine(temp: &TempDir) -> Machine {
     fs::create_dir_all(store.join("config/skills")).expect("store skills");
     std::os::unix::fs::symlink(from.join("skills"), config_dir.join("skills"))
         .expect("skills link");
-    // The Desktop store, a link into the synced folder.
-    fs::create_dir_all(from.join("claude-code-sessions")).expect("old desktop");
+    // The Desktop store, a link into the synced folder. Its cards do not sit at the top: Desktop
+    // keeps them under the account and the organisation, and the switch has to carry that tree.
+    fs::create_dir_all(from.join("claude-code-sessions").join(CARD_DIR)).expect("old desktop");
+    fs::write(
+        from.join("claude-code-sessions").join(CARD_DIR).join(CARD),
+        "{\"sessionId\":\"local_67c711c9\"}",
+    )
+    .expect("old card");
     let desktop = temp.path().join("Claude").join("claude-code-sessions");
     fs::create_dir_all(desktop.parent().expect("parent")).expect("app dir");
     std::os::unix::fs::symlink(from.join("claude-code-sessions"), &desktop).expect("desktop link");
@@ -338,4 +347,41 @@ fn a_live_desktop_spawned_session_means_desktop_is_running() {
     )
     .expect("registry entry");
     assert!(!vibememory_cli::switch::desktop_session_live(&config_dir));
+}
+
+#[test]
+fn the_new_desktop_store_carries_the_cards_the_old_one_held() {
+    let temp = TempDir::new("switch-desktop-cards");
+    let m = old_machine(&temp);
+    let done = switch(&input(&m, false), false).expect("switch");
+
+    let carried = m.desktop.join(CARD_DIR).join(CARD);
+    assert!(
+        carried.is_file(),
+        "the card is where Desktop reads it, not left behind in the old store"
+    );
+    assert_eq!(
+        fs::read_to_string(&carried).expect("card"),
+        "{\"sessionId\":\"local_67c711c9\"}",
+        "and it is the same card, byte for byte"
+    );
+    assert!(
+        matches!(
+            done.changes
+                .iter()
+                .find(|change| matches!(change, Change::DesktopStore { .. })),
+            Some(Change::DesktopStore { cards: 1, .. })
+        ),
+        "the switch says how many it carried: {:?}",
+        done.changes
+    );
+    // The old store keeps its copy: the switch moves the machine, it does not empty the archive.
+    assert!(
+        m.from
+            .join("claude-code-sessions")
+            .join(CARD_DIR)
+            .join(CARD)
+            .is_file(),
+        "the card is still in the folder the switch moved aside"
+    );
 }

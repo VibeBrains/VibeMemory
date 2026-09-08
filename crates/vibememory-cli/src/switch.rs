@@ -41,12 +41,17 @@ pub enum Change {
         /// Where the symlink pointed before.
         old_target: PathBuf,
     },
-    /// The Desktop store: a symlink moved aside and a real directory created in its place.
+    /// The Desktop store: a symlink moved aside and a real directory created in its place,
+    /// carrying the cards the old one held.
     DesktopStore {
         /// The store's path.
         path: PathBuf,
         /// Where the old symlink was moved to.
         moved_to: PathBuf,
+        /// How many card files were carried over. Absent in rollback files written before the
+        /// switch carried them, which is why it defaults instead of failing to parse.
+        #[serde(default)]
+        cards: usize,
     },
 }
 
@@ -327,15 +332,67 @@ fn swap_desktop_store(
         return Ok(());
     }
     let moved_to = sibling(desktop, ".bak-vibememory");
-    if !dry_run {
+    let cards = if dry_run {
+        count_cards(&resolved_target(desktop))
+    } else {
         std::fs::rename(desktop, &moved_to).map_err(|error| error.to_string())?;
         std::fs::create_dir_all(desktop).map_err(|error| error.to_string())?;
-    }
+        copy_cards(&moved_to, desktop)?
+    };
     done.changes.push(Change::DesktopStore {
         path: desktop.to_path_buf(),
         moved_to,
+        cards,
     });
     Ok(())
+}
+
+/// Where a link points, followed to the end; the path itself when it is not a link.
+fn resolved_target(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Copies the old store's cards into the new one, keeping the tree exactly as it was.
+///
+/// The cards are not flattened and not filtered through the guard: this is the same machine's own
+/// store arriving at a new path, not another machine's cards arriving over the wire. Desktop reads
+/// them from `<store>/<account>/<organisation>/`, so a card moved to the root would be as gone as
+/// one left behind.
+fn copy_cards(from: &Path, to: &Path) -> Result<usize, String> {
+    let mut copied = 0;
+    for entry in list(from)? {
+        let source = entry.path();
+        let destination = to.join(entry.file_name());
+        let Ok(metadata) = std::fs::symlink_metadata(&source) else {
+            continue;
+        };
+        if metadata.is_dir() {
+            std::fs::create_dir_all(&destination).map_err(|error| error.to_string())?;
+            copied += copy_cards(&source, &destination)?;
+        } else if metadata.is_file() {
+            std::fs::copy(&source, &destination).map_err(|error| error.to_string())?;
+            copied += 1;
+        }
+    }
+    Ok(copied)
+}
+
+/// How many files the store holds, for the dry run's report.
+fn count_cards(path: &Path) -> usize {
+    let Ok(entries) = list(path) else {
+        return 0;
+    };
+    entries
+        .iter()
+        .map(|entry| {
+            let child = entry.path();
+            if child.is_dir() {
+                count_cards(&child)
+            } else {
+                1
+            }
+        })
+        .sum()
 }
 
 /// `<path><suffix>` beside the path.
@@ -371,7 +428,7 @@ pub fn rollback(engine_dir: &Path) -> Result<Vec<Change>, String> {
                 std::fs::remove_file(path).map_err(|error| error.to_string())?;
                 symlink(old_target, path)?;
             }
-            Change::DesktopStore { path, moved_to } => {
+            Change::DesktopStore { path, moved_to, .. } => {
                 // The real directory may hold cards written since; they are kept beside the
                 // restored link rather than thrown away.
                 let kept = path.with_file_name(format!(
