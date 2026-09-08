@@ -136,6 +136,14 @@ fn report(strict: bool) -> ExitCode {
             _ => {}
         }
     }
+    // The mirror lives on the host and is asked over the network, so only `doctor` pays for it.
+    if strict {
+        let mirror = probe_mirror(&config);
+        println!("{}", mirror.describe());
+        if mirror.is_fault() {
+            wrong += 1;
+        }
+    }
     if strict && wrong > 0 {
         eprintln!("{wrong} of {} steps are not in place", actions.len());
         return ExitCode::FAILURE;
@@ -1125,3 +1133,35 @@ fn handoff_note(layout: &Layout, enc: &EncSlug) -> Option<String> {
         open.join(", ")
     ))
 }
+
+/// Asks the host whether its backup mirror still holds what the host holds.
+///
+/// The branch is the store's one branch, the same constant the tick pushes.
+fn probe_mirror(config: &Config) -> vibememory_cli::mirror::Mirror {
+    use vibememory_cli::mirror::{Mirror, PROBE_TIMEOUT, host_of, probe_script, read_probe};
+
+    let Some(host) = config.remote.as_deref().and_then(host_of) else {
+        return Mirror::NoHost;
+    };
+    let mut command = std::process::Command::new("ssh");
+    command
+        .args([
+            "-o",
+            "BatchMode=yes",
+            host.ssh,
+            &probe_script(host.path, STORE_BRANCH),
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    match vibememory_cli::git::run_with_timeout(command, PROBE_TIMEOUT) {
+        Ok(Some(text)) => read_probe(&text),
+        Ok(None) => Mirror::Unknown {
+            reason: "хост ответил ошибкой на запрос о зеркале".to_owned(),
+        },
+        Err(reason) => Mirror::Unknown { reason },
+    }
+}
+
+/// The store's one branch, as the tick pushes it.
+const STORE_BRANCH: &str = "main";

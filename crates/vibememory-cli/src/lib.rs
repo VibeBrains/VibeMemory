@@ -27,6 +27,7 @@ pub mod memory;
 pub mod merge_driver;
 pub mod merge_report;
 pub mod migrate;
+pub mod mirror;
 pub mod outbox;
 pub mod process;
 pub mod relink;
