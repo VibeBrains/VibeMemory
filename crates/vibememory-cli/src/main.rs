@@ -417,15 +417,7 @@ fn sync_memory(
 ) -> Option<String> {
     let syntax = session_start::host_syntax();
     let enc = enc_from_transcript_path(transcript_path, syntax).ok()?;
-    let cowork = std::env::var(COWORK_MEMORY_VAR).ok();
-    let remote = std::env::var(REMOTE_MEMORY_VAR).ok();
-    let settings = settings_memory_dir(&layout.config_dir.join("settings.json"));
-    let location = MemoryLocation {
-        cowork_override: cowork.as_deref(),
-        remote_dir: remote.as_deref(),
-        settings_dir: settings.as_deref(),
-    };
-    let memory_dir = memory_dir(&location, &layout.config_dir, enc.as_str());
+    let memory_dir = project_memory_dir(layout, &enc);
 
     // The journal lives beside the transcripts of the project, in the store; the projection is
     // wherever the CLI keeps it, which need not be the same place at all.
@@ -758,8 +750,8 @@ fn tick_command() -> ExitCode {
     // Once a day, ask whether the backup still follows the host. Nobody runs `doctor` on a
     // schedule, so without this a mirror could stop following the day after it was set up and
     // nothing would ever say so.
-    if let Some(note) = mirror_watch(&layout, &config) {
-        println!("{note}");
+    if let Some(state) = mirror_watch(&layout, &config) {
+        println!("mirror: {state}");
     }
     if ticked.problems.is_empty() {
         ExitCode::SUCCESS
@@ -878,11 +870,8 @@ fn report_tick(ticked: &vibememory_cli::tick::Ticked) {
             ticked.imported.history_in, ticked.imported.tasks_in
         );
     }
-    if ticked.project_files_committed > 0 {
-        println!(
-            "project files committed: {}",
-            ticked.project_files_committed
-        );
+    if ticked.shared_files_committed > 0 {
+        println!("shared files committed: {}", ticked.shared_files_committed);
     }
     if ticked.outbox_committed > 0 {
         println!("outbox committed: {} file(s)", ticked.outbox_committed);
@@ -1123,18 +1112,30 @@ fn desktop_is_running(config_dir: &std::path::Path) -> bool {
     in_process_list || vibememory_cli::switch::desktop_session_live(config_dir)
 }
 
+/// Where this project's memory actually lives on this machine.
+///
+/// Not `config_dir/projects/<enc>/memory`: the CLI lets that be redirected — by the cowork
+/// variable, by a remote memory directory, by `settings.json` — and code that guesses the path
+/// instead of asking looks into an empty directory and reports that nothing is there.
+fn project_memory_dir(layout: &Layout, enc: &EncSlug) -> PathBuf {
+    let cowork = std::env::var(COWORK_MEMORY_VAR).ok();
+    let remote = std::env::var(REMOTE_MEMORY_VAR).ok();
+    let settings = settings_memory_dir(&layout.config_dir.join("settings.json"));
+    let location = MemoryLocation {
+        cowork_override: cowork.as_deref(),
+        remote_dir: remote.as_deref(),
+        settings_dir: settings.as_deref(),
+    };
+    memory_dir(&location, &layout.config_dir, enc.as_str())
+}
+
 /// Note about this project's open hand-offs, or `None` when there are none.
 ///
 /// Read from the hand-off files themselves: the index in `MEMORY.md` is rewritten back to the
 /// CLI's default template, so a session that trusted it would start believing nothing is in
 /// progress.
 fn handoff_note(layout: &Layout, enc: &EncSlug) -> Option<String> {
-    let memory = layout
-        .config_dir
-        .join("projects")
-        .join(enc.as_str())
-        .join("memory");
-    let open = vibememory_cli::memory::open_handoffs(&memory);
+    let open = vibememory_cli::memory::open_handoffs(&project_memory_dir(layout, enc));
     if open.is_empty() {
         return None;
     }
@@ -1179,7 +1180,8 @@ fn ssh_command(host: &str, script: &str) -> std::process::Command {
 }
 
 /// The daily mirror check: asks the host, tells the next session when the backup fell behind,
-/// and returns the line for this run's log.
+/// and returns the sentence for this run's log. The column `doctor` aligns its report in belongs
+/// to that report, not to the tick's log.
 ///
 /// A network failure does not count as an answer — the timer is not reset, so the question is
 /// asked again on the next tick instead of a day later.
@@ -1206,7 +1208,7 @@ fn mirror_watch(layout: &Layout, config: &Config) -> Option<String> {
         // The tick has no session to talk to; the note waits for one, next to the merge notes.
         let _ = vibememory_cli::merge_report::add_pending(&layout.engine_dir, &note);
     }
-    Some(mirror.describe())
+    Some(mirror.summary())
 }
 
 /// When the mirror was last asked about, kept next to the engine's other small states.

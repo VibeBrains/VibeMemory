@@ -52,7 +52,7 @@ pub struct Ticked {
     pub imported_directories: Vec<String>,
     /// Files under `projects/` committed by this tick: side files, `.keep` markers, imported
     /// directories, memory — everything a session is not writing right now.
-    pub project_files_committed: usize,
+    pub shared_files_committed: usize,
     /// Sessions dropped from this machine's live list because nothing has confirmed them for
     /// longer than a machine that crashed would take to come back.
     pub stale_sessions: Vec<String>,
@@ -184,8 +184,8 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
             naming,
         ));
 
-    match commit_project_files(store, &live, stamp) {
-        Ok(files) => result.project_files_committed = files,
+    match commit_shared_files(store, &live, stamp) {
+        Ok(files) => result.shared_files_committed = files,
         Err(problem) => result.problems.push(problem),
     }
 
@@ -683,7 +683,7 @@ fn commit_own_outbox(store: &Path, machine_id: &str, stamp: &str) -> Result<usiz
 /// `Stop` hook as a snapshot cut at the last newline, and its side files are being written this
 /// very moment. Everything else is nobody's but the tick's to commit, and without this it would
 /// stay on one machine for ever.
-fn commit_project_files(
+fn commit_shared_files(
     store: &Path,
     live: &BTreeSet<String>,
     stamp: &str,
@@ -705,14 +705,14 @@ fn commit_project_files(
         let mut args = vec!["add", "--"];
         args.extend(chunk.iter().copied());
         git::run_with_timeout(git::command(store, &args), TIMEOUT)?
-            .ok_or_else(|| "git refused to stage project files".to_owned())?;
+            .ok_or_else(|| "git refused to stage shared files".to_owned())?;
     }
     let message = format!("vibememory: {} shared file(s) at {stamp}", ours.len());
     git::run_with_timeout(
         git::command(store, &["commit", "--quiet", "-m", &message]),
         TIMEOUT,
     )?
-    .ok_or_else(|| "git refused to commit project files".to_owned())?;
+    .ok_or_else(|| "git refused to commit shared files".to_owned())?;
     Ok(ours.len())
 }
 

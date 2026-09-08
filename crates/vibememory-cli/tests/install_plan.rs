@@ -463,3 +463,30 @@ fn a_hook_from_an_earlier_install_is_replaced_not_accumulated() {
         "exactly one Stop hook of the engine: {text}"
     );
 }
+
+#[test]
+fn a_binary_that_cannot_run_is_not_reported_as_installed() {
+    // Installed is not working. A binary written over in place on macOS loses its signature and
+    // is killed on sight; the hooks would then fail on every session with nothing to read. The
+    // step must fail loudly instead of reporting success.
+    let temp = TempDir::new("install-binary-runs");
+    let bin = temp.dir("bin");
+    let target = bin.join(if cfg!(windows) {
+        "vibememory.exe"
+    } else {
+        "vibememory"
+    });
+    // Something executable that is not the engine: it runs and refuses, exactly as a broken
+    // install would look from the outside.
+    fs::write(&target, b"#!/bin/sh\nexit 3\n").expect("write");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    let state = vibememory_cli::install::binary_runs(&target);
+    assert!(
+        state.is_err(),
+        "a binary that exits 3 must not pass: {state:?}"
+    );
+}

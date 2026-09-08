@@ -673,8 +673,47 @@ fn install_binary(layout: &Layout) -> Result<(), String> {
         std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o755))
             .map_err(|e| e.to_string())?;
     }
-    std::fs::rename(&temporary, &target).map_err(|e| e.to_string())
+    std::fs::rename(&temporary, &target).map_err(|e| e.to_string())?;
+    // Installed is not the same as working. On macOS a binary written over in place loses its
+    // signature and the kernel kills it with SIGKILL — seen on this machine, from a careless
+    // `cp` — and the hooks that call it would then fail on every session with nothing to read.
+    // The copy is atomic above, so this is a guard against the environment, not against the
+    // copy: quarantine attributes, a partially written file, a wrong architecture.
+    // Only when we installed ourselves. `current_exe` is whatever is running — in the test suite
+    // that is the test harness, and asking a harness for `--version` proves nothing about the
+    // engine. In production the two names are the same file name, and the check runs.
+    if source.file_name() == target.file_name() {
+        binary_runs(&target)
+    } else {
+        Ok(())
+    }
 }
+
+/// Runs what was just installed and insists it answers.
+///
+/// # Errors
+///
+/// What the binary did instead of answering.
+pub fn binary_runs(binary: &Path) -> Result<(), String> {
+    let mut command = std::process::Command::new(binary);
+    command
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    match crate::git::run_with_timeout(command, BINARY_CHECK_TIMEOUT) {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(format!(
+            "{} was installed but refuses to run",
+            binary.display()
+        )),
+        Err(reason) => Err(format!("{} was installed but {reason}", binary.display())),
+    }
+}
+
+/// How long the freshly installed binary gets to say its version. It does nothing else on that
+/// path, so a second is generous; the point is never to hang the install.
+const BINARY_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// The `LaunchAgent` itself: run at load, then every two minutes.
 ///

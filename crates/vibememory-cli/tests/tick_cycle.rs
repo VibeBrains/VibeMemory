@@ -446,6 +446,31 @@ fn what_the_hooks_wrote_into_the_outbox_is_committed_by_the_tick() {
 }
 
 #[test]
+fn a_shared_skill_changed_here_reaches_the_other_machine() {
+    // `config/` holds what every machine shares — the skills, the managed copies. Nothing else
+    // commits it: a skill rewritten on this machine sat uncommitted for a day, and would never
+    // have reached the second machine.
+    let temp = TempDir::new("tick-config-files");
+    let pair = two_machines(&temp);
+    let skill = pair.mac.join("config/skills/sync-repo");
+    fs::create_dir_all(&skill).expect("dirs");
+    fs::write(skill.join("SKILL.md"), b"# rewritten here\n").expect("write");
+
+    let ticked = tick(&pair.mac, &temp);
+    assert!(ticked.shared_files_committed > 0, "{ticked:?}");
+    let output = std::process::Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", "HEAD"])
+        .current_dir(&pair.mac)
+        .output()
+        .expect("ls-tree");
+    let tree = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        tree.contains("config/skills/sync-repo/SKILL.md"),
+        "the skill must be committed, tree was:\n{tree}"
+    );
+}
+
+#[test]
 fn side_files_of_ended_sessions_are_committed_but_a_live_session_is_left_alone() {
     let temp = TempDir::new("tick-project-files");
     let pair = two_machines(&temp);
@@ -470,7 +495,7 @@ fn side_files_of_ended_sessions_are_committed_but_a_live_session_is_left_alone()
     .expect("write");
 
     let ticked = tick(&pair.mac, &temp);
-    assert_eq!(ticked.project_files_committed, 2, "{ticked:?}");
+    assert_eq!(ticked.shared_files_committed, 2, "{ticked:?}");
     let output = std::process::Command::new("git")
         .args(["ls-tree", "-r", "--name-only", "HEAD"])
         .current_dir(&pair.mac)
