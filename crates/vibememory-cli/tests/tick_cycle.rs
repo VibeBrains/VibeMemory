@@ -679,3 +679,197 @@ fn a_link_is_recorded_only_with_the_working_directory_that_encodes_to_it() {
         recorded.links
     );
 }
+
+#[test]
+fn a_tick_repairs_a_desktop_card_this_machine_can_prove() {
+    let temp = TempDir::new("tick-repair-card");
+    let pair = two_machines(&temp);
+    let config_dir = temp.dir("claude");
+    let desktop = temp.dir("desktop-store");
+    let session = "44444444-4444-4444-8444-444444444444";
+    let projects = temp.dir("Projects");
+    let project = projects.join("VibeIDE");
+    fs::create_dir_all(&project).expect("the project exists on this machine");
+    let mut declared = std::collections::BTreeMap::new();
+    declared.insert("PROJECTS".to_owned(), projects.display().to_string());
+    let roots = Roots::new(declared, PathSyntax::Posix);
+    let enc = vibememory_core::naming::enc::encode_cwd(&project.display().to_string())
+        .expect("enc")
+        .as_str()
+        .to_owned();
+    let enc = enc.as_str();
+
+    // The transcript is in the store and this machine holds it under a link of its own: that is
+    // what makes the path provable, which is the whole condition of the repair.
+    fs::create_dir_all(pair.mac.join("projects/VibeIDE")).expect("dirs");
+    fs::write(
+        pair.mac.join(format!("projects/VibeIDE/{session}.jsonl")),
+        b"{}\n",
+    )
+    .expect("transcript");
+    fs::create_dir_all(config_dir.join("projects")).expect("dirs");
+    std::os::unix::fs::symlink(
+        pair.mac.join("projects/VibeIDE"),
+        config_dir.join("projects").join(enc),
+    )
+    .expect("link");
+
+    // What makes the path proven is a link record confirmed by a session that actually ran here;
+    // a link the reconciler merely predicted is not proof, and the repair refuses it.
+    vibememory_cli::links_file::record(
+        &pair.mac,
+        "mac-test",
+        &vibememory_cli::links_file::Observation {
+            enc,
+            name: "VibeIDE",
+            cwd: "{PROJECTS}/VibeIDE",
+            syntax: PathSyntax::Posix,
+            source: vibememory_core::links::LinkSource::Observed,
+            confirmed_by: Some(
+                &config_dir
+                    .join("projects")
+                    .join(enc)
+                    .join(format!("{session}.jsonl"))
+                    .display()
+                    .to_string(),
+            ),
+        },
+    )
+    .expect("link record");
+
+    // The healthy version in this machine's own outbox, and the card Desktop has since marked.
+    let name = "local_9a000000.json";
+    let outbox = pair.mac.join("machines/mac-test/desktop");
+    fs::create_dir_all(&outbox).expect("dirs");
+    fs::write(
+        outbox.join(name),
+        format!(
+            "{{\"sessionId\":\"local_9a000000\",\"cliSessionId\":\"{session}\",\"cwd\":\"/x\"}}"
+        ),
+    )
+    .expect("shadow");
+    fs::write(
+        desktop.join(name),
+        format!(
+            "{{\"sessionId\":\"local_9a000000\",\"cliSessionId\":\"{session}\",\
+             \"transcriptUnavailable\":true,\"cwd\":\"/x\"}}"
+        ),
+    )
+    .expect("broken card");
+
+    let naming = vibememory_core::naming::NamingConfig::default();
+    let ticked = run(
+        &Machine {
+            store: &pair.mac,
+            config_dir: &config_dir,
+            machine_id: "mac-test",
+            roots: &roots,
+            naming: &naming,
+            desktop_store: Some(&desktop),
+        },
+        STAMP,
+        CUTOFF,
+    );
+
+    assert_eq!(ticked.cards_repaired, 1, "{:?}", ticked.problems);
+    let fixed = fs::read_to_string(desktop.join(name)).expect("read");
+    assert!(
+        !fixed.contains("transcriptUnavailable"),
+        "nothing but the engine ever takes that mark back: {fixed}"
+    );
+}
+
+#[test]
+fn a_card_of_an_old_session_is_repaired_through_the_link_that_session_proved() {
+    let temp = TempDir::new("tick-repair-old");
+    let pair = two_machines(&temp);
+    let config_dir = temp.dir("claude");
+    let desktop = temp.dir("desktop-store");
+    let projects = temp.dir("Projects");
+    let project = projects.join("VibeIDE");
+    fs::create_dir_all(&project).expect("dirs");
+    let mut declared = std::collections::BTreeMap::new();
+    declared.insert("PROJECTS".to_owned(), projects.display().to_string());
+    let roots = Roots::new(declared, PathSyntax::Posix);
+    let enc = vibememory_core::naming::enc::encode_cwd(&project.display().to_string())
+        .expect("enc")
+        .as_str()
+        .to_owned();
+    let enc = enc.as_str();
+
+    // Two sessions in one project: the one that proved the link, and an older one whose card
+    // Desktop has since marked. The old session can never prove anything again — it ended.
+    let proving = "55555555-5555-4555-8555-555555555555";
+    let old = "66666666-6666-4666-8666-666666666666";
+    fs::create_dir_all(pair.mac.join("projects/VibeIDE")).expect("dirs");
+    for id in [proving, old] {
+        fs::write(
+            pair.mac.join(format!("projects/VibeIDE/{id}.jsonl")),
+            b"{}\n",
+        )
+        .expect("transcript");
+    }
+    fs::create_dir_all(config_dir.join("projects")).expect("dirs");
+    std::os::unix::fs::symlink(
+        pair.mac.join("projects/VibeIDE"),
+        config_dir.join("projects").join(enc),
+    )
+    .expect("link");
+    vibememory_cli::links_file::record(
+        &pair.mac,
+        "mac-test",
+        &vibememory_cli::links_file::Observation {
+            enc,
+            name: "VibeIDE",
+            cwd: "{PROJECTS}/VibeIDE",
+            syntax: PathSyntax::Posix,
+            source: vibememory_core::links::LinkSource::Observed,
+            confirmed_by: Some(
+                &config_dir
+                    .join("projects")
+                    .join(enc)
+                    .join(format!("{proving}.jsonl"))
+                    .display()
+                    .to_string(),
+            ),
+        },
+    )
+    .expect("link record");
+
+    let name = "local_9b000000.json";
+    let outbox = pair.mac.join("machines/mac-test/desktop");
+    fs::create_dir_all(&outbox).expect("dirs");
+    fs::write(
+        outbox.join(name),
+        format!("{{\"sessionId\":\"local_9b000000\",\"cliSessionId\":\"{old}\",\"cwd\":\"/x\"}}"),
+    )
+    .expect("shadow");
+    fs::write(
+        desktop.join(name),
+        format!(
+            "{{\"sessionId\":\"local_9b000000\",\"cliSessionId\":\"{old}\",\
+             \"transcriptUnavailable\":true,\"cwd\":\"/x\"}}"
+        ),
+    )
+    .expect("broken card");
+
+    let naming = vibememory_core::naming::NamingConfig::default();
+    let ticked = run(
+        &Machine {
+            store: &pair.mac,
+            config_dir: &config_dir,
+            machine_id: "mac-test",
+            roots: &roots,
+            naming: &naming,
+            desktop_store: Some(&desktop),
+        },
+        STAMP,
+        CUTOFF,
+    );
+
+    assert_eq!(
+        ticked.cards_repaired, 1,
+        "what a session proves is the link, not the one file it happened to write: {:?}",
+        ticked.problems
+    );
+}

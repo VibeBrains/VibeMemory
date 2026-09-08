@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use vibememory_core::desktop::descriptor::Descriptor;
 use vibememory_core::desktop::guard::{
-    ExportVerdict, ImportVerdict, MachineFacts, export_verdict, import_verdict,
+    ExportVerdict, ImportVerdict, MachineFacts, export_verdict, import_verdict, shadow_repair,
 };
 use vibememory_core::desktop::roots::Roots;
 
@@ -127,6 +127,65 @@ pub fn import(
         }
     }
     Ok(cards)
+}
+
+/// Repairs this machine's own cards from the shadow copies in its outbox.
+///
+/// Desktop breaks a card in one direction only: `clearStaleResumeHandle` erases `cliSessionId` on
+/// a resume miss, and `transcriptUnavailable` records that the file was not on this disk — which
+/// is exactly what a transcript behind a fresh symlink looks like before the link exists. Neither
+/// mark is ever taken back by the application, so a card broken once stays broken while the
+/// transcript sits in the store, reachable.
+///
+/// The repair is deliberately narrow: the transcript id comes from this machine's own outbox, and
+/// only when this machine has actually proven the path. Handing a card a transcript it cannot
+/// reach buys nothing but the next resume miss and another mark.
+///
+/// # Errors
+///
+/// The text of what went wrong.
+pub fn repair(
+    desktop_store: &Path,
+    store: &Path,
+    machine_id: &str,
+    confirmed: &dyn Fn(&str) -> Option<String>,
+) -> Result<Vec<String>, String> {
+    let out = store.join("machines").join(machine_id).join(OUTBOX_DIR);
+    let mut repaired = Vec::new();
+    for (name, descriptor) in read_cards(desktop_store) {
+        let Some(exported) = read_card(&out.join(&name)) else {
+            continue;
+        };
+        let transcript = exported.cli_session_id.clone();
+        let confirmed_path = transcript.as_deref().and_then(confirmed);
+        let facts = MachineFacts {
+            // The repair does not move the card between machines, so its directories are already
+            // this machine's own; only the transcript is in question.
+            cwd_exists: descriptor.cwd.as_deref(),
+            transcript_in_store: transcript
+                .as_ref()
+                .is_some_and(|id| transcript_in_store(store, id)),
+            confirmed_transcript_path: confirmed_path.as_deref(),
+        };
+        if let Some(fixed) = shadow_repair(&descriptor, &exported, facts) {
+            write_card(&card_path(desktop_store, &name), &fixed)?;
+            repaired.push(name);
+        }
+    }
+    Ok(repaired)
+}
+
+/// Where a card of this name already lives, or where a new one belongs.
+fn card_path(desktop_store: &Path, name: &str) -> PathBuf {
+    let mut found = Vec::new();
+    collect_card_dirs(desktop_store, MAX_CARD_DEPTH, &mut found);
+    found.sort();
+    for (_, dir) in &found {
+        if dir.join(name).is_file() {
+            return dir.join(name);
+        }
+    }
+    incoming_dir(desktop_store).join(name)
 }
 
 /// Whether the store holds the transcript a card names, under any project.

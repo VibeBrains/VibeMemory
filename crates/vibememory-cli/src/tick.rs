@@ -60,6 +60,9 @@ pub struct Ticked {
     pub cards_out: usize,
     /// Desktop cards written into the local Desktop store.
     pub cards_in: usize,
+    /// Desktop cards of this machine repaired from its own outbox: Desktop erases the transcript
+    /// handle and never restores it, so nothing else would ever take the mark back.
+    pub cards_repaired: usize,
     /// What this machine put into its outbox for the others.
     pub published: crate::outbox::Moved,
     /// What it took from theirs.
@@ -154,11 +157,19 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
             Ok(cards) => result.cards_out = cards.exported.len(),
             Err(problem) => result.problems.push(problem),
         }
-        let confirmed = confirmed_transcripts(store, machine_id);
+        let confirmed = confirmed_directories(store, machine_id);
         match crate::desktop_store::import(desktop, store, machine_id, roots, &|id| {
-            confirmed.get(id).cloned()
+            confirmed_transcript(&confirmed, id)
         }) {
             Ok(cards) => result.cards_in = cards.imported.len(),
+            Err(problem) => result.problems.push(problem),
+        }
+        // After the exchange, not before: a card repaired from a shadow the same tick just
+        // published is repaired from the freshest version this machine has.
+        match crate::desktop_store::repair(desktop, store, machine_id, &|id| {
+            confirmed_transcript(&confirmed, id)
+        }) {
+            Ok(cards) => result.cards_repaired = cards.len(),
             Err(problem) => result.problems.push(problem),
         }
     }
@@ -588,22 +599,36 @@ fn symlink_dir(target: &Path, link: &Path) -> Result<(), String> {
     }
 }
 
-/// The transcripts this machine has actually confirmed, from its own `links.json`: a card may only
-/// come in when a session here proved the link its transcript needs.
-fn confirmed_transcripts(
-    store: &Path,
-    machine_id: &str,
-) -> std::collections::HashMap<String, String> {
-    crate::links_file::read(store, machine_id)
+/// The directories this machine has actually proven, from its own `links.json`.
+///
+/// What a session proves is the *link*, not one file behind it: it hands the engine a
+/// `transcript_path`, and the directory that path names is reachable here from that moment on.
+/// Answering only for the single transcript that did the proving would make the whole mechanism
+/// useless — a card of a session that ended months ago can never be proven again, and cards are
+/// exactly what needs an answer about old sessions.
+fn confirmed_directories(store: &Path, machine_id: &str) -> Vec<std::path::PathBuf> {
+    let mut dirs: Vec<std::path::PathBuf> = crate::links_file::read(store, machine_id)
         .links
         .into_iter()
         .filter_map(|record| {
             let path = record.confirmed_by?;
-            // The confirmed path names the transcript file; its stem is the session id.
-            let id = Path::new(&path).file_stem()?.to_string_lossy().into_owned();
-            Some((id, path))
+            Path::new(&path).parent().map(Path::to_path_buf)
         })
-        .collect()
+        .collect();
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+/// The path of a transcript inside a proven directory, when the file is really there.
+///
+/// The existence check is the point: a directory proven a week ago says nothing about a file that
+/// was never in it, and a card handed a path that resolves to nothing buys the next resume miss.
+fn confirmed_transcript(dirs: &[std::path::PathBuf], id: &str) -> Option<String> {
+    dirs.iter()
+        .map(|dir| dir.join(format!("{id}.jsonl")))
+        .find(|path| path.is_file())
+        .map(|path| path.display().to_string())
 }
 
 /// How long a session may go without a heartbeat before this machine stops claiming it is live.

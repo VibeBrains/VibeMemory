@@ -18,7 +18,7 @@ use std::fs;
 use std::path::Path;
 
 use support::TempDir;
-use vibememory_cli::desktop_store::{OUTBOX_DIR, import, publish};
+use vibememory_cli::desktop_store::{OUTBOX_DIR, import, publish, repair};
 use vibememory_core::desktop::roots::Roots;
 use vibememory_core::naming::PathSyntax;
 
@@ -285,5 +285,66 @@ fn cards_are_found_and_written_where_desktop_actually_keeps_them() {
     assert!(
         !desktop.join(theirs).exists(),
         "and not in the store's root, where nothing would ever see it"
+    );
+}
+
+#[test]
+fn a_card_desktop_marked_unavailable_is_repaired_from_this_machines_own_shadow() {
+    let temp = TempDir::new("cards-repair");
+    let desktop = temp.dir("desktop");
+    let store = temp.dir("store");
+    let projects = temp.dir("Projects");
+    let project = projects.join("VibeIDE");
+    fs::create_dir_all(&project).expect("dirs");
+    let nested = desktop.join(CARD_DIR);
+    fs::create_dir_all(&nested).expect("nested");
+    let cwd = project.display().to_string();
+
+    // The card was healthy once, and that version is in this machine's outbox.
+    fs::write(nested.join(CARD), card(&cwd, Some(CLI_SESSION), false)).expect("write");
+    publish(&desktop, &store, "mac-test", &roots(&projects)).expect("publish");
+
+    // Then Desktop looked at a transcript that was not on this disk yet — behind a link that did
+    // not exist — and wrote its verdict. It never takes that back on its own.
+    fs::write(nested.join(CARD), card(&cwd, Some(CLI_SESSION), true)).expect("break");
+
+    // Nothing has proven the path: repairing now only buys the next resume miss.
+    let unproven = repair(&desktop, &store, "mac-test", &|_| None).expect("repair");
+    assert!(unproven.is_empty(), "{unproven:?}");
+    assert!(
+        fs::read_to_string(nested.join(CARD))
+            .expect("read")
+            .contains("transcriptUnavailable"),
+        "the mark stays until this machine can actually reach the transcript"
+    );
+
+    // The transcript is in the store and this machine has proven the path.
+    fs::create_dir_all(store.join("projects").join("VibeIDE")).expect("dirs");
+    fs::write(
+        store
+            .join("projects")
+            .join("VibeIDE")
+            .join(format!("{CLI_SESSION}.jsonl")),
+        b"{}\n",
+    )
+    .expect("transcript");
+    let repaired = repair(&desktop, &store, "mac-test", &|id| {
+        (id == CLI_SESSION).then(|| format!("/x/.claude/projects/-p/{id}.jsonl"))
+    })
+    .expect("repair");
+
+    assert_eq!(repaired, vec![CARD.to_owned()]);
+    let fixed = fs::read_to_string(nested.join(CARD)).expect("read");
+    assert!(
+        !fixed.contains("transcriptUnavailable"),
+        "the stale mark must go with the repair, or Desktop walks straight back into it: {fixed}"
+    );
+    assert!(
+        fixed.contains(CLI_SESSION),
+        "and the card must keep the transcript it names: {fixed}"
+    );
+    assert!(
+        fixed.contains("\"title\": \"a card\""),
+        "fields this build does not interpret must survive a repair too: {fixed}"
     );
 }

@@ -32,6 +32,13 @@ pub enum Decision {
     AlreadyLinked {
         /// The encoded directory name.
         enc: String,
+        /// The store directory it points at. Carried even though nothing has to be created: this
+        /// session's `transcript_path` proves the link, and a proof is worth recording whether or
+        /// not the link had to be made. Without it a machine whose links were all put in place by
+        /// the migration would never confirm a single one, and everything that waits for a
+        /// confirmed path — importing another machine's cards, repairing a broken one — would
+        /// wait for ever.
+        name: String,
     },
     /// A real directory holds transcripts of earlier sessions; they have to be copied into the
     /// store before anything is linked, and that is the tick's job, not the hook's.
@@ -60,6 +67,19 @@ pub enum Decision {
 }
 
 impl Decision {
+    /// The store directory this session's link points at, when the link is in place.
+    ///
+    /// Both outcomes count: the link this session created, and the link it merely found. The
+    /// session's `transcript_path` proves either one, and only a decision that leaves no working
+    /// link — an import still owed, a disagreement, an ignored directory — has no name to give.
+    #[must_use]
+    pub fn store_name(&self) -> Option<&str> {
+        match self {
+            Self::Link { name, .. } | Self::AlreadyLinked { name, .. } => Some(name),
+            Self::ImportNeeded { .. } | Self::Disagreement { .. } | Self::Ignored { .. } => None,
+        }
+    }
+
     /// The sentence the session should see, if any. Silence is the normal outcome: a hook that
     /// speaks on every start trains the reader to ignore it.
     #[must_use]
@@ -110,6 +130,7 @@ pub fn decide(
         Ok(metadata) if metadata.is_symlink() => match std::fs::read_link(&link) {
             Ok(found) if found == target => Decision::AlreadyLinked {
                 enc: enc.as_str().to_owned(),
+                name: name.as_str().to_owned(),
             },
             Ok(found) => Decision::Disagreement {
                 enc: enc.as_str().to_owned(),

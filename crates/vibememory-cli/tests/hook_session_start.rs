@@ -94,6 +94,15 @@ fn an_existing_correct_link_is_left_alone_and_says_nothing() {
     assert!(matches!(again, Decision::AlreadyLinked { .. }));
     assert_eq!(again.additional_context(), None);
     perform(&layout, &again).expect("second");
+    // Silence is not the same as learning nothing: this session's transcript proves the link, and
+    // the proof has to be recorded even though there was nothing to create. A machine whose links
+    // were all made by the migration otherwise never confirms one, and importing or repairing a
+    // Desktop card — both of which wait for a confirmed path — waits for ever.
+    assert_eq!(
+        again.store_name(),
+        Some(name().as_str()),
+        "a link that is merely found still names the store directory it points at"
+    );
 }
 
 #[test]

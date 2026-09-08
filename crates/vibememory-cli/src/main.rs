@@ -12,7 +12,7 @@ use std::process::ExitCode;
 use vibememory_cli::config::{Config, DesktopStore};
 use vibememory_cli::hook::parse_input;
 use vibememory_cli::hook::prompt_gate::{Gate, decide};
-use vibememory_cli::hook::session_start::{self, Decision};
+use vibememory_cli::hook::session_start;
 use vibememory_cli::hook::stop::{
     PUSH_DEBOUNCE, commit_snapshot, push_if_due, record_end, record_progress,
 };
@@ -272,13 +272,13 @@ fn session_start_hook() -> ExitCode {
     }
     // What this machine now knows about the link, for the other machines to read. The
     // `transcript_path` is what proves it: the encoding came from the CLI, not from our guess.
-    if let Some(name) = linked_name(&decision) {
+    if let Some(name) = decision.store_name() {
         let _ = links_file::record(
             &layout.store(),
             &config.machine_id,
             &links_file::Observation {
                 enc: enc.as_str(),
-                name: &name,
+                name,
                 cwd: &portable_cwd(&config, &cwd),
                 syntax,
                 source: vibememory_core::links::LinkSource::Observed,
@@ -449,18 +449,6 @@ fn sync_memory(
         None
     } else {
         Some(notes.join(" "))
-    }
-}
-
-/// The store name a decision settled on, when it settled on one. A session that was ignored or
-/// that met a disagreement teaches the other machines nothing.
-fn linked_name(decision: &Decision) -> Option<String> {
-    match decision {
-        Decision::Link { name, .. } => Some(name.clone()),
-        Decision::AlreadyLinked { .. }
-        | Decision::ImportNeeded { .. }
-        | Decision::Disagreement { .. }
-        | Decision::Ignored { .. } => None,
     }
 }
 
@@ -858,10 +846,10 @@ fn report_tick(ticked: &vibememory_cli::tick::Ticked) {
     for project in &ticked.projected_memory {
         println!("memory projected: {project}");
     }
-    if ticked.cards_out > 0 || ticked.cards_in > 0 {
+    if ticked.cards_out > 0 || ticked.cards_in > 0 || ticked.cards_repaired > 0 {
         println!(
-            "Desktop cards: {} published, {} brought in",
-            ticked.cards_out, ticked.cards_in
+            "Desktop cards: {} published, {} brought in, {} repaired",
+            ticked.cards_out, ticked.cards_in, ticked.cards_repaired
         );
     }
     if ticked.imported.history_in > 0 || ticked.imported.tasks_in > 0 {
