@@ -224,3 +224,50 @@ fn an_empty_quarantine_is_an_empty_list_not_a_failure() {
     let temp = TempDir::new("memory-noquarantine");
     assert!(quarantined(&temp.dir("engine")).is_empty());
 }
+
+#[test]
+fn the_quarantine_notice_names_what_is_actually_waiting() {
+    use vibememory_cli::memory::{Quarantined, quarantined_kind};
+
+    // A folded Desktop card. Calling this "a version of a memory file" sends the reader looking
+    // for a conflict between two machines' notes that does not exist.
+    assert_eq!(
+        quarantined_kind("local_02ea2773-529f-GPD-WIN-MAX2.json-2026-09-08T12:06:15Z"),
+        Quarantined::Card
+    );
+    assert_eq!(
+        quarantined_kind("deleted_bac59ceb-GPD-2026-09-08T12:06:15Z"),
+        Quarantined::Card
+    );
+    // The kinds the quarantine held before cards arrived.
+    assert_eq!(
+        quarantined_kind("memory-MEMORY.md-2026-09-08T08:46:50Z"),
+        Quarantined::Memory
+    );
+    assert_eq!(
+        quarantined_kind("85bdb79b-d69d.jsonl-2026-09-08T08:46:50Z"),
+        Quarantined::Transcript
+    );
+    // Named, never guessed about.
+    assert_eq!(quarantined_kind("something-else"), Quarantined::Other);
+
+    // Each kind says what it is and what to do, and no two say the same thing.
+    let kinds = [
+        Quarantined::Memory,
+        Quarantined::Transcript,
+        Quarantined::Card,
+        Quarantined::Other,
+    ];
+    for kind in kinds {
+        assert!(!kind.plural().is_empty() && !kind.what_to_do().is_empty());
+    }
+    let mut said: Vec<&str> = kinds.iter().map(|kind| kind.plural()).collect();
+    said.sort_unstable();
+    said.dedup();
+    assert_eq!(said.len(), kinds.len(), "each kind must name itself");
+    // A card in the quarantine is not pending work: it has already given up what it knew.
+    assert!(
+        Quarantined::Card.what_to_do().contains("delete"),
+        "the notice must not ask for a reconciliation that cannot happen"
+    );
+}

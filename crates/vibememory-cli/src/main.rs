@@ -9,6 +9,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use std::collections::BTreeMap;
 use vibememory_cli::config::{Config, DesktopStore};
 use vibememory_cli::hook::parse_input;
 use vibememory_cli::hook::prompt_gate::{Gate, decide};
@@ -16,11 +17,12 @@ use vibememory_cli::hook::session_start;
 use vibememory_cli::hook::stop::{
     PUSH_DEBOUNCE, commit_snapshot, push_if_due, record_end, record_progress,
 };
+
 use vibememory_cli::hook::stop::{Tail, Tails};
 use vibememory_cli::install::{Layout, State, apply, plan};
 use vibememory_cli::links_file;
 use vibememory_cli::memory::{
-    COWORK_MEMORY_VAR, JOURNAL_FILE, MemoryLocation, REMOTE_MEMORY_VAR, memory_dir,
+    COWORK_MEMORY_VAR, JOURNAL_FILE, MemoryLocation, Quarantined, REMOTE_MEMORY_VAR, memory_dir,
     settings_memory_dir, sync,
 };
 use vibememory_cli::store::existing;
@@ -295,14 +297,8 @@ fn session_start_hook() -> ExitCode {
     if let Some(note) = handoff_note(&layout, &enc) {
         notes.push(note);
     }
-    let waiting = vibememory_cli::memory::quarantined(&layout.engine_dir);
-    if !waiting.is_empty() {
-        notes.push(format!(
-            "VibeMemory: {} version(s) of memory files are waiting in the quarantine to be \
-             reconciled ({}).",
-            waiting.len(),
-            waiting.join(", ")
-        ));
+    for note in quarantine_notes(&layout.engine_dir) {
+        notes.push(note);
     }
     if let Some(message) = decision.additional_context() {
         notes.push(message);
@@ -450,6 +446,35 @@ fn sync_memory(
     } else {
         Some(notes.join(" "))
     }
+}
+
+/// One sentence per kind of thing waiting in the quarantine.
+///
+/// Per kind, not one for everything: the quarantine used to hold only memory records, and a
+/// notice that calls a folded Desktop card a "version of a memory file" sends the reader hunting
+/// for a conflict that is not there. What to do about each kind differs too — a memory version
+/// waits to be reconciled, a folded card waits only to be deleted or kept.
+fn quarantine_notes(engine_dir: &std::path::Path) -> Vec<String> {
+    let waiting = vibememory_cli::memory::quarantined(engine_dir);
+    let mut by_kind: BTreeMap<Quarantined, Vec<String>> = BTreeMap::new();
+    for name in waiting {
+        by_kind
+            .entry(vibememory_cli::memory::quarantined_kind(&name))
+            .or_default()
+            .push(name);
+    }
+    by_kind
+        .into_iter()
+        .map(|(kind, names)| {
+            format!(
+                "VibeMemory: {} {} in the quarantine — {} ({}).",
+                names.len(),
+                kind.plural(),
+                kind.what_to_do(),
+                names.join(", ")
+            )
+        })
+        .collect()
 }
 
 /// Where Desktop keeps its cards, when this machine has them at all.

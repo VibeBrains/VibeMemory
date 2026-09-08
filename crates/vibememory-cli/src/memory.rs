@@ -241,6 +241,66 @@ fn already_quarantined(dir: &Path, bytes: &[u8]) -> Option<PathBuf> {
         .find(|path| std::fs::read(path).is_ok_and(|held| held == bytes))
 }
 
+/// What a file set aside in the quarantine is, judged by its name.
+///
+/// The quarantine started as the memory's, and for a while everything in it was a memory record.
+/// It is not any more — a folded Desktop card lands here too — and a notice that calls a card a
+/// "memory file" sends the reader looking for a conflict that does not exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Quarantined {
+    /// A version of a memory record: two machines wrote the same file and neither wins.
+    Memory,
+    /// A transcript kept back rather than merged.
+    Transcript,
+    /// A Desktop session card: a cloud client's conflict copy, folded into the card it duplicated.
+    Card,
+    /// Something this build does not recognise; named, never guessed about.
+    Other,
+}
+
+impl Quarantined {
+    /// What the notice calls one of these, in the plural.
+    #[must_use]
+    pub const fn plural(self) -> &'static str {
+        match self {
+            Self::Memory => "version(s) of memory files",
+            Self::Transcript => "transcript(s)",
+            Self::Card => "Desktop session card(s)",
+            Self::Other => "file(s)",
+        }
+    }
+
+    /// What the reader is supposed to do about it.
+    #[must_use]
+    pub const fn what_to_do(self) -> &'static str {
+        match self {
+            Self::Memory => "reconcile them with the versions in the store",
+            Self::Transcript => "compare them with the store's copies",
+            // A folded copy has already given the card it duplicated everything it knew, so
+            // nothing is pending here: the file is kept only because it is another machine's
+            // version and deleting it is a person's call.
+            Self::Card => "delete them once you no longer want another machine's copy",
+            Self::Other => "look at them",
+        }
+    }
+}
+
+/// What a quarantined file is, by name.
+#[must_use]
+pub fn quarantined_kind(name: &str) -> Quarantined {
+    // The quarantine appends a stamp, so the type has to be read from the name's body rather than
+    // from its ending.
+    if name.starts_with("local_") || name.starts_with("deleted_") {
+        Quarantined::Card
+    } else if name.contains(".jsonl") {
+        Quarantined::Transcript
+    } else if name.contains(".md") {
+        Quarantined::Memory
+    } else {
+        Quarantined::Other
+    }
+}
+
 /// Files waiting in quarantine, for `additionalContext` and `doctor`.
 #[must_use]
 pub fn quarantined(engine_dir: &Path) -> Vec<String> {
