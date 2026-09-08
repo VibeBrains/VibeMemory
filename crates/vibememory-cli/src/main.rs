@@ -25,8 +25,8 @@ use vibememory_cli::memory::{
 };
 use vibememory_cli::store::existing;
 use vibememory_core::naming::{
-    IgnoreReason, NamingInput, PathSyntax, Resolution, canonical_cwd, enc_from_transcript_path,
-    resolve_store_name,
+    EncSlug, IgnoreReason, NamingInput, PathSyntax, Resolution, canonical_cwd,
+    enc_from_transcript_path, resolve_store_name,
 };
 
 /// The engine's own directory, under the home directory unless told otherwise.
@@ -278,6 +278,9 @@ fn session_start_hook() -> ExitCode {
     let mut notes: Vec<String> = vibememory_cli::merge_report::read_pending(&layout.engine_dir);
     if !notes.is_empty() {
         let _ = vibememory_cli::merge_report::clear_pending(&layout.engine_dir);
+    }
+    if let Some(note) = handoff_note(&layout, &enc) {
+        notes.push(note);
     }
     let waiting = vibememory_cli::memory::quarantined(&layout.engine_dir);
     if !waiting.is_empty() {
@@ -1099,4 +1102,26 @@ fn desktop_is_running(config_dir: &std::path::Path) -> bool {
             })
         });
     in_process_list || vibememory_cli::switch::desktop_session_live(config_dir)
+}
+
+/// Note about this project's open hand-offs, or `None` when there are none.
+///
+/// Read from the hand-off files themselves: the index in `MEMORY.md` is rewritten back to the
+/// CLI's default template, so a session that trusted it would start believing nothing is in
+/// progress.
+fn handoff_note(layout: &Layout, enc: &EncSlug) -> Option<String> {
+    let memory = layout
+        .config_dir
+        .join("projects")
+        .join(enc.as_str())
+        .join("memory");
+    let open = vibememory_cli::memory::open_handoffs(&memory);
+    if open.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "VibeMemory: {} hand-off(s) of this project are open \u{2014} say \u{ab}\u{43f}\u{440}\u{43e}\u{434}\u{43e}\u{43b}\u{436}\u{438}\u{bb} to resume: {}.",
+        open.len(),
+        open.join(", ")
+    ))
 }

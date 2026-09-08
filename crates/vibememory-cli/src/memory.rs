@@ -255,3 +255,36 @@ pub fn quarantined(engine_dir: &Path) -> Vec<String> {
     names.sort();
     names
 }
+
+/// Open hand-offs of a project: files under `memory/sessions/` whose frontmatter says
+/// `status: open`.
+///
+/// The index in `MEMORY.md` cannot be relied on for this. Observed twice on 2026-09-08: the file
+/// is rewritten back to the CLI's default template (`# Memory` / `Nothing remembered yet.`)
+/// minutes after a session writes an index into it. Whatever does that, the engine is not going
+/// to fight it — it reads the hand-off files themselves, which nothing else touches.
+#[must_use]
+pub fn open_handoffs(memory_dir: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(memory_dir.join("sessions")) else {
+        return Vec::new();
+    };
+    let mut open = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "md") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        // Frontmatter only: a `status: open` deep in the prose is prose.
+        let front = text.split("---").nth(1).unwrap_or_default();
+        if front.lines().any(|line| line.trim() == "status: open")
+            && let Some(name) = path.file_stem()
+        {
+            open.push(name.to_string_lossy().into_owned());
+        }
+    }
+    open.sort();
+    open
+}

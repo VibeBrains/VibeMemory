@@ -686,7 +686,11 @@ fn commit_project_files(
     live: &BTreeSet<String>,
     stamp: &str,
 ) -> Result<usize, String> {
-    let changed = git::changed_paths(store, "projects", TIMEOUT)?;
+    // `config/` too: the shared skills and managed copies live there, and nothing else commits
+    // them. A skill rewritten on this machine stayed uncommitted for a day because this step
+    // looked only at `projects/`.
+    let mut changed = git::changed_paths(store, "projects", TIMEOUT)?;
+    changed.extend(git::changed_paths(store, "config", TIMEOUT)?);
     let ours: Vec<&str> = changed
         .iter()
         .map(String::as_str)
@@ -701,7 +705,7 @@ fn commit_project_files(
         git::run_with_timeout(git::command(store, &args), TIMEOUT)?
             .ok_or_else(|| "git refused to stage project files".to_owned())?;
     }
-    let message = format!("vibememory: {} project file(s) at {stamp}", ours.len());
+    let message = format!("vibememory: {} shared file(s) at {stamp}", ours.len());
     git::run_with_timeout(
         git::command(store, &["commit", "--quiet", "-m", &message]),
         TIMEOUT,
