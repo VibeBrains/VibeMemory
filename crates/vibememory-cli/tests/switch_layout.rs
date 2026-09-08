@@ -385,3 +385,39 @@ fn the_new_desktop_store_carries_the_cards_the_old_one_held() {
         "the card is still in the folder the switch moved aside"
     );
 }
+
+#[test]
+fn running_the_switch_again_does_not_forget_how_to_undo_the_first_run() {
+    let temp = TempDir::new("switch-twice");
+    let m = old_machine(&temp);
+    let first = switch(&input(&m, false), false).expect("first");
+    assert!(!first.changes.is_empty());
+
+    // The second run finds everything already done and changes nothing — the state a watcher
+    // relaunched by launchd puts the machine in. Writing that empty result over the file would
+    // leave the machine switched with no way back.
+    let second = switch(&input(&m, false), false).expect("second");
+    assert!(
+        second.changes.is_empty(),
+        "nothing is left to do: {:?}",
+        second.changes
+    );
+
+    let recorded: Vec<Change> = serde_json::from_str(
+        &fs::read_to_string(m.engine.join("switch-rollback.json")).expect("rollback file"),
+    )
+    .expect("valid rollback file");
+    assert_eq!(
+        recorded, first.changes,
+        "the second run must keep what the first one recorded"
+    );
+
+    // And the rollback still works after that second run.
+    let undone = rollback(&m.engine).expect("rollback");
+    assert_eq!(undone.len(), first.changes.len());
+    assert_eq!(
+        link_target(&m.config_dir.join("projects").join(ENC)),
+        m.from.join("projects/-ALL-/VibeIDE"),
+        "the machine is back where it started"
+    );
+}

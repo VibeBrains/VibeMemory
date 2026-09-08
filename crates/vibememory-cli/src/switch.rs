@@ -176,7 +176,7 @@ pub fn switch(input: &SwitchInput<'_>, dry_run: bool) -> Result<Switched, String
     relink_skills(input, dry_run, &mut done)?;
     swap_desktop_store(input, dry_run, &mut done)?;
     if !dry_run {
-        save_rollback(input.engine_dir, &done.changes)?;
+        add_to_rollback(input.engine_dir, &done.changes)?;
     }
     Ok(done)
 }
@@ -482,6 +482,36 @@ fn symlink(target: &Path, link: &Path) -> Result<(), String> {
     #[cfg(windows)]
     {
         std::os::windows::fs::symlink_dir(target, link).map_err(|error| error.to_string())
+    }
+}
+
+/// Adds this run's changes to the rollback file, keeping what earlier runs recorded.
+///
+/// Not a plain write. `switch` is safe to run twice — the second run finds everything already
+/// done and reports no changes — and writing that empty result over the file would destroy the
+/// only record of how to put the machine back. Seen on this machine 2026-09-08: a watcher
+/// relaunched by launchd ran `switch --apply` three times in thirty-three seconds, and the third
+/// run left `[]` where four changes had been. "Idempotent" meant the system was not changed
+/// again; it did not mean the memory of how to undo it survived.
+///
+/// Order is preserved and duplicates are dropped: `rollback` undoes newest first, so a change
+/// recorded later must stay later in the list.
+fn add_to_rollback(engine_dir: &Path, changes: &[Change]) -> Result<(), String> {
+    let mut all = read_rollback(engine_dir)?;
+    for change in changes {
+        if !all.contains(change) {
+            all.push(change.clone());
+        }
+    }
+    save_rollback(engine_dir, &all)
+}
+
+/// What the rollback file holds now; nothing when there is no file yet.
+fn read_rollback(engine_dir: &Path) -> Result<Vec<Change>, String> {
+    match std::fs::read_to_string(engine_dir.join(ROLLBACK_FILE)) {
+        Ok(text) => serde_json::from_str(&text).map_err(|error| error.to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error.to_string()),
     }
 }
 
