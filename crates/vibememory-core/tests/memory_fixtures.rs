@@ -97,6 +97,14 @@ struct ExpectedEvent {
     id: String,
     body_contains: String,
     created_at: String,
+    /// What the event's record must say about the fact still holding. Absent means `active`,
+    /// which is what every case written before the status existed expects.
+    #[serde(default = "active_status")]
+    status: String,
+}
+
+fn active_status() -> String {
+    "active".to_owned()
 }
 
 #[derive(Deserialize)]
@@ -180,6 +188,13 @@ fn check_import(
         if record.agent != expected.agent || record.updated_at != expected.stamp {
             failures.push(format!(
                 "{label}: the event does not carry the caller's agent and stamp"
+            ));
+        }
+        if record.status.as_str() != want.status {
+            failures.push(format!(
+                "{label}: status {}, expected {}",
+                record.status.as_str(),
+                want.status
             ));
         }
         // Every event must survive the journal round trip, or it cannot be written at all.

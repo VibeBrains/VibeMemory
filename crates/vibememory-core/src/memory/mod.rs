@@ -12,4 +12,4 @@ pub mod record;
 
 pub use error::MemoryError;
 pub use journal::{Action, Entry, Event, Memory, fold, parse};
-pub use record::{Record, RecordId, RecordKind};
+pub use record::{Record, RecordId, RecordKind, RecordStatus};

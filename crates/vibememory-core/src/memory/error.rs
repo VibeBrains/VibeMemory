@@ -16,6 +16,12 @@ pub enum MemoryError {
         /// The offending word.
         kind: String,
     },
+    /// The status is not one the format knows.
+    #[error("unknown memory status: {status:?}")]
+    UnknownStatus {
+        /// The offending word.
+        status: String,
+    },
     /// The human name is missing or spans lines.
     #[error("memory {id:?} needs a one-line title")]
     InvalidTitle {
@@ -65,6 +71,7 @@ impl MemoryError {
         match self {
             Self::InvalidId { .. } => "invalidId",
             Self::UnknownKind { .. } => "unknownKind",
+            Self::UnknownStatus { .. } => "unknownStatus",
             Self::InvalidTitle { .. } => "invalidTitle",
             Self::InvalidDescription { .. } => "invalidDescription",
             Self::EmptyBody { .. } => "emptyBody",

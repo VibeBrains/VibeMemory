@@ -449,6 +449,129 @@
           "rejected": []
         }
       }
+    },
+    {
+      "id": "staleRecordIsMarkedWhereItIsRead",
+      "provenance": "computed",
+      "note": "Устаревший факт выглядит как свежий, если его не пометить: пометка стоит и в документе, и в строке индекса — читатель чаще смотрит именно в индекс. Кейс живой: совет про ENABLE_PROMPT_CACHING_1H перестал быть нужным основному разговору за три недели.",
+      "journal": [
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"cache-ttl\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Prompt cache TTL\", \"description\": \"how long the cache lives\", \"body\": \"Set ENABLE_PROMPT_CACHING_1H=1 to get an hour.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
+        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"cache-ttl\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Prompt cache TTL\", \"description\": \"how long the cache lives\", \"body\": \"Set ENABLE_PROMPT_CACHING_1H=1 to get an hour.\", \"links\": [], \"status\": \"stale\", \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "cache-ttl",
+            "version": "e2",
+            "rivals": []
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "files": [
+          {
+            "name": "MEMORY.md",
+            "text": "# Memory\n\nOne line per memory; the file holds the whole of it.\n\n- [Prompt cache TTL](cache-ttl.md) — **stale**, how long the cache lives\n"
+          },
+          {
+            "name": "cache-ttl.md",
+            "text": "---\nname: cache-ttl\ntitle: Prompt cache TTL\ndescription: how long the cache lives\nmetadata:\n  type: project\n  project: VibeMemory\n  status: stale\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T11:00:00Z\n  version: e2\n---\n\nSet ENABLE_PROMPT_CACHING_1H=1 to get an hour.\n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "activeStatusIsNotWrittenDown",
+      "provenance": "computed",
+      "note": "Значение по умолчанию в файл не пишется: иначе в день появления поля переписались бы все проекции на машине, ничего при этом не сообщив. Журнал без поля читается как active.",
+      "journal": [
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"cache-ttl\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Prompt cache TTL\", \"description\": \"how long the cache lives\", \"body\": \"Set ENABLE_PROMPT_CACHING_1H=1 to get an hour.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "cache-ttl",
+            "version": "e1",
+            "rivals": []
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "files": [
+          {
+            "name": "cache-ttl.md",
+            "text": "---\nname: cache-ttl\ntitle: Prompt cache TTL\ndescription: how long the cache lives\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:00:00Z\n  version: e1\n---\n\nSet ENABLE_PROMPT_CACHING_1H=1 to get an hour.\n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "importMarkingStaleByHandMakesAVersion",
+      "provenance": "computed",
+      "note": "Статус виден в файле, значит входит в сравнение при импорте: иначе пометка, поставленная рукой или моделью, молча откатывалась бы следующей проекцией. Движок сам статус не ставит никогда — устарел факт или нет, знает только тот, кто это заметил.",
+      "journal": [
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"cache-ttl\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Prompt cache TTL\", \"description\": \"how long the cache lives\", \"body\": \"Set ENABLE_PROMPT_CACHING_1H=1 to get an hour.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "cache-ttl",
+            "version": "e1",
+            "rivals": []
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "import": {
+          "stamp": "2026-09-03T12:00:00Z",
+          "agent": "claude-code",
+          "documents": [
+            {
+              "name": "cache-ttl.md",
+              "text": "---\nname: cache-ttl\ntitle: Prompt cache TTL\ndescription: how long the cache lives\nmetadata:\n  type: project\n  project: VibeMemory\n  status: stale\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:00:00Z\n  version: e1\n---\n\nSet ENABLE_PROMPT_CACHING_1H=1 to get an hour.\n"
+            }
+          ],
+          "events": [
+            {
+              "uuid": "2026-09-03T12:00:00Z-cache-ttl",
+              "parent": "e1",
+              "id": "cache-ttl",
+              "createdAt": "2026-09-03T10:00:00Z",
+              "bodyContains": "ENABLE_PROMPT_CACHING_1H",
+              "status": "stale"
+            }
+          ],
+          "rejected": []
+        }
+      }
+    },
+    {
+      "id": "importRejectsUnknownStatus",
+      "provenance": "computed",
+      "note": "Неизвестный статус отвергается, а не считается active: догадка здесь тихо вернула бы доверие к факту, который кто-то пометил как ненадёжный.",
+      "journal": [],
+      "expect": {
+        "records": [],
+        "forgotten": [],
+        "unreadable": 0,
+        "import": {
+          "stamp": "2026-09-03T12:00:00Z",
+          "agent": "claude-code",
+          "documents": [
+            {
+              "name": "odd.md",
+              "text": "---\nname: odd\ntitle: Quarantine path\ndescription: where a set-aside version goes\nmetadata:\n  type: project\n  project: VibeMemory\n  status: disputed\n  agent: claude-code\n---\n\nQuarantined versions live in `~/.vibememory/quarantine/`.\n"
+            }
+          ],
+          "events": [],
+          "rejected": [
+            {
+              "name": "odd.md",
+              "code": "unknownStatus"
+            }
+          ]
+        }
+      }
     }
   ]
 }

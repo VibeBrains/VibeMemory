@@ -11,7 +11,7 @@ use std::fmt::Write as _;
 
 use super::error::MemoryError;
 use super::journal::{Action, Entry, Event, Memory};
-use super::record::{Record, RecordId, RecordKind};
+use super::record::{Record, RecordId, RecordKind, RecordStatus};
 
 /// The index every memory directory has.
 pub const INDEX_FILE: &str = "MEMORY.md";
@@ -80,9 +80,17 @@ fn index(memory: &Memory) -> Vec<u8> {
     text.push_str("One line per memory; the file holds the whole of it.\n\n");
     for entry in memory.records.values() {
         let record = &entry.record;
+        // A stale record is marked where the reader actually looks. Leaving the mark only inside
+        // the document would let anyone scanning the index rely on a fact already known to be
+        // out of date — which is the whole failure this status exists to prevent.
+        let mark = if record.status == RecordStatus::Stale {
+            "**stale**, "
+        } else {
+            ""
+        };
         let _ = writeln!(
             text,
-            "- [{}]({}) — {}",
+            "- [{}]({}) — {mark}{}",
             record.title,
             document_name(&record.id),
             record.description
@@ -122,14 +130,21 @@ fn document(record: &Record, version: &str) -> Vec<u8> {
     let _ = writeln!(text, "title: {}", record.title);
     let _ = writeln!(text, "description: {}", record.description);
     text.push_str("metadata:\n");
+    // `status` only when it is not the default: writing `status: active` into every document
+    // would rewrite every projection on the machine the day this field appeared, and say nothing.
+    let status = (!record.status.is_default()).then(|| ("status", record.status.as_str()));
     for (key, value) in [
-        ("type", record.kind.as_str()),
-        ("project", record.project.as_str()),
-        ("agent", record.agent.as_str()),
-        ("created", record.created_at.as_str()),
-        ("updated", record.updated_at.as_str()),
-        ("version", version),
-    ] {
+        Some(("type", record.kind.as_str())),
+        Some(("project", record.project.as_str())),
+        status,
+        Some(("agent", record.agent.as_str())),
+        Some(("created", record.created_at.as_str())),
+        Some(("updated", record.updated_at.as_str())),
+        Some(("version", version)),
+    ]
+    .into_iter()
+    .flatten()
+    {
         let _ = writeln!(text, "{NESTED_INDENT}{key}: {value}");
     }
     text.push_str(FRONTMATTER_FENCE);
@@ -196,8 +211,13 @@ pub fn parse_document(path: &str, bytes: &[u8]) -> Result<Document, MemoryError>
             })
     };
     let id = RecordId::parse(&required(&top, "name")?)?;
+    let status = match nested.get("status") {
+        Some(word) => RecordStatus::parse(word)?,
+        None => RecordStatus::default(),
+    };
     let record = Record {
         kind: RecordKind::parse(&required(&nested, "type")?)?,
+        status,
         project: nested.get("project").cloned().unwrap_or_default(),
         title: required(&top, "title")?,
         description: required(&top, "description")?,
@@ -301,4 +321,7 @@ fn unchanged(known: &Record, edited: &Record) -> bool {
         && known.body == edited.body
         && known.kind == edited.kind
         && known.links == edited.links
+        // Visible in the file, so it has to be part of the question: otherwise marking a memory
+        // stale by hand would be silently undone by the next projection.
+        && known.status == edited.status
 }

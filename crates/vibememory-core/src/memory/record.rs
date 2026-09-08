@@ -119,6 +119,61 @@ impl RecordKind {
     }
 }
 
+/// Whether a memory can still be relied on.
+///
+/// Only two values, and the second one is the whole point: a fact that was true when it was
+/// written and is not any more looks exactly like a fresh one, so a reader trusts it. The other
+/// statuses a knowledge system usually carries are deliberately absent, because this model
+/// already says the same things another way: a version with a child is superseded (`parent`),
+/// a forgotten record is a `delete` event, and two machines disagreeing is a pair of rival
+/// versions. Inventing fields that duplicate those would give the same fact two sources of truth.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "camelCase")]
+pub enum RecordStatus {
+    /// Believed to hold. The default, and what every record written before this field existed is.
+    #[default]
+    Active,
+    /// Was true, is not any more, or can no longer be trusted without checking. The record is
+    /// kept: what it says still explains why things were done, and deleting it would lose that.
+    Stale,
+}
+
+impl RecordStatus {
+    /// The word used in the file's frontmatter and in the journal.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Stale => "stale",
+        }
+    }
+
+    /// Whether this is the value that needs no writing down. Takes a reference because serde's
+    /// `skip_serializing_if` hands it one.
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        matches!(self, Self::Active)
+    }
+
+    /// Reads the word back. An unknown status is an error rather than a silent `active`: guessing
+    /// here would quietly restore trust in a fact somebody marked as not to be trusted.
+    ///
+    /// # Errors
+    ///
+    /// [`MemoryError::UnknownStatus`] for a word this format does not define.
+    pub fn parse(word: &str) -> Result<Self, MemoryError> {
+        match word {
+            "active" => Ok(Self::Active),
+            "stale" => Ok(Self::Stale),
+            other => Err(MemoryError::UnknownStatus {
+                status: other.to_owned(),
+            }),
+        }
+    }
+}
+
 /// One remembered fact — the thing that travels between machines and agents. The markdown file
 /// under `memory/` is a projection of this, not the other way round.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +195,10 @@ pub struct Record {
     pub body: String,
     /// Other records this one points at, in the order they appear in the body.
     pub links: Vec<RecordId>,
+    /// Whether the fact still holds. Absent in a journal written before this field existed, and
+    /// left out of the line when it is `active`, so old journals and new ones stay comparable.
+    #[serde(default, skip_serializing_if = "RecordStatus::is_default")]
+    pub status: RecordStatus,
     /// Which agent wrote this version — memory is shared between agents, so it has to say.
     pub agent: String,
     /// When the record was first written, in the writer's clock.
