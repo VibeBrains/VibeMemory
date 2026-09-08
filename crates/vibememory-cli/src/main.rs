@@ -1184,11 +1184,11 @@ fn ssh_command(host: &str, script: &str) -> std::process::Command {
 /// A network failure does not count as an answer — the timer is not reset, so the question is
 /// asked again on the next tick instead of a day later.
 fn mirror_watch(layout: &Layout, config: &Config) -> Option<String> {
-    use vibememory_cli::mirror::{Mirror, check_due, probe, session_note};
+    use vibememory_cli::mirror::{Mirror, probe, session_note, should_probe};
 
     let now = epoch_seconds_signed();
     let state = MirrorState::read(&layout.engine_dir);
-    if !check_due(state.last_checked, now) {
+    if !should_probe(state.last_checked, state.last_attempt, now) {
         return None;
     }
     let mirror = probe(
@@ -1196,11 +1196,10 @@ fn mirror_watch(layout: &Layout, config: &Config) -> Option<String> {
         vibememory_cli::tick::BRANCH,
         ask_host,
     );
-    if matches!(mirror, Mirror::Unknown { .. }) {
-        return Some(mirror.describe());
-    }
+    let answered = !matches!(mirror, Mirror::Unknown { .. });
     let _ = MirrorState {
-        last_checked: Some(now),
+        last_checked: answered.then_some(now).or(state.last_checked),
+        last_attempt: Some(now),
     }
     .write(&layout.engine_dir);
     if let Some(note) = session_note(&mirror) {
@@ -1214,7 +1213,10 @@ fn mirror_watch(layout: &Layout, config: &Config) -> Option<String> {
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MirrorState {
+    /// When the mirror last gave an answer of any kind.
     last_checked: Option<i64>,
+    /// When it was last asked, answer or not — the back-off for an unreachable host.
+    last_attempt: Option<i64>,
 }
 
 impl MirrorState {
@@ -1228,6 +1230,9 @@ impl MirrorState {
     }
 
     fn write(&self, engine_dir: &std::path::Path) -> Result<(), String> {
+        // A machine that has not been installed yet has no engine directory, and a tick there
+        // must not fail on the state file it was only trying to leave behind.
+        std::fs::create_dir_all(engine_dir).map_err(|error| error.to_string())?;
         let text = serde_json::to_string_pretty(self).map_err(|error| error.to_string())?;
         std::fs::write(engine_dir.join(Self::FILE), text).map_err(|error| error.to_string())
     }
@@ -1265,17 +1270,24 @@ fn report_json(
         .iter()
         .filter(|action| !matches!(action.state, State::Satisfied))
         .count();
-    let mirror_value = mirror.map(|mirror| match mirror {
-        Mirror::NoHost => serde_json::json!({ "state": "noHost" }),
-        Mirror::NotConfigured => serde_json::json!({ "state": "notConfigured" }),
-        Mirror::InSync { repo, head } => {
-            serde_json::json!({ "state": "inSync", "repo": repo, "head": head })
-        }
-        Mirror::Diverged { repo, host, mirror } => serde_json::json!({
-            "state": "diverged", "repo": repo, "hostHead": host, "mirrorHead": mirror
-        }),
-        Mirror::Unknown { reason } => serde_json::json!({ "state": "unknown", "reason": reason }),
-    });
+    let mirror_value = mirror.map_or_else(
+        // `status` does not go to the network, so it says so instead of implying the mirror is
+        // fine — a monitor reading `null` would have to guess which of the two it means.
+        || serde_json::json!({ "state": "notChecked" }),
+        |mirror| match mirror {
+            Mirror::NoHost => serde_json::json!({ "state": "noHost" }),
+            Mirror::NotConfigured => serde_json::json!({ "state": "notConfigured" }),
+            Mirror::InSync { repo, head } => {
+                serde_json::json!({ "state": "inSync", "repo": repo, "head": head })
+            }
+            Mirror::Diverged { repo, host, mirror } => serde_json::json!({
+                "state": "diverged", "repo": repo, "hostHead": host, "mirrorHead": mirror
+            }),
+            Mirror::Unknown { reason } => {
+                serde_json::json!({ "state": "unknown", "reason": reason })
+            }
+        },
+    );
     let failed = wrong > 0 || mirror.is_some_and(Mirror::is_fault);
     let report = serde_json::json!({
         "machineId": config.machine_id,

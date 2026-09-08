@@ -164,6 +164,24 @@ pub fn repo_name(url: &str) -> String {
 /// and it talks to two networks in turn — the host, then GitHub from the host.
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(25);
 
+/// The store's path as the host's shell must see it.
+///
+/// A remote is written three ways in the wild and all three are legal: `alias:store.git`
+/// (relative to the home directory, what `hostBootstrap.sh` makes), `alias:~/store.git` (the form
+/// the manual and CLAUDE.md use) and `alias:/srv/store.git` (absolute). Gluing `$HOME/` in front
+/// of all of them turned the second into `$HOME/~/store.git`, and the probe of a store set up by
+/// the book failed silently.
+#[must_use]
+pub fn shell_path(path: &str) -> String {
+    if path.starts_with('/') {
+        path.to_owned()
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        format!("$HOME/{rest}")
+    } else {
+        format!("$HOME/{path}")
+    }
+}
+
 /// What is asked of the host first: the hook's text and the head it holds.
 ///
 /// The hook is printed, not parsed here: the rule for reading it lives in [`url_in_hook`], under
@@ -171,9 +189,10 @@ pub const PROBE_TIMEOUT: Duration = Duration::from_secs(25);
 /// that actually runs, and the only one nothing tests.
 #[must_use]
 pub fn hook_script(path: &str, branch: &str) -> String {
+    let store = shell_path(path);
     format!(
-        "hook=$HOME/{path}/hooks/post-receive; \
-         echo \"HEAD $(git -C $HOME/{path} rev-parse {branch} 2>/dev/null)\"; \
+        "hook={store}/hooks/post-receive; \
+         echo \"HEAD $(git -C {store} rev-parse {branch} 2>/dev/null)\"; \
          [ -f \"$hook\" ] && {{ echo HOOK; cat \"$hook\"; }} || echo NOHOOK"
     )
 }
@@ -220,6 +239,10 @@ fn short(head: &str) -> &str {
 /// changes at most as often as a push.
 pub const CHECK_INTERVAL: i64 = 24 * 60 * 60;
 
+/// How long to wait before asking again after the host or the provider did not answer. Without
+/// it an unreachable provider means two ssh calls every two minutes, all day.
+pub const RETRY_AFTER: i64 = 60 * 60;
+
 /// Whether the periodic check is due, given when it last ran.
 ///
 /// A clock that jumped backwards (machines disagree, and one of them is always wrong) makes the
@@ -227,9 +250,32 @@ pub const CHECK_INTERVAL: i64 = 24 * 60 * 60;
 /// the backup.
 #[must_use]
 pub const fn check_due(last_checked: Option<i64>, now: i64) -> bool {
-    match last_checked {
+    due_after(last_checked, now, CHECK_INTERVAL)
+}
+
+/// Whether to ask the host at all right now.
+///
+/// Both clocks have to agree: the daily question must be due, and an attempt that got no answer
+/// must have had its hour. A host that never answers leaves `last_checked` empty forever, so
+/// without the second clock the daily rule would say "due" on every tick — two ssh calls every
+/// two minutes, all day.
+#[must_use]
+pub const fn should_probe(last_checked: Option<i64>, last_attempt: Option<i64>, now: i64) -> bool {
+    check_due(last_checked, now) && retry_due(last_attempt, now)
+}
+
+/// Whether a failed attempt may be retried yet.
+#[must_use]
+pub const fn retry_due(last_attempt: Option<i64>, now: i64) -> bool {
+    due_after(last_attempt, now, RETRY_AFTER)
+}
+
+/// The shared rule: never asked means ask; a clock that went backwards means ask; otherwise wait
+/// out the interval.
+const fn due_after(last: Option<i64>, now: i64, interval: i64) -> bool {
+    match last {
         None => true,
-        Some(last) => now < last || now - last >= CHECK_INTERVAL,
+        Some(last) => now < last || now - last >= interval,
     }
 }
 

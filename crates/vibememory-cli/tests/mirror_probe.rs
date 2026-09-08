@@ -245,3 +245,47 @@ fn the_column_belongs_to_the_report_and_not_to_the_sentence() {
     );
     assert!(!mirror.summary().starts_with(' '));
 }
+
+#[test]
+fn a_host_that_never_answers_is_asked_hourly_and_not_every_tick() {
+    use vibememory_cli::mirror::{CHECK_INTERVAL, RETRY_AFTER, should_probe};
+
+    // Nothing known: ask.
+    assert!(should_probe(None, None, 10_000));
+    // Asked a minute ago and got nothing back: the daily clock says "due" forever, the retry
+    // clock is what keeps the tick from hammering the host every two minutes.
+    assert!(!should_probe(None, Some(10_000), 10_060));
+    assert!(should_probe(None, Some(10_000), 10_000 + RETRY_AFTER));
+    // Answered today: not due again until tomorrow, however often the tick runs.
+    assert!(!should_probe(
+        Some(10_000),
+        Some(10_000),
+        10_000 + RETRY_AFTER
+    ));
+    assert!(should_probe(
+        Some(10_000),
+        Some(10_000),
+        10_000 + CHECK_INTERVAL
+    ));
+}
+
+#[test]
+fn the_store_path_is_written_the_way_the_hosts_shell_reads_it() {
+    use vibememory_cli::mirror::{hook_script, shell_path};
+
+    // What hostBootstrap.sh makes: relative to the home directory.
+    assert_eq!(
+        shell_path("vibememory/store.git"),
+        "$HOME/vibememory/store.git"
+    );
+    // What the manual and CLAUDE.md write. Gluing $HOME in front of this produced
+    // "$HOME/~/store.git", and the probe of a store set up by the book failed silently.
+    assert_eq!(
+        shell_path("~/vibememory/store.git"),
+        "$HOME/vibememory/store.git"
+    );
+    // An absolute path is already an answer.
+    assert_eq!(shell_path("/srv/store.git"), "/srv/store.git");
+
+    assert!(!hook_script("~/store.git", "main").contains("$HOME/~/"));
+}
