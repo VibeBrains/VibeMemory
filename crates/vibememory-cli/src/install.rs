@@ -55,7 +55,8 @@ const MERGE_DRIVERS: &[(&str, &str)] = &[
 ];
 
 /// Files of the config directory the store manages as copies.
-const MANAGED_FILES: &[&str] = &["CLAUDE.md", "settings.json"];
+/// The files of the config directory the store keeps a copy of.
+pub const MANAGED_FILES: &[&str] = &["CLAUDE.md", "settings.json"];
 
 /// Where everything lives on this machine.
 #[derive(Debug, Clone)]
@@ -102,6 +103,10 @@ pub enum Step {
     Schedule,
     /// The engine's hooks in `settings.json`.
     Hooks,
+    /// No flag in the `env` of `settings.json` that switches the prompt cache off or shortens it.
+    /// Such a flag travels to every machine with the managed copy, and costs a share of the
+    /// usage limits on each of them.
+    PromptCacheEnv,
     /// A copy of this binary under the engine directory, so hooks and the scheduler survive a
     /// rebuild or a `cargo clean` of wherever it was built.
     Binary,
@@ -137,6 +142,7 @@ impl Step {
             Self::SkillsLink => "skills link".to_owned(),
             Self::Schedule => "scheduled tick".to_owned(),
             Self::Hooks => "hooks in settings.json".to_owned(),
+            Self::PromptCacheEnv => "prompt cache not switched off in settings.json".to_owned(),
             Self::ScaffoldCommitted { .. } => "store scaffolding committed".to_owned(),
             Self::Binary => "engine binary in place".to_owned(),
             Self::BinarySigned { identity } => format!("engine binary signed by {identity}"),
@@ -227,10 +233,7 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
     for name in MANAGED_FILES {
         actions.push(Action {
             step: Step::ManagedCopy { name },
-            state: managed_copy_state(
-                &layout.config_dir.join(name),
-                &store.join("config").join(name),
-            ),
+            state: managed_copy_state(layout, &store, name),
         });
     }
     actions.push(Action {
@@ -262,6 +265,10 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
             ),
         });
     }
+    actions.push(Action {
+        step: Step::PromptCacheEnv,
+        state: prompt_cache_env_state(layout),
+    });
     actions.push(Action {
         step: Step::Hooks,
         state: hooks_state(layout),
@@ -370,21 +377,55 @@ fn link_state(link: &Path, target: &Path) -> State {
 
 /// A file the store keeps a copy of. Only its presence is planned here; reconciling two edited
 /// copies is the tick's business, not the installer's.
-fn managed_copy_state(local: &Path, in_store: &Path) -> State {
-    match (std::fs::read(local), std::fs::read(in_store)) {
-        (Ok(here), Ok(there)) if same_managed_content(local, &here, &there) => State::Satisfied,
-        (Ok(_), Ok(_)) => State::Conflict {
-            found: "the copies differ; the tick reconciles them".to_owned(),
-        },
-        // Neither side has the file. Nothing to manage, and inventing an empty one would put a
-        // meaningless file on every machine — so this is a resting state, not work left undone.
+/// Where a managed file stands: agreed, about to be brought into agreement, or in conflict.
+///
+/// The same three-way decision the tick makes (`managed::verdict`), asked without acting: a side
+/// that still matches the last-synced base has not moved, so the other side's change is simply
+/// owed (`Missing` — `install` performs it, the tick would too). Both sides moved, or no sync was
+/// ever recorded while the copies differ, is a conflict a person has to settle.
+fn managed_copy_state(layout: &Layout, store: &Path, name: &str) -> State {
+    use crate::managed::{ManagedState, Verdict, verdict};
+
+    let local_path = layout.config_dir.join(name);
+    let store_path = store.join("config").join(name);
+    let local = match std::fs::read(&local_path) {
+        Ok(bytes) if nothing_to_share(&local_path, &bytes) => None,
+        Ok(bytes) => Some(for_the_store(&local_path, &bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return State::Unknown {
+                reason: error.to_string(),
+            };
+        }
+    };
+    let store = match std::fs::read(&store_path) {
+        Ok(bytes) => Some(for_the_store(&store_path, &bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return State::Unknown {
+                reason: error.to_string(),
+            };
+        }
+    };
+    let local_hash = local.as_deref().map(crate::sha256::hex);
+    let store_hash = store.as_deref().map(crate::sha256::hex);
+    let state = ManagedState::read(&layout.engine_dir);
+    let base = state.synced.get(name).map(String::as_str);
+    match verdict(local_hash.as_deref(), store_hash.as_deref(), base) {
+        // Neither side has it, or nothing worth sharing: a resting state, not work left undone.
         // Calling it missing would make `install` perform the same no-op for ever.
-        (Err(_), Err(_)) => State::Satisfied,
-        // Only this machine has it, and once its own hooks are taken out nothing remains: a
-        // settings file the engine itself created has nothing to share.
-        (Ok(here), Err(_)) if nothing_to_share(local, &here) => State::Satisfied,
-        // Exactly one side has it: the copy has to be made.
-        _ => State::Missing,
+        Verdict::Nothing | Verdict::Same => State::Satisfied,
+        Verdict::Pull | Verdict::Push => State::Missing,
+        Verdict::Conflict => State::Conflict {
+            found: if base.is_some() {
+                "both copies changed since the last sync; this machine's version is in the \
+                 quarantine — make the copies identical to settle it"
+                    .to_owned()
+            } else {
+                "the copies differ and no sync was ever recorded; make them identical once"
+                    .to_owned()
+            },
+        },
     }
 }
 
@@ -498,10 +539,10 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
             // removes empty directories under the config root.
             write_new(&path.join(".keep"), b"")
         }
-        Step::ManagedCopy { name } => copy_managed(
-            &layout.config_dir.join(name),
-            &store.join("config").join(name),
-        ),
+        Step::ManagedCopy { name } => reconcile_managed(layout, &store, name),
+        // Nothing to apply: a flag that switches the cache off is the owner's to remove, and the
+        // plan never reports this step as missing — only satisfied or in conflict.
+        Step::PromptCacheEnv => Ok(()),
         Step::Schedule => install_schedule(layout),
         Step::Binary => install_binary(layout),
         Step::BinarySigned { identity } => sign_binary(&installed_binary(layout), identity),
@@ -540,32 +581,11 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 /// Copies a managed file into the store, or back out when only the store has it.
-fn copy_managed(local: &Path, in_store: &Path) -> Result<(), String> {
-    if let Some(parent) = in_store.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    match (local.exists(), in_store.exists()) {
-        (true, false) => {
-            let bytes = std::fs::read(local).map_err(|e| e.to_string())?;
-            // What goes into the store is this machine's settings minus this machine's hooks:
-            // a hook command names this machine's binary and engine directory, and on another
-            // machine that command fails — and a failing UserPromptSubmit hook stops sessions.
-            let shared = for_the_store(local, &bytes);
-            std::fs::write(in_store, shared).map_err(|e| e.to_string())
-        }
-        (false, true) => {
-            if let Some(parent) = local.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            std::fs::copy(in_store, local)
-                .map(|_| ())
-                .map_err(|e| e.to_string())
-        }
-        // Neither side has the file: nothing to manage yet, and inventing an empty one would
-        // put a meaningless file on every machine. Both sides present and differing is a
-        // conflict the plan already refused, so apply never reaches it either.
-        (false, false) | (true, true) => Ok(()),
-    }
+/// Brings one managed file into agreement, the same way the tick does.
+fn reconcile_managed(layout: &Layout, store: &Path, name: &str) -> Result<(), String> {
+    let mut state = crate::managed::ManagedState::read(&layout.engine_dir);
+    crate::managed::reconcile_one(layout, store, name, &mut state, &crate::clock::now())?;
+    state.write(&layout.engine_dir)
 }
 
 /// Creates a symlink, making sure its target exists first: a link to nothing is a link the CLI
@@ -887,7 +907,72 @@ fn hooks_state(layout: &Layout) -> State {
 }
 
 /// Adds the engine's hooks to `settings.json`, keeping everything else in it exactly as it is.
-fn write_hooks(layout: &Layout) -> Result<(), String> {
+/// Prefix of the environment variables that switch the prompt cache off, per model or entirely.
+const CACHE_OFF_PREFIX: &str = "DISABLE_PROMPT_CACHING";
+/// The variable that shortens every cache to five minutes.
+const CACHE_SHORT: &str = "FORCE_PROMPT_CACHING_5M";
+
+/// The variables in a `settings.json` `env` block that switch the prompt cache off or shorten it.
+///
+/// A value of `""`, `"0"` or `"false"` does not count: that is how such a flag is left in place
+/// but turned off, and reporting it would teach people to delete the line instead of reading it.
+#[must_use]
+pub fn cache_killing_flags(settings: &serde_json::Value) -> Vec<String> {
+    let Some(env) = settings.get("env").and_then(serde_json::Value::as_object) else {
+        return Vec::new();
+    };
+    let mut found: Vec<String> = env
+        .iter()
+        .filter(|(key, _)| key.starts_with(CACHE_OFF_PREFIX) || key.as_str() == CACHE_SHORT)
+        .filter(|(_, value)| {
+            let text = match value {
+                serde_json::Value::String(text) => text.trim().to_owned(),
+                other => other.to_string(),
+            };
+            !(text.is_empty() || text == "0" || text.eq_ignore_ascii_case("false"))
+        })
+        .map(|(key, value)| format!("{key}={}", value.as_str().unwrap_or(&value.to_string())))
+        .collect();
+    found.sort();
+    found
+}
+
+/// Whether `settings.json` leaves the prompt cache alone.
+fn prompt_cache_env_state(layout: &Layout) -> State {
+    let path = layout.config_dir.join("settings.json");
+    let settings: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str(&text) {
+            Ok(value) => value,
+            // Invalid JSON is the hooks step's finding; saying it twice helps nobody.
+            Err(_) => return State::Satisfied,
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return State::Satisfied,
+        Err(error) => {
+            return State::Unknown {
+                reason: error.to_string(),
+            };
+        }
+    };
+    let flags = cache_killing_flags(&settings);
+    if flags.is_empty() {
+        State::Satisfied
+    } else {
+        State::Conflict {
+            found: format!(
+                "env sets {} — the prompt cache costs usage limits on every machine this file \
+                 reaches",
+                flags.join(", ")
+            ),
+        }
+    }
+}
+
+/// Puts this machine's hook commands into `settings.json`, replacing stale ones of ours.
+///
+/// # Errors
+///
+/// The text of what went wrong.
+pub fn write_hooks(layout: &Layout) -> Result<(), String> {
     let path = layout.config_dir.join("settings.json");
     let mut settings: serde_json::Value = match std::fs::read_to_string(&path) {
         Ok(text) => serde_json::from_str(&text).map_err(|error| error.to_string())?,
@@ -977,24 +1062,9 @@ fn is_settings(path: &Path) -> bool {
     path.file_name().is_some_and(|name| name == "settings.json")
 }
 
-/// Whether two copies of a managed file say the same thing. For `settings.json` that means the
-/// same JSON once the engine's own hooks are removed from both — they are this machine's, never
-/// the store's — and formatting does not count. For everything else it means the same bytes.
-fn same_managed_content(path: &Path, here: &[u8], there: &[u8]) -> bool {
-    if !is_settings(path) {
-        return here == there;
-    }
-    match (
-        serde_json::from_slice::<serde_json::Value>(here),
-        serde_json::from_slice::<serde_json::Value>(there),
-    ) {
-        (Ok(a), Ok(b)) => without_engine_hooks(a) == without_engine_hooks(b),
-        _ => here == there,
-    }
-}
-
 /// The bytes of a managed file as they may enter the store.
-fn for_the_store(path: &Path, bytes: &[u8]) -> Vec<u8> {
+#[must_use]
+pub fn for_the_store(path: &Path, bytes: &[u8]) -> Vec<u8> {
     if !is_settings(path) {
         return bytes.to_vec();
     }
@@ -1053,7 +1123,9 @@ pub fn without_engine_hooks(mut settings: serde_json::Value) -> serde_json::Valu
 
 /// Whether a local managed file holds nothing the store would want: for `settings.json`, an
 /// empty object once the engine's hooks are removed.
-fn nothing_to_share(path: &Path, bytes: &[u8]) -> bool {
+/// Whether a managed file holds nothing but this machine's own hooks — nothing worth a copy.
+#[must_use]
+pub fn nothing_to_share(path: &Path, bytes: &[u8]) -> bool {
     if !is_settings(path) {
         return false;
     }

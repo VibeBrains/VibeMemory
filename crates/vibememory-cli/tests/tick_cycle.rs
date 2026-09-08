@@ -873,3 +873,49 @@ fn a_card_of_an_old_session_is_repaired_through_the_link_that_session_proved() {
         ticked.problems
     );
 }
+
+#[test]
+fn a_tick_brings_a_changed_managed_copy_from_the_store_to_the_machine() {
+    let temp = TempDir::new("tick-managed");
+    let pair = two_machines(&temp);
+    let config_dir = temp.dir("claude");
+    let engine = pair.mac.parent().expect("engine dir").to_path_buf();
+
+    // Both copies agree, and one tick records that agreement as the base.
+    fs::write(config_dir.join("CLAUDE.md"), b"shared rules\n").expect("local");
+    write_commit(&pair.mac, "config/CLAUDE.md", "shared rules\n", "rules");
+    let first = tick(&pair.mac, &temp);
+    assert!(first.problems.is_empty(), "{:?}", first.problems);
+    assert!(
+        engine.join("managed-state.json").is_file(),
+        "the base of the agreement is remembered beside the engine's other states"
+    );
+
+    // The other machine changes the store's copy. Only the store moved, so it wins whole.
+    // (It first takes what the tick above pushed, as a real second machine would have.)
+    git(&pair.other, &["pull", "--quiet", "origin", "main"]);
+    write_commit(
+        &pair.other,
+        "config/CLAUDE.md",
+        "shared rules\nand one more\n",
+        "theirs",
+    );
+    git(&pair.other, &["push", "--quiet", "origin", "main"]);
+    let second = tick(&pair.mac, &temp);
+    assert!(second.problems.is_empty(), "{:?}", second.problems);
+    assert!(
+        second.merged,
+        "the other machine's commit must have arrived first"
+    );
+    assert_eq!(
+        second.managed.pulled,
+        vec!["CLAUDE.md".to_owned()],
+        "{:?}",
+        second.managed
+    );
+    assert_eq!(
+        fs::read_to_string(config_dir.join("CLAUDE.md")).expect("read"),
+        "shared rules\nand one more\n",
+        "what another machine changed is what the CLI reads here now"
+    );
+}

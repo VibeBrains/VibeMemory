@@ -53,7 +53,11 @@ fn a_fresh_machine_needs_every_step_it_can_have() {
         match action.step {
             // A file neither the machine nor the store has is nothing to manage, and saying
             // otherwise would make install repeat the same no-op for ever.
-            Step::ManagedCopy { .. } => assert_eq!(action.state, State::Satisfied),
+            // A missing settings file likewise holds no flag that switches the cache off, so
+            // that step, too, is already satisfied.
+            Step::ManagedCopy { .. } | Step::PromptCacheEnv => {
+                assert_eq!(action.state, State::Satisfied);
+            }
             _ => assert_eq!(action.state, State::Missing, "{action:?}"),
         }
     }
@@ -604,4 +608,58 @@ fn a_signed_binary_is_not_mistaken_for_a_different_build() {
         &State::Missing,
         "an older build is still replaced"
     );
+}
+
+#[test]
+fn a_flag_that_switches_the_prompt_cache_off_is_named_as_a_conflict() {
+    use vibememory_cli::install::cache_killing_flags;
+
+    let temp = TempDir::new("install-cache-flags");
+    let layout = layout(&temp);
+    let step = Step::PromptCacheEnv;
+
+    // The flag is set: every machine this file reaches pays for it in usage limits.
+    fs::write(
+        layout.config_dir.join("settings.json"),
+        r#"{"env":{"DISABLE_PROMPT_CACHING":"1","EDITOR":"vim"}}"#,
+    )
+    .expect("write");
+    match state_of(&plan(&layout, &config(), &[]), &step) {
+        State::Conflict { found } => assert!(
+            found.contains("DISABLE_PROMPT_CACHING=1"),
+            "the flag must be named, not just counted: {found}"
+        ),
+        other => panic!("a set flag is a conflict, got {other:?}"),
+    }
+
+    // Left in place but turned off: not a finding. Reporting it would teach people to delete the
+    // line instead of reading it.
+    fs::write(
+        layout.config_dir.join("settings.json"),
+        r#"{"env":{"DISABLE_PROMPT_CACHING":"0","FORCE_PROMPT_CACHING_5M":"false"}}"#,
+    )
+    .expect("write");
+    assert_eq!(
+        state_of(&plan(&layout, &config(), &[]), &step),
+        &State::Satisfied
+    );
+
+    // The pure decision, for the shapes the step reads: per-model switches count, the shortener
+    // counts, unrelated variables do not, and the list is sorted so the message is stable.
+    let flags = cache_killing_flags(&serde_json::json!({
+        "env": {
+            "FORCE_PROMPT_CACHING_5M": "1",
+            "DISABLE_PROMPT_CACHING_OPUS": "true",
+            "CLAUDE_CODE_PROMPT_CACHE_TTL": "1h",
+            "ENABLE_PROMPT_CACHING_1H": "1"
+        }
+    }));
+    assert_eq!(
+        flags,
+        vec![
+            "DISABLE_PROMPT_CACHING_OPUS=true".to_owned(),
+            "FORCE_PROMPT_CACHING_5M=1".to_owned()
+        ]
+    );
+    assert!(cache_killing_flags(&serde_json::json!({})).is_empty());
 }

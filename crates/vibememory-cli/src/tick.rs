@@ -56,6 +56,8 @@ pub struct Ticked {
     /// Sessions dropped from this machine's live list because nothing has confirmed them for
     /// longer than a machine that crashed would take to come back.
     pub stale_sessions: Vec<String>,
+    /// What happened to the managed copies of `CLAUDE.md` and `settings.json`.
+    pub managed: crate::managed::Reconciled,
     /// Desktop cards published to the outbox.
     pub cards_out: usize,
     /// Desktop cards written into the local Desktop store.
@@ -179,6 +181,21 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
             roots,
             naming,
         ));
+
+    // Before `config/` is committed, so that what this machine changed in its managed copies is
+    // in the store when the commit looks — and after the merge above, so that what another
+    // machine changed is what gets pulled.
+    match crate::managed::reconcile(
+        &crate::install::Layout {
+            config_dir: config_dir.to_path_buf(),
+            engine_dir: engine_dir_of(store),
+        },
+        store,
+        stamp,
+    ) {
+        Ok(managed) => result.managed = managed,
+        Err(problem) => result.problems.push(problem),
+    }
 
     match commit_shared_files(store, &live, stamp) {
         Ok(files) => result.shared_files_committed = files,

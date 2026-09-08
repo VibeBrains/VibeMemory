@@ -871,6 +871,23 @@ fn report_tick(ticked: &vibememory_cli::tick::Ticked) {
     for project in &ticked.projected_memory {
         println!("memory projected: {project}");
     }
+    let managed = &ticked.managed;
+    if !managed.pushed.is_empty() || !managed.pulled.is_empty() || !managed.conflicting.is_empty() {
+        println!(
+            "managed copies: {} pushed, {} pulled, {} conflicting{}",
+            managed.pushed.len(),
+            managed.pulled.len(),
+            managed.conflicting.len(),
+            if managed.conflicting.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " ({}; this machine's version is in the quarantine)",
+                    managed.conflicting.join(", ")
+                )
+            }
+        );
+    }
     if ticked.cards_out > 0
         || ticked.cards_in > 0
         || ticked.cards_repaired > 0

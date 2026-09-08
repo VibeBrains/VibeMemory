@@ -23,6 +23,7 @@ pub mod git;
 pub mod hook;
 pub mod install;
 pub mod links_file;
+pub mod managed;
 pub mod memory;
 pub mod merge_driver;
 pub mod merge_report;
