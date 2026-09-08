@@ -55,6 +55,9 @@ pub struct RawConfig {
     pub roots: BTreeMap<String, String>,
     /// Where the Desktop descriptors live.
     pub desktop_store: DesktopStore,
+    /// Code signing identity for the installed binary, e.g. `VibeMemory Local`. Optional, and
+    /// meaningful on macOS only.
+    pub signing_identity: Option<String>,
     /// `nameOverrides` and `ignoreCwd`, validated by the core.
     #[serde(flatten)]
     pub naming: RawNamingConfig,
@@ -97,6 +100,13 @@ pub struct Config {
     pub roots: BTreeMap<String, String>,
     /// Where the Desktop descriptors live.
     pub desktop_store: DesktopStore,
+    /// The code signing identity to sign the installed binary with, when the owner made one.
+    ///
+    /// macOS grants access to a removable volume, and to everything else it guards, to a
+    /// *signature*, not to a path. An ad-hoc signed binary has a different identity after every
+    /// rebuild, so every rebuild asks the owner for permission again. A stable self-signed
+    /// identity is asked once.
+    pub signing_identity: Option<String>,
     /// Validated naming rules.
     pub naming: NamingConfig,
 }
@@ -135,6 +145,17 @@ impl Config {
         {
             return Err(ConfigError::Missing { field: "remote" });
         }
+        // A declared identity must name something: an empty string would make every install run
+        // `codesign --sign ""`, which fails in a way that looks like a broken build.
+        if raw
+            .signing_identity
+            .as_deref()
+            .is_some_and(|identity| identity.trim().is_empty())
+        {
+            return Err(ConfigError::Missing {
+                field: "signingIdentity",
+            });
+        }
         let mut roots = BTreeMap::new();
         for (name, path) in raw.roots {
             let canonical = vibememory_core::naming::canonical_cwd(&path, syntax);
@@ -148,6 +169,9 @@ impl Config {
             remote: raw.remote,
             roots,
             desktop_store: raw.desktop_store,
+            signing_identity: raw
+                .signing_identity
+                .map(|identity| identity.trim().to_owned()),
             naming: NamingConfig::from_raw(&raw.naming)?,
         })
     }

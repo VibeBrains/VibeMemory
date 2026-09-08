@@ -105,6 +105,12 @@ pub enum Step {
     /// A copy of this binary under the engine directory, so hooks and the scheduler survive a
     /// rebuild or a `cargo clean` of wherever it was built.
     Binary,
+    /// The installed binary signed with the owner's own identity, so macOS stops asking for the
+    /// same permission after every rebuild.
+    BinarySigned {
+        /// The identity `codesign` is asked for, e.g. `VibeMemory Local`.
+        identity: String,
+    },
     /// The store's own files committed, so a clone starts with them.
     ScaffoldCommitted {
         /// Whose `machines/<id>` directory belongs to the scaffolding.
@@ -133,6 +139,7 @@ impl Step {
             Self::Hooks => "hooks in settings.json".to_owned(),
             Self::ScaffoldCommitted { .. } => "store scaffolding committed".to_owned(),
             Self::Binary => "engine binary in place".to_owned(),
+            Self::BinarySigned { identity } => format!("engine binary signed by {identity}"),
             Self::ProjectLink { enc, name } => format!("link {enc} -> projects/{name}"),
         }
     }
@@ -238,6 +245,18 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
         step: Step::Binary,
         state: binary_state(layout),
     });
+    // Signing is macOS's answer to "why does it ask me again after every rebuild"; elsewhere the
+    // question does not exist, so neither does the step.
+    if cfg!(target_os = "macos")
+        && let Some(identity) = config.signing_identity.as_deref()
+    {
+        actions.push(Action {
+            step: Step::BinarySigned {
+                identity: identity.to_owned(),
+            },
+            state: signature_state(&installed_binary(layout), identity),
+        });
+    }
     actions.push(Action {
         step: Step::Hooks,
         state: hooks_state(layout),
@@ -480,6 +499,7 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
         ),
         Step::Schedule => install_schedule(layout),
         Step::Binary => install_binary(layout),
+        Step::BinarySigned { identity } => sign_binary(&installed_binary(layout), identity),
         Step::Hooks => write_hooks(layout),
         Step::ScaffoldCommitted { machine_id } => {
             commit_scaffolding(&store, &scaffolding_paths(machine_id))
@@ -1036,4 +1056,71 @@ fn scaffolding_state(store: &Path, machine_id: &str) -> State {
         },
         Err(reason) => State::Unknown { reason },
     }
+}
+
+/// The identity a binary is signed by, as `codesign` reports it, or `None` when it is unsigned
+/// or ad-hoc signed.
+///
+/// `codesign -dvv` writes its report to stderr, and says `Signature=adhoc` for a binary that has
+/// no identity of its own — which is exactly the case this whole step exists for: an ad-hoc
+/// signature changes with every rebuild, and every rebuild is a new application as far as the
+/// permission database is concerned.
+#[must_use]
+pub fn signing_authority(report: &str) -> Option<String> {
+    // The first `Authority=` and not the last: a real certificate prints its whole chain, signer
+    // first, and the issuers below it are not who signed this binary. An ad-hoc signature prints
+    // no Authority at all (checked against `codesign -dvv` on this machine), which is exactly
+    // what makes it useless here — its identity changes with every rebuild.
+    report
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Authority="))
+        .map(|authority| authority.trim().to_owned())
+}
+
+/// Whether the installed binary already carries the identity the owner asked for.
+fn signature_state(binary: &Path, wanted: &str) -> State {
+    if !binary.exists() {
+        return State::Missing;
+    }
+    match read_signature(binary) {
+        Err(reason) => State::Unknown { reason },
+        Ok(None) => State::Missing,
+        Ok(Some(found)) if found == wanted => State::Satisfied,
+        Ok(Some(found)) => State::Conflict { found },
+    }
+}
+
+/// Asks `codesign` who signed a binary.
+fn read_signature(binary: &Path) -> Result<Option<String>, String> {
+    let output = std::process::Command::new("codesign")
+        .args(["-dvv", "--"])
+        .arg(binary)
+        .output()
+        .map_err(|error| format!("codesign could not be run: {error}"))?;
+    if !output.status.success() {
+        // An unsigned binary makes codesign fail; that is an answer, not a failure to answer.
+        return Ok(None);
+    }
+    Ok(signing_authority(&String::from_utf8_lossy(&output.stderr)))
+}
+
+/// Signs the installed binary with the owner's identity.
+///
+/// # Errors
+///
+/// What `codesign` said. A missing identity is the usual cause, and the message names it.
+fn sign_binary(binary: &Path, identity: &str) -> Result<(), String> {
+    let output = std::process::Command::new("codesign")
+        .args(["--force", "--sign", identity, "--"])
+        .arg(binary)
+        .output()
+        .map_err(|error| format!("codesign could not be run: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "codesign refused: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    // Signing rewrites the file, so the same rule as the copy applies: prove it still runs.
+    binary_runs(binary)
 }

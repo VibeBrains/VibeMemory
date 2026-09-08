@@ -490,3 +490,42 @@ fn a_binary_that_cannot_run_is_not_reported_as_installed() {
         "a binary that exits 3 must not pass: {state:?}"
     );
 }
+
+#[test]
+fn a_signature_is_read_from_what_codesign_actually_prints() {
+    use vibememory_cli::install::signing_authority;
+
+    // The real report of a self-signed identity, as codesign writes it to stderr.
+    let signed = "Executable=/tmp/engine/bin/vibememory\n\
+                  Identifier=vibememory\n\
+                  CodeDirectory v=20400 size=26520 flags=0x0(none) hashes=825+0\n\
+                  Signature size=1234\n\
+                  Authority=VibeMemory Local\n\
+                  Timestamp=8 Sep 2026\n";
+    assert_eq!(
+        signing_authority(signed).as_deref(),
+        Some("VibeMemory Local")
+    );
+
+    // A certificate prints its whole chain, signer first. The issuers below are not who signed
+    // this binary — taking the last of them would name Apple for every developer's build.
+    let chain = "Signature size=4567\n\
+                 Authority=Developer ID Application: Owner (TEAMID)\n\
+                 Authority=Developer ID Certification Authority\n\
+                 Authority=Apple Root CA\n";
+    assert_eq!(
+        signing_authority(chain).as_deref(),
+        Some("Developer ID Application: Owner (TEAMID)")
+    );
+
+    // Ad-hoc: the case the whole step exists for. Verified against `codesign -dvv` on this
+    // machine — an ad-hoc signature prints no Authority line at all, and its identity changes
+    // with every rebuild, which is why it can never satisfy the step.
+    let adhoc = "Executable=/tmp/engine/bin/vibememory\n\
+                 CodeDirectory v=20400 size=26520 flags=0x20002(adhoc,linker-signed)\n\
+                 Signature=adhoc\n\
+                 Info.plist=not bound\n";
+    assert_eq!(signing_authority(adhoc), None);
+
+    assert_eq!(signing_authority(""), None);
+}
