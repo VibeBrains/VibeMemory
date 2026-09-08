@@ -174,7 +174,12 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
     result
         .imported_directories
         .append(&mut import_real_directories(
-            store, config_dir, roots, naming,
+            store,
+            config_dir,
+            &engine_dir_of(store),
+            stamp,
+            roots,
+            naming,
         ));
 
     match commit_project_files(store, &live, stamp) {
@@ -724,6 +729,8 @@ fn belongs_to_live_session(path: &str, live: &BTreeSet<String>) -> bool {
 fn import_real_directories(
     store: &Path,
     config_dir: &Path,
+    engine_dir: &Path,
+    stamp: &str,
     roots: &Roots,
     naming: &vibememory_core::naming::NamingConfig,
 ) -> Vec<String> {
@@ -763,9 +770,15 @@ fn import_real_directories(
         };
         // A refusal means a live session somewhere, or a path this build does not handle: the
         // hook already said so, and the next tick tries again.
-        if let Ok(outcome) =
-            crate::relink::import_real_directory(config_dir, store, &enc, name.as_str(), &portable)
-        {
+        if let Ok(outcome) = crate::relink::import_real_directory(
+            config_dir,
+            store,
+            &enc,
+            name.as_str(),
+            &portable,
+            engine_dir,
+            stamp,
+        ) {
             imported.push(format!(
                 "{enc} -> projects/{} ({} file(s))",
                 name.as_str(),
@@ -956,4 +969,12 @@ fn record_local_links(store: &Path, config_dir: &Path, machine_id: &str, roots: 
         let _ = crate::links_file::forget(store, machine_id, &enc);
     }
     recorded
+}
+
+/// The engine directory that owns this store: the store always lives at `<engine>/store`, so its
+/// parent is the answer, and the tick does not need it threaded through every call.
+fn engine_dir_of(store: &Path) -> std::path::PathBuf {
+    store
+        .parent()
+        .map_or_else(|| store.to_path_buf(), Path::to_path_buf)
 }

@@ -115,7 +115,16 @@ fn a_real_directory_is_copied_into_the_store_and_replaced_by_a_link() {
     fs::write(real.join("session.jsonl"), b"{\"uuid\":\"one\"}\n").expect("write");
     fs::write(real.join("memory").join("note.md"), b"a note\n").expect("write");
 
-    let imported = import_real_directory(&config_dir, &store, ENC, "Project", CWD).expect("import");
+    let imported = import_real_directory(
+        &config_dir,
+        &store,
+        ENC,
+        "Project",
+        CWD,
+        &temp.dir("engine"),
+        "2026-09-08T00-00-00Z",
+    )
+    .expect("import");
     assert_eq!(imported.copied.len(), 2, "{:?}", imported.copied);
 
     let target = store.join("projects").join("Project");
@@ -147,7 +156,16 @@ fn a_file_the_store_already_has_is_not_overwritten_by_the_local_copy() {
     fs::create_dir_all(&target).expect("dirs");
     fs::write(target.join("session.jsonl"), b"merged from two machines\n").expect("write");
 
-    let imported = import_real_directory(&config_dir, &store, ENC, "Project", CWD).expect("import");
+    let imported = import_real_directory(
+        &config_dir,
+        &store,
+        ENC,
+        "Project",
+        CWD,
+        &temp.dir("engine"),
+        "2026-09-08T00-00-00Z",
+    )
+    .expect("import");
     assert_eq!(imported.kept, vec!["session.jsonl".to_owned()]);
     assert_eq!(
         fs::read(target.join("session.jsonl")).expect("read"),
@@ -166,8 +184,16 @@ fn a_real_directory_is_not_imported_under_a_live_session() {
     fs::write(real.join("session.jsonl"), b"being written right now\n").expect("write");
     mark_live(&store, "mac-test", "session-1", CWD);
 
-    let refusal =
-        import_real_directory(&config_dir, &store, ENC, "Project", CWD).expect_err("must refuse");
+    let refusal = import_real_directory(
+        &config_dir,
+        &store,
+        ENC,
+        "Project",
+        CWD,
+        &temp.dir("engine"),
+        "2026-09-08T00-00-00Z",
+    )
+    .expect_err("must refuse");
     assert!(matches!(refusal, Refusal::SessionLive { .. }));
     assert!(
         real.join("session.jsonl").exists(),
@@ -182,7 +208,63 @@ fn asking_to_import_a_link_says_so_instead_of_doing_something_surprising() {
     let store = temp.dir("store");
     make_link(&config_dir, &store.join("projects").join("Project"));
 
-    let refusal =
-        import_real_directory(&config_dir, &store, ENC, "Project", CWD).expect_err("must refuse");
+    let refusal = import_real_directory(
+        &config_dir,
+        &store,
+        ENC,
+        "Project",
+        CWD,
+        &temp.dir("engine"),
+        "2026-09-08T00-00-00Z",
+    )
+    .expect_err("must refuse");
     assert!(matches!(refusal, Refusal::NotApplicable { .. }));
+}
+
+#[test]
+fn a_local_file_that_differs_from_the_store_is_set_aside_not_destroyed() {
+    let temp = TempDir::new("import-quarantine");
+    let config_dir = temp.dir("claude");
+    let store = temp.dir("store");
+    let engine = temp.dir("engine");
+    let real = config_dir.join("projects").join(ENC);
+    fs::create_dir_all(real.join("memory")).expect("dirs");
+    // The local version is the newer one: this session wrote it, the store's copy is older.
+    fs::write(
+        real.join("memory").join("MEMORY.md"),
+        "the newer local index\n",
+    )
+    .expect("write");
+    let target = store.join("projects").join("Project");
+    fs::create_dir_all(target.join("memory")).expect("dirs");
+    fs::write(
+        target.join("memory").join("MEMORY.md"),
+        "the older store copy\n",
+    )
+    .expect("write");
+
+    let imported = import_real_directory(
+        &config_dir,
+        &store,
+        ENC,
+        "Project",
+        CWD,
+        &engine,
+        "2026-09-08T00-00-00Z",
+    )
+    .expect("import");
+
+    assert_eq!(
+        fs::read_to_string(target.join("memory").join("MEMORY.md")).expect("read"),
+        "the older store copy\n",
+        "the store's version still wins: it came through a merge"
+    );
+    assert_eq!(imported.quarantined.len(), 1, "{imported:?}");
+    let waiting = vibememory_cli::memory::quarantined(&engine);
+    assert_eq!(waiting.len(), 1, "{waiting:?}");
+    let saved = fs::read_to_string(engine.join("quarantine").join(&waiting[0])).expect("read");
+    assert_eq!(
+        saved, "the newer local index\n",
+        "the directory is deleted right after the copy, so a discarded version is gone for ever"
+    );
 }

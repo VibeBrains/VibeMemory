@@ -122,6 +122,8 @@ pub struct Imported {
     pub copied: Vec<String>,
     /// Files already in the store under the same name, left as they were.
     pub kept: Vec<String>,
+    /// Local versions that differed from the store's and were set aside instead of destroyed.
+    pub quarantined: Vec<String>,
 }
 
 /// Copies a real `projects/<enc>` directory into the store and puts a link in its place.
@@ -139,6 +141,8 @@ pub fn import_real_directory(
     enc: &str,
     name: &str,
     portable_cwd: &str,
+    engine_dir: &Path,
+    stamp: &str,
 ) -> Result<Imported, Refusal> {
     let real = config_dir.join("projects").join(enc);
     let metadata = std::fs::symlink_metadata(&real).map_err(|_| Refusal::NothingThere)?;
@@ -153,7 +157,7 @@ pub fn import_real_directory(
 
     let target = store.join("projects").join(name);
     let mut imported = Imported::default();
-    copy_into(&real, &target, "", &mut imported)
+    copy_into(&real, &target, "", &mut imported, engine_dir, stamp)
         .map_err(|found| Refusal::NotApplicable { found })?;
 
     // The directory goes only after every file is in the store: a crash halfway must leave the
@@ -167,7 +171,14 @@ pub fn import_real_directory(
 
 /// Copies a tree, never over a file the store already has: what is there arrived through a merge
 /// and knows more than this machine's copy.
-fn copy_into(from: &Path, to: &Path, prefix: &str, imported: &mut Imported) -> Result<(), String> {
+fn copy_into(
+    from: &Path,
+    to: &Path,
+    prefix: &str,
+    imported: &mut Imported,
+    engine_dir: &Path,
+    stamp: &str,
+) -> Result<(), String> {
     std::fs::create_dir_all(to).map_err(|error| error.to_string())?;
     let entries = std::fs::read_dir(from).map_err(|error| error.to_string())?;
     for entry in entries.filter_map(Result::ok) {
@@ -179,8 +190,26 @@ fn copy_into(from: &Path, to: &Path, prefix: &str, imported: &mut Imported) -> R
         };
         let target = to.join(&name);
         if entry.path().is_dir() {
-            copy_into(&entry.path(), &target, &relative, imported)?;
+            copy_into(
+                &entry.path(),
+                &target,
+                &relative,
+                imported,
+                engine_dir,
+                stamp,
+            )?;
         } else if target.exists() {
+            // The store's version wins — it came through a merge and knows more. But the local
+            // one is not simply dropped: the directory is deleted right after this, so a
+            // discarded version is gone for ever. That is exactly how this project's own memory
+            // index was lost on 2026-09-07. A differing local version goes to the quarantine.
+            let ours = std::fs::read(entry.path()).unwrap_or_default();
+            let theirs = std::fs::read(&target).unwrap_or_default();
+            if ours != theirs {
+                let saved = format!("{}-{stamp}", relative.replace('/', "-"));
+                let path = crate::memory::quarantine(engine_dir, &saved, &ours)?;
+                imported.quarantined.push(path.display().to_string());
+            }
             imported.kept.push(relative);
         } else {
             std::fs::copy(entry.path(), &target).map_err(|error| error.to_string())?;

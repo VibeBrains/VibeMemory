@@ -777,12 +777,16 @@ fn relink_command(args: &[String], import: bool) -> ExitCode {
             enc,
             name,
             &portable,
+            &layout.engine_dir,
+            &vibememory_cli::clock::now(),
         ) {
             Ok(imported) => {
                 println!(
-                    "imported {} file(s) into projects/{name}; {} already in the store",
+                    "imported {} file(s) into projects/{name}; {} already in the store, {} set \
+                     aside in the quarantine",
                     imported.copied.len(),
-                    imported.kept.len()
+                    imported.kept.len(),
+                    imported.quarantined.len()
                 );
                 ExitCode::SUCCESS
             }
