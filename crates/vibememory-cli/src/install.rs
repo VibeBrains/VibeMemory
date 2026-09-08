@@ -241,9 +241,11 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
         ),
     });
     // The binary first: the hooks and the scheduler name it.
+    let binary = binary_state(layout);
+    let binary_will_be_replaced = matches!(binary, State::Missing);
     actions.push(Action {
         step: Step::Binary,
-        state: binary_state(layout),
+        state: binary,
     });
     // Signing is macOS's answer to "why does it ask me again after every rebuild"; elsewhere the
     // question does not exist, so neither does the step.
@@ -254,7 +256,10 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
             step: Step::BinarySigned {
                 identity: identity.to_owned(),
             },
-            state: signature_state(&installed_binary(layout), identity),
+            state: signing_state(
+                binary_will_be_replaced,
+                signature_state(&installed_binary(layout), identity),
+            ),
         });
     }
     actions.push(Action {
@@ -660,14 +665,49 @@ pub fn installed_binary(layout: &Layout) -> PathBuf {
     layout.engine_dir.join("bin").join("vibememory")
 }
 
-/// Whether the installed copy is this binary, byte for byte.
+/// The note beside the installed binary saying which build it was copied from.
+///
+/// Needed because the installed file stops being byte-identical to its source the moment it is
+/// signed: signing rewrites the binary. Without the note every `install` and every `doctor` on a
+/// signing machine finds a difference, replaces the binary under the running hooks and signs it
+/// again — for ever, and for nothing.
+fn source_note(layout: &Layout) -> PathBuf {
+    layout.engine_dir.join("bin").join("vibememory.source")
+}
+
+/// Whether the installed copy is this build.
 fn binary_state(layout: &Layout) -> State {
     let Ok(this) = std::env::current_exe().and_then(std::fs::read) else {
         return State::Unknown {
             reason: "this binary could not be read".to_owned(),
         };
     };
-    match std::fs::read(installed_binary(layout)) {
+    let installed = installed_binary(layout);
+    if !installed.exists() {
+        return State::Missing;
+    }
+    // The engine running from its own installed path is, by definition, installed. Without this
+    // the check compares the signed copy against the note that records its unsigned source and
+    // declares every `doctor` a missing step — the engine reporting itself uninstalled while
+    // running.
+    if let (Ok(running), Ok(there)) = (
+        std::env::current_exe().and_then(std::fs::canonicalize),
+        std::fs::canonicalize(&installed),
+    ) && running == there
+    {
+        return State::Satisfied;
+    }
+    let wanted = crate::sha256::hex(&this);
+    // The note is the answer whenever it exists; the byte comparison stays as the fallback for a
+    // machine that never signs and for an engine installed before the note existed.
+    if let Ok(noted) = std::fs::read_to_string(source_note(layout)) {
+        return if noted.trim() == wanted {
+            State::Satisfied
+        } else {
+            State::Missing
+        };
+    }
+    match std::fs::read(&installed) {
         Ok(there) if there == this => State::Satisfied,
         Ok(_) => State::Missing, // an older build: replaced, never kept
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => State::Missing,
@@ -702,6 +742,11 @@ fn install_binary(layout: &Layout) -> Result<(), String> {
     // Only when we installed ourselves. `current_exe` is whatever is running — in the test suite
     // that is the test harness, and asking a harness for `--version` proves nothing about the
     // engine. In production the two names are the same file name, and the check runs.
+    // Which build this copy came from, so the next plan does not mistake a signature for a
+    // different build. Written after the rename: a note without its binary would be a lie.
+    let source_bytes = std::fs::read(&source).map_err(|e| e.to_string())?;
+    std::fs::write(source_note(layout), crate::sha256::hex(&source_bytes))
+        .map_err(|e| e.to_string())?;
     if source.file_name() == target.file_name() {
         binary_runs(&target)
     } else {
@@ -1087,6 +1132,22 @@ fn signature_state(binary: &Path, wanted: &str) -> State {
         Ok(None) => State::Missing,
         Ok(Some(found)) if found == wanted => State::Satisfied,
         Ok(Some(found)) => State::Conflict { found },
+    }
+}
+
+/// What the signing step has to do, given whether the binary is about to be replaced.
+///
+/// The whole plan is computed before any of it is applied, so the signature read off the disk
+/// answers about a binary that is about to stop existing. A replaced binary is always unsigned
+/// afterwards — the copy does not carry the signature over — so the step is owed regardless of
+/// what the old file said, including when the old file carried somebody else's signature: that
+/// conflict goes away with the file.
+#[must_use]
+pub fn signing_state(binary_will_be_replaced: bool, found: State) -> State {
+    if binary_will_be_replaced {
+        State::Missing
+    } else {
+        found
     }
 }
 

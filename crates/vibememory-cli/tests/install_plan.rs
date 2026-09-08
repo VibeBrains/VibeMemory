@@ -529,3 +529,79 @@ fn a_signature_is_read_from_what_codesign_actually_prints() {
 
     assert_eq!(signing_authority(""), None);
 }
+
+#[test]
+fn signing_follows_the_copy_whatever_the_old_file_said() {
+    use vibememory_cli::install::signing_state;
+
+    // The old build is properly signed — and is about to be replaced by a copy that carries no
+    // signature at all. Asking the file on disk answers about a binary that stops existing, and
+    // the engine then runs unsigned until somebody happens to install a second time.
+    assert_eq!(
+        signing_state(true, State::Satisfied),
+        State::Missing,
+        "a replaced binary is unsigned afterwards, whatever the old one carried"
+    );
+    // Even somebody else's signature is not a conflict once the file it was on is gone.
+    assert_eq!(
+        signing_state(
+            true,
+            State::Conflict {
+                found: "Somebody Else".to_owned()
+            }
+        ),
+        State::Missing
+    );
+    // Nothing is being replaced: the answer about the file on disk is the answer.
+    assert_eq!(signing_state(false, State::Satisfied), State::Satisfied);
+    assert_eq!(
+        signing_state(
+            false,
+            State::Conflict {
+                found: "Somebody Else".to_owned()
+            }
+        ),
+        State::Conflict {
+            found: "Somebody Else".to_owned()
+        }
+    );
+}
+
+#[test]
+fn a_signed_binary_is_not_mistaken_for_a_different_build() {
+    let temp = TempDir::new("install-signed-idempotent");
+    let layout = layout(&temp);
+    let config = config();
+
+    // Install once: the note beside the binary records which build it came from.
+    let actions = plan(&layout, &config, &[]);
+    let applied = apply(&layout, &actions, false);
+    assert!(applied.failed.is_empty(), "{:?}", applied.failed);
+    let installed = layout.engine_dir.join("bin").join("vibememory");
+    assert!(installed.is_file(), "the binary is in place");
+
+    // Signing rewrites the binary — here, any change to its bytes stands for that. Byte
+    // comparison would now report a different build, replace it under the running hooks and sign
+    // it again, on this and on every later run.
+    fs::write(&installed, b"same build, signed: different bytes").expect("sign");
+
+    assert_eq!(
+        state_of(&plan(&layout, &config, &[]), &Step::Binary),
+        &State::Satisfied,
+        "a signature is not a different build"
+    );
+
+    // A genuinely different build is still replaced: the note is what changed, not the rule.
+    // (The engine running from its own installed path is a separate case, covered by `doctor`
+    // on a real machine: `current_exe` in this suite is the test harness, never the engine.)
+    fs::write(
+        layout.engine_dir.join("bin").join("vibememory.source"),
+        "0000000000000000000000000000000000000000000000000000000000000000",
+    )
+    .expect("note of an older build");
+    assert_eq!(
+        state_of(&plan(&layout, &config, &[]), &Step::Binary),
+        &State::Missing,
+        "an older build is still replaced"
+    );
+}
