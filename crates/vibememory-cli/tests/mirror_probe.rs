@@ -3,7 +3,9 @@
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
-use vibememory_cli::mirror::{Mirror, host_of, read_probe, repo_name, url_in_hook, verdict};
+use vibememory_cli::mirror::{
+    Mirror, hook_script, host_of, read_hook_answer, repo_name, url_in_hook, verdict,
+};
 
 #[test]
 fn only_an_ssh_remote_can_be_asked() {
@@ -32,12 +34,12 @@ fn only_an_ssh_remote_can_be_asked() {
 #[test]
 fn the_hook_names_the_repository_and_the_comment_does_not() {
     let hook = "#!/usr/bin/env bash\n\
-                # Mirrors every push. git push --mirror 'githubMirror:decoy/decoy.git'\n\
+                # Mirrors every push. git push --mirror 'storeMirror:decoy/decoy.git'\n\
                 set -euo pipefail\n\
-                git push --mirror 'githubMirror:VibeBrains/VibeMemoryStore.git' >/dev/null 2>&1\n";
+                git push --mirror 'storeMirror:VibeBrains/VibeMemoryStore.git' >/dev/null 2>&1\n";
     assert_eq!(
         url_in_hook(hook).as_deref(),
-        Some("githubMirror:VibeBrains/VibeMemoryStore.git")
+        Some("storeMirror:VibeBrains/VibeMemoryStore.git")
     );
     assert_eq!(
         url_in_hook("#!/usr/bin/env bash\nexit 0\n"),
@@ -49,7 +51,7 @@ fn the_hook_names_the_repository_and_the_comment_does_not() {
 #[test]
 fn a_repository_name_survives_any_host_alias() {
     assert_eq!(
-        repo_name("githubMirror:VibeBrains/Store.git"),
+        repo_name("storeMirror:VibeBrains/Store.git"),
         "VibeBrains/Store"
     );
     assert_eq!(repo_name("git@gitlab.com:team/store.git"), "team/store");
@@ -84,29 +86,120 @@ fn heads_decide_the_verdict() {
 
 #[test]
 fn the_hosts_answer_is_read_back() {
-    assert_eq!(read_probe("NOHOOK\n"), Mirror::NotConfigured);
-    assert!(!Mirror::NotConfigured.is_fault(), "a mirror is optional");
+    // No hook: a mirror is optional, so the answer carries no URL and nothing is at fault.
+    let answer = read_hook_answer("HEAD 610d531\nNOHOOK\n");
+    assert_eq!(answer.head, "610d531");
+    assert_eq!(answer.url, None);
 
-    let answer = "URL githubMirror:VibeBrains/VibeMemoryStore.git\n\
-                  HOST 610d531ac67d64fb12f95a9cead8422dffded887\n\
-                  MIRROR 610d531ac67d64fb12f95a9cead8422dffded887\n";
-    match read_probe(answer) {
-        Mirror::InSync { repo, .. } => assert_eq!(repo, "VibeBrains/VibeMemoryStore"),
-        other => panic!("expected in sync, got {other:?}"),
-    }
-
-    let behind = "URL githubMirror:VibeBrains/VibeMemoryStore.git\n\
-                  HOST 610d531ac67d64fb12f95a9cead8422dffded887\n\
-                  MIRROR 4ab7be0152df289f9367b6275675e3dd3deedd00\n";
-    assert!(
-        read_probe(behind).is_fault(),
-        "a stale backup must be named"
+    let with_hook = "HEAD 610d531ac67d64fb12f95a9cead8422dffded887\n\
+                     HOOK\n\
+                     #!/usr/bin/env bash\n\
+                     set -euo pipefail\n\
+                     git push --mirror 'storeMirror:VibeBrains/VibeMemoryStore.git' >/dev/null 2>&1\n";
+    let answer = read_hook_answer(with_hook);
+    assert_eq!(answer.head, "610d531ac67d64fb12f95a9cead8422dffded887");
+    assert_eq!(
+        answer.url.as_deref(),
+        Some("storeMirror:VibeBrains/VibeMemoryStore.git")
     );
-    assert!(read_probe(behind).describe().contains("DIVERGED"));
 
-    // Garbage, or an ssh that printed a banner: unknown, never "in sync".
-    assert!(matches!(
-        read_probe("Welcome to Ubuntu\n"),
-        Mirror::Unknown { .. }
-    ));
+    // An ssh banner ahead of the answer must not become a head.
+    let noisy = read_hook_answer("Welcome to Ubuntu\nHEAD abc1234\nNOHOOK\n");
+    assert_eq!(noisy.head, "abc1234");
+}
+
+#[test]
+fn the_question_asked_of_the_host_names_the_branch_and_the_path() {
+    let script = hook_script("vibememory/store.git", "main");
+    assert!(script.contains("$HOME/vibememory/store.git/hooks/post-receive"));
+    assert!(script.contains("rev-parse main"));
+    // The host prints the hook; it must not try to read it.
+    assert!(
+        !script.contains("grep"),
+        "parsing belongs to url_in_hook, not to the shell"
+    );
+}
+
+#[test]
+fn the_probe_asks_twice_and_only_when_there_is_something_to_ask() {
+    use std::cell::RefCell;
+    use vibememory_cli::mirror::probe;
+
+    let asked: RefCell<Vec<String>> = RefCell::new(Vec::new());
+    let hook = "HEAD aaa1111\nHOOK\ngit push --mirror 'storeMirror:o/n.git'\n";
+    let mirror = probe(Some("vibememory:store.git"), "main", |host, script| {
+        asked.borrow_mut().push(host.to_owned());
+        Ok(if script.contains("ls-remote") {
+            "aaa1111\n".to_owned()
+        } else {
+            hook.to_owned()
+        })
+    });
+    assert_eq!(
+        asked.borrow().len(),
+        2,
+        "hook first, then the mirror's head"
+    );
+    assert!(matches!(mirror, Mirror::InSync { .. }));
+
+    // No hook: the second question is never asked, because there is nothing to ask about.
+    let asked = RefCell::new(0_usize);
+    let mirror = probe(Some("vibememory:store.git"), "main", |_, _| {
+        *asked.borrow_mut() += 1;
+        Ok("HEAD aaa1111\nNOHOOK\n".to_owned())
+    });
+    assert_eq!(*asked.borrow(), 1);
+    assert_eq!(mirror, Mirror::NotConfigured);
+
+    // No remote at all: the host is never contacted.
+    let mirror = probe(None, "main", |_, _| panic!("must not ask anyone"));
+    assert_eq!(mirror, Mirror::NoHost);
+
+    // The host unreachable is unknown, never "in sync", and never a fault of the mirror.
+    let mirror = probe(Some("vibememory:store.git"), "main", |_, _| {
+        Err("ssh: connect timed out".to_owned())
+    });
+    assert!(matches!(mirror, Mirror::Unknown { .. }));
+    assert!(!mirror.is_fault());
+}
+
+#[test]
+fn the_daily_check_comes_due_and_survives_a_clock_that_went_backwards() {
+    use vibememory_cli::mirror::{CHECK_INTERVAL, check_due};
+
+    assert!(check_due(None, 1_000), "never asked means ask now");
+    assert!(!check_due(Some(1_000), 1_000 + CHECK_INTERVAL - 1));
+    assert!(check_due(Some(1_000), 1_000 + CHECK_INTERVAL));
+    // A clock that jumped back would otherwise silence the check for as long as the jump lasted.
+    assert!(check_due(Some(5_000), 1_000));
+}
+
+#[test]
+fn only_a_stale_backup_is_worth_waking_a_session_for() {
+    use vibememory_cli::mirror::session_note;
+
+    let stale = verdict("o/n", "aaa1111", "bbb2222");
+    let note = session_note(&stale).expect("a stale backup is news");
+    assert!(
+        note.contains("o/n"),
+        "the note names the repository: {note}"
+    );
+    assert!(
+        !note.contains("mirror   "),
+        "the doctor's column has no place in a sentence"
+    );
+
+    assert_eq!(session_note(&verdict("o/n", "aaa1111", "aaa1111")), None);
+    assert_eq!(
+        session_note(&Mirror::NotConfigured),
+        None,
+        "absence is a choice"
+    );
+    assert_eq!(
+        session_note(&Mirror::Unknown {
+            reason: "ssh".to_owned()
+        }),
+        None,
+        "an unreachable host is not a broken backup"
+    );
 }

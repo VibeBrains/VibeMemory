@@ -198,6 +198,26 @@ pub fn save_pending(engine_dir: &Path, routed: &Routed) -> Result<(), String> {
     std::fs::write(&path, text.as_bytes()).map_err(|error| error.to_string())
 }
 
+/// Adds one note to what is waiting for a session, without a merge behind it.
+///
+/// The tick has things to say that no merge produced — a backup that stopped following the host,
+/// for one — and they wait in the same place, so a session hears them all at once.
+///
+/// # Errors
+///
+/// The text of what went wrong.
+pub fn add_pending(engine_dir: &Path, note: &str) -> Result<(), String> {
+    let mut waiting = read_pending(engine_dir);
+    if waiting.iter().any(|existing| existing == note) {
+        return Ok(());
+    }
+    waiting.push(note.to_owned());
+    std::fs::create_dir_all(engine_dir).map_err(|error| error.to_string())?;
+    let text = serde_json::to_string_pretty(&waiting).map_err(|error| error.to_string())?;
+    std::fs::write(engine_dir.join(PENDING_FILE), text.as_bytes())
+        .map_err(|error| error.to_string())
+}
+
 /// Notes waiting to be said to a session.
 #[must_use]
 pub fn read_pending(engine_dir: &Path) -> Vec<String> {

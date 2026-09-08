@@ -152,47 +152,107 @@ pub fn repo_name(url: &str) -> String {
 /// and it talks to two networks in turn — the host, then GitHub from the host.
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(25);
 
-/// The one command asked of the host: the hook's text, the local head, and the mirror's head.
+/// What is asked of the host first: the hook's text and the head it holds.
 ///
-/// Kept as one round trip on purpose — three separate ssh sessions would cost three handshakes
-/// and could observe three different moments.
+/// The hook is printed, not parsed here: the rule for reading it lives in [`url_in_hook`], under
+/// a gate. A `grep` in this string would be a second implementation of the same format — the one
+/// that actually runs, and the only one nothing tests.
 #[must_use]
-pub fn probe_script(path: &str, branch: &str) -> String {
+pub fn hook_script(path: &str, branch: &str) -> String {
     format!(
         "hook=$HOME/{path}/hooks/post-receive; \
-         [ -f \"$hook\" ] || {{ echo NOHOOK; exit 0; }}; \
-         url=$(grep -o \"push --mirror '[^']*'\" \"$hook\" | head -1 | cut -d\\' -f2); \
-         [ -n \"$url\" ] || {{ echo NOHOOK; exit 0; }}; \
-         echo \"URL $url\"; \
-         echo \"HOST $(git -C $HOME/{path} rev-parse {branch} 2>/dev/null)\"; \
-         echo \"MIRROR $(git ls-remote \"$url\" {branch} 2>/dev/null | cut -f1)\""
+         echo \"HEAD $(git -C $HOME/{path} rev-parse {branch} 2>/dev/null)\"; \
+         [ -f \"$hook\" ] && {{ echo HOOK; cat \"$hook\"; }} || echo NOHOOK"
     )
 }
 
-/// Reads what [`probe_script`] printed.
+/// What is asked of the host second, once [`url_in_hook`] has named the mirror: the head the
+/// mirror holds. Only the host has the key, so only the host can ask.
 #[must_use]
-pub fn read_probe(output: &str) -> Mirror {
-    if output.lines().any(|line| line.trim() == "NOHOOK") {
-        return Mirror::NotConfigured;
+pub fn remote_head_script(url: &str, branch: &str) -> String {
+    format!("git ls-remote '{url}' {branch} 2>/dev/null | cut -f1")
+}
+
+/// The head and the mirror's URL, as read from what [`hook_script`] printed.
+#[must_use]
+pub fn read_hook_answer(output: &str) -> HookAnswer {
+    let head = output
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("HEAD "))
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_owned();
+    let hook = output.split_once("HOOK\n").map(|(_, rest)| rest);
+    HookAnswer {
+        head,
+        url: hook.and_then(url_in_hook),
     }
-    let field = |name: &str| {
-        output
-            .lines()
-            .find_map(|line| line.trim().strip_prefix(name))
-            .map(str::trim)
-            .unwrap_or_default()
-            .to_owned()
-    };
-    let url = field("URL ");
-    if url.is_empty() {
-        return Mirror::Unknown {
-            reason: "хост не назвал репозиторий зеркала".to_owned(),
-        };
-    }
-    verdict(&repo_name(&url), &field("HOST "), &field("MIRROR "))
+}
+
+/// What the host said about itself.
+#[derive(Debug, PartialEq, Eq)]
+pub struct HookAnswer {
+    /// The head of the store's branch on the host.
+    pub head: String,
+    /// The mirror's URL, when a mirror hook is installed.
+    pub url: Option<String>,
 }
 
 /// The first seven characters of a hash, or the whole word when it is not one.
 fn short(head: &str) -> &str {
     head.get(..7).unwrap_or(head)
+}
+
+/// How often the tick asks about the mirror. A backup that rots is found by asking, and asking
+/// on every tick would mean two ssh round trips every few minutes for a question whose answer
+/// changes at most as often as a push.
+pub const CHECK_INTERVAL: i64 = 24 * 60 * 60;
+
+/// Whether the periodic check is due, given when it last ran.
+///
+/// A clock that jumped backwards (machines disagree, and one of them is always wrong) makes the
+/// check due rather than never due again: an early question costs one ssh, a skipped one costs
+/// the backup.
+#[must_use]
+pub const fn check_due(last_checked: Option<i64>, now: i64) -> bool {
+    match last_checked {
+        None => true,
+        Some(last) => now < last || now - last >= CHECK_INTERVAL,
+    }
+}
+
+/// Asks the host about its mirror, using `run` to reach it.
+///
+/// The two questions are separate because only the host holds the key to the mirror: the first
+/// asks what the hook says, the second asks the mirror itself, through the host.
+pub fn probe<F>(remote: Option<&str>, branch: &str, mut run: F) -> Mirror
+where
+    F: FnMut(&str, &str) -> Result<String, String>,
+{
+    let Some(host) = remote.and_then(host_of) else {
+        return Mirror::NoHost;
+    };
+    let answer = match run(host.ssh, &hook_script(host.path, branch)) {
+        Ok(text) => read_hook_answer(&text),
+        Err(reason) => return Mirror::Unknown { reason },
+    };
+    let Some(url) = answer.url else {
+        return Mirror::NotConfigured;
+    };
+    match run(host.ssh, &remote_head_script(&url, branch)) {
+        Ok(head) => verdict(&repo_name(&url), &answer.head, &head),
+        Err(reason) => Mirror::Unknown { reason },
+    }
+}
+
+/// What a session is told when the backup stopped following the host. Said once a day at most,
+/// and only about a fault: a mirror that is merely absent is a choice, not news.
+#[must_use]
+pub fn session_note(mirror: &Mirror) -> Option<String> {
+    mirror.is_fault().then(|| {
+        format!(
+            "VibeMemory: \u{440}\u{435}\u{437}\u{435}\u{440}\u{432}\u{43d}\u{430}\u{44f} \u{43a}\u{43e}\u{43f}\u{438}\u{44f} \u{43e}\u{442}\u{441}\u{442}\u{430}\u{43b}\u{430} \u{43e}\u{442} \u{445}\u{43e}\u{441}\u{442}\u{430} \u{2014} {}",
+            mirror.describe().trim_start_matches("mirror   ")
+        )
+    })
 }

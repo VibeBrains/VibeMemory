@@ -21,7 +21,9 @@ use crate::links_file::{self, Observation};
 /// waiting: the tick runs in the background.
 const TIMEOUT: Duration = Duration::from_mins(2);
 /// The branch the store lives on.
-const BRANCH: &str = "main";
+/// The store's one branch. Public because `doctor` asks the host about the same branch the tick
+/// pushes, and two constants spelling "main" would drift apart on the day it is renamed.
+pub const BRANCH: &str = "main";
 /// Where the store's own commits go.
 const REMOTE: &str = "origin";
 

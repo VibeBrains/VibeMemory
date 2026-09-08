@@ -74,7 +74,8 @@ ssh-add --apple-use-keychain ~/.ssh/id_ed25519_vibememory
 
 ```sh
 gh repo create <owner>/<name> --private   # или тем же в UI GitLab/Gitea — главное, пустым
-./infra/mirrorSetup.sh --repo <owner>/<name>
+./infra/mirrorSetup.sh --repo <owner>/<name>          # github.com
+./infra/mirrorSetup.sh --repo <owner>/<name> --host gitlab.com
 ```
 
 Скрипт заводит на сервере отдельный ключ `~/.ssh/githubMirror` и ssh-алиас `githubMirror`
@@ -89,7 +90,8 @@ gh repo create <owner>/<name> --private   # или тем же в UI GitLab/Gite
 Не GitHub: единственный зависящий от провайдера шаг — регистрация deploy-ключа. GitLab — deploy
 key с `can_push=true`, Gitea — снять «Read only», свой сервер — строка в `authorized_keys`.
 Остальное не меняется; `--repo` принимает `owner/name`, а адрес хоста берётся из алиаса
-`githubMirror` в `~/.ssh/config` на сервере.
+`storeMirror` в `~/.ssh/config` на сервере, а сам хостинг задаётся флагом `--host`
+(по умолчанию `github.com`).
 
 **Проверка — фактом:** `vibememory doctor` печатает строку зеркала и падает, если голова зеркала
 разошлась с головой хоста. Подробности и грабли —

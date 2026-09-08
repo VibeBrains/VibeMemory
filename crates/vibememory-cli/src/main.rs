@@ -37,8 +37,8 @@ const CONFIG_DIR_VAR: &str = "CLAUDE_CONFIG_DIR";
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
-        Some("status") => report(false),
-        Some("doctor") => report(true),
+        Some("status") => report(false, wants_json(&args.collect::<Vec<String>>())),
+        Some("doctor") => report(true, wants_json(&args.collect::<Vec<String>>())),
         Some("install") => {
             let dry_run = args.any(|arg| arg == "--dry-run");
             install(dry_run)
@@ -102,7 +102,7 @@ fn read_config(layout: &Layout) -> Result<Config, String> {
 
 /// `status` prints where the machine stands; `doctor` does the same and fails when something is
 /// not as it must be.
-fn report(strict: bool) -> ExitCode {
+fn report(strict: bool, json: bool) -> ExitCode {
     let layout = layout();
     let config = match read_config(&layout) {
         Ok(config) => config,
@@ -112,6 +112,11 @@ fn report(strict: bool) -> ExitCode {
         }
     };
     let actions = plan(&layout, &config, &[]);
+    // The mirror lives on the host and is asked over the network, so only `doctor` pays for it.
+    let mirror = strict.then(|| probe_mirror(&config));
+    if json {
+        return report_json(&config, &actions, mirror.as_ref(), strict);
+    }
     let mut wrong = 0;
     for action in &actions {
         let mark = match &action.state {
@@ -136,9 +141,7 @@ fn report(strict: bool) -> ExitCode {
             _ => {}
         }
     }
-    // The mirror lives on the host and is asked over the network, so only `doctor` pays for it.
-    if strict {
-        let mirror = probe_mirror(&config);
+    if let Some(mirror) = &mirror {
         println!("{}", mirror.describe());
         if mirror.is_fault() {
             wrong += 1;
@@ -750,6 +753,12 @@ fn tick_command() -> ExitCode {
         ),
     );
     report_tick(&ticked);
+    // Once a day, ask whether the backup still follows the host. Nobody runs `doctor` on a
+    // schedule, so without this a mirror could stop following the day after it was set up and
+    // nothing would ever say so.
+    if let Some(note) = mirror_watch(&layout, &config) {
+        println!("{note}");
+    }
     if ticked.problems.is_empty() {
         ExitCode::SUCCESS
     } else {
@@ -1135,33 +1144,155 @@ fn handoff_note(layout: &Layout, enc: &EncSlug) -> Option<String> {
 }
 
 /// Asks the host whether its backup mirror still holds what the host holds.
-///
-/// The branch is the store's one branch, the same constant the tick pushes.
 fn probe_mirror(config: &Config) -> vibememory_cli::mirror::Mirror {
-    use vibememory_cli::mirror::{Mirror, PROBE_TIMEOUT, host_of, probe_script, read_probe};
+    vibememory_cli::mirror::probe(
+        config.remote.as_deref(),
+        vibememory_cli::tick::BRANCH,
+        ask_host,
+    )
+}
 
-    let Some(host) = config.remote.as_deref().and_then(host_of) else {
-        return Mirror::NoHost;
-    };
-    let mut command = std::process::Command::new("ssh");
-    command
-        .args([
-            "-o",
-            "BatchMode=yes",
-            host.ssh,
-            &probe_script(host.path, STORE_BRANCH),
-        ])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    match vibememory_cli::git::run_with_timeout(command, PROBE_TIMEOUT) {
-        Ok(Some(text)) => read_probe(&text),
-        Ok(None) => Mirror::Unknown {
-            reason: "хост ответил ошибкой на запрос о зеркале".to_owned(),
-        },
-        Err(reason) => Mirror::Unknown { reason },
+/// One question put to the host over ssh.
+fn ask_host(host: &str, script: &str) -> Result<String, String> {
+    match vibememory_cli::git::run_with_timeout(
+        ssh_command(host, script),
+        vibememory_cli::mirror::PROBE_TIMEOUT,
+    ) {
+        Ok(Some(text)) => Ok(text),
+        Ok(None) => Err("\u{445}\u{43e}\u{441}\u{442} \u{43e}\u{442}\u{432}\u{435}\u{442}\u{438}\u{43b} \u{43e}\u{448}\u{438}\u{431}\u{43a}\u{43e}\u{439}".to_owned()),
+        Err(reason) => Err(reason),
     }
 }
 
-/// The store's one branch, as the tick pushes it.
-const STORE_BRANCH: &str = "main";
+/// An ssh command that never asks the human anything: `doctor` may run from a launchd tick where
+/// there is nobody to answer a passphrase prompt.
+fn ssh_command(host: &str, script: &str) -> std::process::Command {
+    let mut command = std::process::Command::new("ssh");
+    command
+        .args(["-o", "BatchMode=yes", host, script])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    command
+}
+
+/// The daily mirror check: asks the host, tells the next session when the backup fell behind,
+/// and returns the line for this run's log.
+///
+/// A network failure does not count as an answer — the timer is not reset, so the question is
+/// asked again on the next tick instead of a day later.
+fn mirror_watch(layout: &Layout, config: &Config) -> Option<String> {
+    use vibememory_cli::mirror::{Mirror, check_due, probe, session_note};
+
+    let now = epoch_seconds_signed();
+    let state = MirrorState::read(&layout.engine_dir);
+    if !check_due(state.last_checked, now) {
+        return None;
+    }
+    let mirror = probe(
+        config.remote.as_deref(),
+        vibememory_cli::tick::BRANCH,
+        ask_host,
+    );
+    if matches!(mirror, Mirror::Unknown { .. }) {
+        return Some(mirror.describe());
+    }
+    let _ = MirrorState {
+        last_checked: Some(now),
+    }
+    .write(&layout.engine_dir);
+    if let Some(note) = session_note(&mirror) {
+        // The tick has no session to talk to; the note waits for one, next to the merge notes.
+        let _ = vibememory_cli::merge_report::add_pending(&layout.engine_dir, &note);
+    }
+    Some(mirror.describe())
+}
+
+/// When the mirror was last asked about, kept next to the engine's other small states.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MirrorState {
+    last_checked: Option<i64>,
+}
+
+impl MirrorState {
+    const FILE: &'static str = "mirror-state.json";
+
+    fn read(engine_dir: &std::path::Path) -> Self {
+        std::fs::read_to_string(engine_dir.join(Self::FILE))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    fn write(&self, engine_dir: &std::path::Path) -> Result<(), String> {
+        let text = serde_json::to_string_pretty(self).map_err(|error| error.to_string())?;
+        std::fs::write(engine_dir.join(Self::FILE), text).map_err(|error| error.to_string())
+    }
+}
+
+/// Whether the caller wants the machine-readable form.
+fn wants_json(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--json")
+}
+
+/// `status`/`doctor` for something that is not a person: a monitor, a dashboard, a script.
+///
+/// The exit code is the same as the human form's, so a check can use either.
+fn report_json(
+    config: &Config,
+    actions: &[vibememory_cli::install::Action],
+    mirror: Option<&vibememory_cli::mirror::Mirror>,
+    strict: bool,
+) -> ExitCode {
+    use vibememory_cli::mirror::Mirror;
+
+    let steps: Vec<serde_json::Value> = actions
+        .iter()
+        .map(|action| {
+            let (state, detail) = match &action.state {
+                State::Satisfied => ("ok", None),
+                State::Missing => ("missing", None),
+                State::Conflict { found } => ("conflict", Some(found.clone())),
+                State::Unknown { reason } => ("unknown", Some(reason.clone())),
+            };
+            serde_json::json!({ "step": action.step.describe(), "state": state, "detail": detail })
+        })
+        .collect();
+    let wrong = actions
+        .iter()
+        .filter(|action| !matches!(action.state, State::Satisfied))
+        .count();
+    let mirror_value = mirror.map(|mirror| match mirror {
+        Mirror::NoHost => serde_json::json!({ "state": "noHost" }),
+        Mirror::NotConfigured => serde_json::json!({ "state": "notConfigured" }),
+        Mirror::InSync { repo, head } => {
+            serde_json::json!({ "state": "inSync", "repo": repo, "head": head })
+        }
+        Mirror::Diverged { repo, host, mirror } => serde_json::json!({
+            "state": "diverged", "repo": repo, "hostHead": host, "mirrorHead": mirror
+        }),
+        Mirror::Unknown { reason } => serde_json::json!({ "state": "unknown", "reason": reason }),
+    });
+    let failed = wrong > 0 || mirror.is_some_and(Mirror::is_fault);
+    let report = serde_json::json!({
+        "machineId": config.machine_id,
+        "remote": config.remote,
+        "steps": steps,
+        "stepsWrong": wrong,
+        "mirror": mirror_value,
+        "ok": !failed,
+    });
+    match serde_json::to_string_pretty(&report) {
+        Ok(text) => println!("{text}"),
+        Err(error) => {
+            eprintln!("report: {error}");
+            return ExitCode::from(2);
+        }
+    }
+    if strict && failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Creates the store's bare repository on the host, and optionally a post-receive hook that
-# mirrors every push to a private GitHub repository.
+# mirrors every push to a private repository at any git host.
 #
 # Runs on the OWNER'S machine over the key seeded by seedKey.sh; the server side is a single
 # ssh session with a here-document, so nothing has to be copied there first.
@@ -26,11 +26,11 @@ usage() {
 Завести bare-репозиторий стора на сервере.
 
   ./infra/hostBootstrap.sh [--alias vibememory] [--path vibememory/store.git]
-                           [--branch main] [--mirror git@github.com:owner/repo.git]
+                           [--branch main] [--mirror storeMirror:owner/repo.git]
 
   --mirror  необязателен: если задан, ставится хук post-receive, который после каждого push
-            делает `git push --mirror` в этот репозиторий. Ключ для GitHub должен уже лежать
-            на сервере (см. docs/manuals/hostSetup.md).
+            делает `git push --mirror` в этот репозиторий. Ключ и ssh-алиас на сервере заводит
+            ./infra/mirrorSetup.sh — вызывать этот скрипт с --mirror руками обычно не нужно.
 
 Переменные окружения: VIBEMEMORY_SSH_ALIAS, VIBEMEMORY_REPO_PATH, VIBEMEMORY_BRANCH,
 VIBEMEMORY_MIRROR.
