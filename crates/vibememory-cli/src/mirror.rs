@@ -7,6 +7,9 @@
 
 use std::time::Duration;
 
+/// The column `doctor` prints the mirror in, aligned with the install steps beside it.
+const COLUMN: &str = "mirror   ";
+
 /// Where the store's host lives, as written in `config.json`'s `remote`.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Host<'a> {
@@ -51,7 +54,12 @@ pub fn url_in_hook(hook: &str) -> Option<String> {
                 .and_then(|rest| rest.split('"').next())
         })
         .or_else(|| rest.split_whitespace().next())?;
-    (!url.is_empty()).then(|| url.to_owned())
+    // The URL is handed back to the host inside a shell command, so anything that could end the
+    // quoting or start something else is not a URL as far as this function is concerned. A hook
+    // written by hand with a space in the path fails loudly here instead of quietly running.
+    let safe = !url.is_empty()
+        && !url.contains(['\'', '"', '`', '$', ';', '&', '|', '\n', '\r', ' ', '\t']);
+    safe.then(|| url.to_owned())
 }
 
 /// What the probe found.
@@ -85,24 +93,28 @@ pub enum Mirror {
 }
 
 impl Mirror {
-    /// One line for `status` and `doctor`, in the same shape as the install steps.
+    /// What is wrong or right, as a sentence — without the column `doctor` prints it in.
     #[must_use]
-    pub fn describe(&self) -> String {
+    pub fn summary(&self) -> String {
         match self {
-            Self::NoHost => "mirror   no ssh remote in config — nothing to mirror from".to_owned(),
+            Self::NoHost => "no ssh remote in config \u{2014} nothing to mirror from".to_owned(),
             Self::NotConfigured => {
-                "mirror   not configured — ./infra/mirrorSetup.sh --repo owner/name".to_owned()
+                "not configured \u{2014} ./infra/mirrorSetup.sh --repo owner/name".to_owned()
             }
-            Self::InSync { repo, head } => {
-                format!("mirror   {repo} in sync at {}", short(head))
-            }
+            Self::InSync { repo, head } => format!("{repo} in sync at {}", short(head)),
             Self::Diverged { repo, host, mirror } => format!(
-                "mirror   {repo} DIVERGED — host {}, mirror {}",
+                "{repo} DIVERGED \u{2014} host {}, mirror {}",
                 short(host),
                 short(mirror)
             ),
-            Self::Unknown { reason } => format!("mirror   unknown — {reason}"),
+            Self::Unknown { reason } => format!("unknown \u{2014} {reason}"),
         }
+    }
+
+    /// One line for `status` and `doctor`, in the same shape as the install steps.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        format!("{COLUMN}{}", self.summary())
     }
 
     /// Whether `doctor` should fail on this. A missing mirror is a choice; a mirror that stopped
@@ -247,12 +259,15 @@ where
 
 /// What a session is told when the backup stopped following the host. Said once a day at most,
 /// and only about a fault: a mirror that is merely absent is a choice, not news.
+///
+/// English, like every other note the engine hands a session — one voice, whatever the reader's
+/// own language is.
 #[must_use]
 pub fn session_note(mirror: &Mirror) -> Option<String> {
     mirror.is_fault().then(|| {
         format!(
-            "VibeMemory: \u{440}\u{435}\u{437}\u{435}\u{440}\u{432}\u{43d}\u{430}\u{44f} \u{43a}\u{43e}\u{43f}\u{438}\u{44f} \u{43e}\u{442}\u{441}\u{442}\u{430}\u{43b}\u{430} \u{43e}\u{442} \u{445}\u{43e}\u{441}\u{442}\u{430} \u{2014} {}",
-            mirror.describe().trim_start_matches("mirror   ")
+            "VibeMemory: the backup mirror fell behind the host \u{2014} {}.",
+            mirror.summary()
         )
     })
 }

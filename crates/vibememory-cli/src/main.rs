@@ -63,19 +63,21 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
-        Some(other) => {
-            eprintln!("unknown command {other:?}; try status, doctor or install");
-            ExitCode::from(2)
-        }
-        None => {
+        // `--version` is what every other tool answers to, and the engine is asked it by
+        // scripts, by `doctor` on the other machine, and by a human wondering which build is in
+        // `~/.vibememory/bin` after an upgrade.
+        Some("--version" | "-V" | "version") => {
             println!("vibememory {}", env!("CARGO_PKG_VERSION"));
-            println!(
-                "commands: status, doctor, install [--dry-run], hook <event>, \
-                 merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>, tick, \
-                 relink <enc> <name> <cwd>, import <enc> <name> <cwd>, \
-                 migrate --from <dir> [--apply], switch --from <dir> [--apply|--rollback]"
-            );
             ExitCode::SUCCESS
+        }
+        // Nothing, or a request for help: the same page either way.
+        None | Some("--help" | "-h" | "help") => {
+            usage();
+            ExitCode::SUCCESS
+        }
+        Some(other) => {
+            eprintln!("unknown command {other:?}; try status, doctor, install or --help");
+            ExitCode::from(2)
         }
     }
 }
@@ -1295,4 +1297,15 @@ fn report_json(
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// What the engine answers to, printed for a human who asked for nothing in particular.
+fn usage() {
+    println!("vibememory {}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "commands: status [--json], doctor [--json], install [--dry-run], hook <event>, \
+         merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>, tick, \
+         relink <enc> <name> <cwd>, import <enc> <name> <cwd>, \
+         migrate --from <dir> [--apply], switch --from <dir> [--apply|--rollback], --version"
+    );
 }

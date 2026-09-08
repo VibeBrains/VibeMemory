@@ -121,10 +121,23 @@ fi
 
 hook="$HOME/$repoPath/hooks/post-receive"
 if [ -n "$mirror" ]; then
+  # Detached on purpose. A post-receive hook runs while the client still holds the push open, so
+  # a synchronous mirror push makes every machine wait for the provider — and a slow or wedged
+  # provider would stall the tick that started it. The mirror is a backup: it may lag by seconds.
+  # `flock` keeps a burst of pushes from starting a pile of uploads of the same repository; a
+  # skipped run costs nothing, because the next push mirrors the same refs anyway.
   wanted="#!/usr/bin/env bash
-# Mirrors every push to the private GitHub copy. Written by infra/hostBootstrap.sh.
+# Mirrors every push to the private copy, in the background. Written by infra/hostBootstrap.sh.
 set -euo pipefail
-git push --mirror '$mirror' >/dev/null 2>&1 || echo 'vibememory: зеркало недоступно, пуш принят' >&2
+log=\"\$HOME/vibememory-mirror.log\"
+(
+  if command -v flock >/dev/null 2>&1; then
+    flock -n 9 || exit 0
+  fi
+  git push --mirror '$mirror' >>\"\$log\" 2>&1 ||
+    echo \"vibememory: зеркало недоступно \$(date -u +%FT%TZ)\" >>\"\$log\"
+) 9>\"\$HOME/.vibememory-mirror.lock\" &
+disown 2>/dev/null || true
 "
   if [ -f "$hook" ] && [ "$(cat "$hook")" = "$wanted" ]; then
     echo "5/5 Хук зеркала уже стоит и совпадает"

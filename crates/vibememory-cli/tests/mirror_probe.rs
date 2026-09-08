@@ -203,3 +203,45 @@ fn only_a_stale_backup_is_worth_waking_a_session_for() {
         "an unreachable host is not a broken backup"
     );
 }
+
+#[test]
+fn a_url_that_could_be_a_command_is_not_a_url() {
+    // Whatever is in the hook goes back to the host inside a shell command. A hook edited by hand
+    // must fail loudly here, not run quietly.
+    for hostile in [
+        "git push --mirror 'a$(whoami)'",
+        "git push --mirror 'a`id`'",
+        "git push --mirror 'two words'",
+        "git push --mirror 'a|b'",
+        "git push --mirror ''",
+    ] {
+        assert_eq!(
+            url_in_hook(hostile),
+            None,
+            "must refuse to hand back: {hostile}"
+        );
+    }
+    // A hook that continues after the quoted URL cannot smuggle the rest through: quoting ends
+    // the URL, and what comes out is inert on its way back to the host.
+    assert_eq!(
+        url_in_hook("git push --mirror 'a'; rm -rf ~'").as_deref(),
+        Some("a")
+    );
+
+    // The ordinary form still passes.
+    assert_eq!(
+        url_in_hook("git push --mirror 'storeMirror:o/n.git'").as_deref(),
+        Some("storeMirror:o/n.git")
+    );
+}
+
+#[test]
+fn the_column_belongs_to_the_report_and_not_to_the_sentence() {
+    let mirror = verdict("o/n", "aaa1111", "bbb2222");
+    assert!(mirror.describe().starts_with("mirror   "));
+    assert_eq!(
+        mirror.describe().strip_prefix("mirror   "),
+        Some(mirror.summary().as_str())
+    );
+    assert!(!mirror.summary().starts_with(' '));
+}

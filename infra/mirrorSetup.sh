@@ -144,7 +144,13 @@ else
   say ""
   say "$pubkey"
   say ""
-  read -r -p "     Нажмите Enter, когда ключ добавлен: " _
+  # In a pipeline, a cron job or another script there is nobody to press Enter, and a script that
+  # blocks forever is worse than one that says what is missing and stops.
+  if [ -t 0 ]; then
+    read -r -p "     Нажмите Enter, когда ключ добавлен: " _
+  else
+    fail "Ключ не зарегистрирован, а спросить некого (не интерактивный запуск). Добавьте ключ и запустите снова."
+  fi
 fi
 
 ssh -o BatchMode=yes "$sshAlias" "ssh -o BatchMode=yes -T $HOST_ALIAS 2>&1 | grep -q '$repo'" ||
