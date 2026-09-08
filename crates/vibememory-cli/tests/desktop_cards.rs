@@ -18,7 +18,7 @@ use std::fs;
 use std::path::Path;
 
 use support::TempDir;
-use vibememory_cli::desktop_store::{OUTBOX_DIR, import, publish, repair};
+use vibememory_cli::desktop_store::{OUTBOX_DIR, fold_conflict_copies, import, publish, repair};
 use vibememory_core::desktop::roots::Roots;
 use vibememory_core::naming::PathSyntax;
 
@@ -346,5 +346,84 @@ fn a_card_desktop_marked_unavailable_is_repaired_from_this_machines_own_shadow()
     assert!(
         fixed.contains("\"title\": \"a card\""),
         "fields this build does not interpret must survive a repair too: {fixed}"
+    );
+}
+
+const COPY: &str = "local_67c711c9-GPD-WIN-MAX2.json";
+const STAMP: &str = "2026-09-08T12:00:00Z";
+
+#[test]
+fn a_conflict_copy_gives_up_its_transcript_and_leaves_the_sidebar() {
+    let temp = TempDir::new("cards-fold");
+    let desktop = temp.dir("desktop");
+    let engine = temp.dir("engine");
+    let projects = temp.dir("Projects");
+    let project = projects.join("VibeIDE");
+    fs::create_dir_all(&project).expect("dirs");
+    let nested = desktop.join(CARD_DIR);
+    fs::create_dir_all(&nested).expect("nested");
+    let cwd = project.display().to_string();
+
+    // Desktop erased the handle on the original; the cloud client's copy still carries it. The
+    // copy can never be repaired itself — its name has a machine suffix, so no outbox holds a
+    // shadow of it — and it sits in the sidebar as a second, permanently broken card.
+    fs::write(nested.join(CARD), card(&cwd, None, true)).expect("broken original");
+    fs::write(nested.join(COPY), card(&cwd, Some(CLI_SESSION), false)).expect("copy");
+
+    let folded = fold_conflict_copies(&desktop, &engine, STAMP, &|id| {
+        (id == CLI_SESSION).then(|| format!("/x/.claude/projects/-p/{id}.jsonl"))
+    })
+    .expect("fold");
+
+    assert_eq!(folded.set_aside, vec![COPY.to_owned()]);
+    assert_eq!(folded.repaired, vec![CARD.to_owned()]);
+    assert!(
+        !nested.join(COPY).exists(),
+        "the duplicate must leave the sidebar"
+    );
+    let fixed = fs::read_to_string(nested.join(CARD)).expect("read");
+    assert!(
+        fixed.contains(CLI_SESSION) && !fixed.contains("transcriptUnavailable"),
+        "what the copy knew must reach the card that stays: {fixed}"
+    );
+    // Set aside, never deleted: it is another machine's version of that card.
+    let waiting: Vec<_> = fs::read_dir(engine.join("quarantine"))
+        .expect("quarantine")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(waiting.len(), 1, "{waiting:?}");
+    assert!(waiting[0].starts_with(COPY), "{waiting:?}");
+}
+
+#[test]
+fn a_copy_whose_original_is_gone_is_the_card_itself() {
+    let temp = TempDir::new("cards-fold-orphan");
+    let desktop = temp.dir("desktop");
+    let engine = temp.dir("engine");
+    let projects = temp.dir("Projects");
+    let nested = desktop.join(CARD_DIR);
+    fs::create_dir_all(&nested).expect("nested");
+    fs::write(
+        nested.join(COPY),
+        card(
+            &projects.join("VibeIDE").display().to_string(),
+            Some(CLI_SESSION),
+            false,
+        ),
+    )
+    .expect("copy");
+
+    let folded = fold_conflict_copies(&desktop, &engine, STAMP, &|_| None).expect("fold");
+
+    assert_eq!(folded.adopted, vec![(COPY.to_owned(), CARD.to_owned())]);
+    assert!(
+        nested.join(CARD).is_file() && !nested.join(COPY).exists(),
+        "a copy of nothing is not a duplicate — it is the session's only card"
+    );
+    assert!(
+        folded.set_aside.is_empty(),
+        "and nothing is set aside: {:?}",
+        folded.set_aside
     );
 }

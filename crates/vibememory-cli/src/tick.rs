@@ -63,6 +63,9 @@ pub struct Ticked {
     /// Desktop cards of this machine repaired from its own outbox: Desktop erases the transcript
     /// handle and never restores it, so nothing else would ever take the mark back.
     pub cards_repaired: usize,
+    /// A cloud client's conflict copies folded back into the cards they duplicate: set aside in
+    /// the quarantine, or renamed into place when the card they copied is not there at all.
+    pub cards_folded: usize,
     /// What this machine put into its outbox for the others.
     pub published: crate::outbox::Moved,
     /// What it took from theirs.
@@ -153,25 +156,7 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
     }
 
     if let Some(desktop) = desktop_store {
-        match crate::desktop_store::publish(desktop, store, machine_id, roots) {
-            Ok(cards) => result.cards_out = cards.exported.len(),
-            Err(problem) => result.problems.push(problem),
-        }
-        let confirmed = confirmed_directories(store, machine_id);
-        match crate::desktop_store::import(desktop, store, machine_id, roots, &|id| {
-            confirmed_transcript(&confirmed, id)
-        }) {
-            Ok(cards) => result.cards_in = cards.imported.len(),
-            Err(problem) => result.problems.push(problem),
-        }
-        // After the exchange, not before: a card repaired from a shadow the same tick just
-        // published is repaired from the freshest version this machine has.
-        match crate::desktop_store::repair(desktop, store, machine_id, &|id| {
-            confirmed_transcript(&confirmed, id)
-        }) {
-            Ok(cards) => result.cards_repaired = cards.len(),
-            Err(problem) => result.problems.push(problem),
-        }
+        exchange_cards(desktop, store, machine_id, roots, stamp, &mut result);
     }
 
     match project_memory(store, machine_id, stamp) {
@@ -596,6 +581,47 @@ fn symlink_dir(target: &Path, link: &Path) -> Result<(), String> {
     #[cfg(windows)]
     {
         std::os::windows::fs::symlink_dir(target, link).map_err(|error| error.to_string())
+    }
+}
+
+/// One round of Desktop's cards: publish, bring in, repair, fold. In that order — see each step.
+fn exchange_cards(
+    desktop: &Path,
+    store: &Path,
+    machine_id: &str,
+    roots: &Roots,
+    stamp: &str,
+    result: &mut Ticked,
+) {
+    match crate::desktop_store::publish(desktop, store, machine_id, roots) {
+        Ok(cards) => result.cards_out = cards.exported.len(),
+        Err(problem) => result.problems.push(problem),
+    }
+    let confirmed = confirmed_directories(store, machine_id);
+    match crate::desktop_store::import(desktop, store, machine_id, roots, &|id| {
+        confirmed_transcript(&confirmed, id)
+    }) {
+        Ok(cards) => result.cards_in = cards.imported.len(),
+        Err(problem) => result.problems.push(problem),
+    }
+    // After the exchange, not before: a card repaired from a shadow the same tick just published
+    // is repaired from the freshest version this machine has.
+    match crate::desktop_store::repair(desktop, store, machine_id, &|id| {
+        confirmed_transcript(&confirmed, id)
+    }) {
+        Ok(cards) => result.cards_repaired = cards.len(),
+        Err(problem) => result.problems.push(problem),
+    }
+    // Last: a copy folded before the exchange would take its knowledge out of reach of the repair
+    // above, and a copy folded after it has already given everything it had.
+    match crate::desktop_store::fold_conflict_copies(desktop, &engine_dir_of(store), stamp, &|id| {
+        confirmed_transcript(&confirmed, id)
+    }) {
+        Ok(folded) => {
+            result.cards_repaired += folded.repaired.len();
+            result.cards_folded = folded.set_aside.len() + folded.adopted.len();
+        }
+        Err(problem) => result.problems.push(problem),
     }
 }
 

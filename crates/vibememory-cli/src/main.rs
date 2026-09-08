@@ -846,10 +846,14 @@ fn report_tick(ticked: &vibememory_cli::tick::Ticked) {
     for project in &ticked.projected_memory {
         println!("memory projected: {project}");
     }
-    if ticked.cards_out > 0 || ticked.cards_in > 0 || ticked.cards_repaired > 0 {
+    if ticked.cards_out > 0
+        || ticked.cards_in > 0
+        || ticked.cards_repaired > 0
+        || ticked.cards_folded > 0
+    {
         println!(
-            "Desktop cards: {} published, {} brought in, {} repaired",
-            ticked.cards_out, ticked.cards_in, ticked.cards_repaired
+            "Desktop cards: {} published, {} brought in, {} repaired, {} folded",
+            ticked.cards_out, ticked.cards_in, ticked.cards_repaired, ticked.cards_folded
         );
     }
     if ticked.imported.history_in > 0 || ticked.imported.tasks_in > 0 {

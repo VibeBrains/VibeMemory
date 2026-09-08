@@ -1,0 +1,158 @@
+{
+  "description": "Разбор имени конфликт-копии облачного клиента (гейт приватности не разрешает называть его по имени даже в описании — имя клиента живёт в knowledge): `<основа>-<МАШИНА>.<ext>`. Функция чистая и файловой системы не знает — она перечисляет все правдоподобные прочтения, от самой длинной основы к самой короткой, а выбирает вызывающий, проверяя, какая основа реально лежит рядом. Единственный признак суффикса здесь — заглавная буква: имя машины клиент пишет так, как машина названа.",
+  "cases": [
+    {
+      "id": "onedrive-gpd-card",
+      "provenance": "observed",
+      "note": "Реальная карточка Desktop со стора владельца: облачный клиент продублировал её именем машины GPD-WIN-MAX2. В самом имени машины есть дефисы, поэтому правдоподобных прочтений больше, чем дефисов в UUID: первыми идут те, что оставляют основе больше всего — вплоть до части имени машины. Отбирает вызывающий, по наличию файла на диске.",
+      "input": {
+        "name": "local_02ea2773-529f-4432-8fd1-605dcd6197cd-GPD-WIN-MAX2.json"
+      },
+      "expect": {
+        "ok": [
+          {
+            "original": "local_02ea2773-529f-4432-8fd1-605dcd6197cd-GPD-WIN.json",
+            "machine": "MAX2"
+          },
+          {
+            "original": "local_02ea2773-529f-4432-8fd1-605dcd6197cd-GPD.json",
+            "machine": "WIN-MAX2"
+          },
+          {
+            "original": "local_02ea2773-529f-4432-8fd1-605dcd6197cd.json",
+            "machine": "GPD-WIN-MAX2"
+          },
+          {
+            "original": "local_02ea2773-529f-4432-8fd1.json",
+            "machine": "605dcd6197cd-GPD-WIN-MAX2"
+          },
+          {
+            "original": "local_02ea2773-529f-4432.json",
+            "machine": "8fd1-605dcd6197cd-GPD-WIN-MAX2"
+          },
+          {
+            "original": "local_02ea2773-529f.json",
+            "machine": "4432-8fd1-605dcd6197cd-GPD-WIN-MAX2"
+          },
+          {
+            "original": "local_02ea2773.json",
+            "machine": "529f-4432-8fd1-605dcd6197cd-GPD-WIN-MAX2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "onedrive-macmini-transcript",
+      "provenance": "observed",
+      "note": "Реальный транскрипт из архива владельца: суффикс с одной заглавной в середине слова — тоже имя машины.",
+      "input": {
+        "name": "78dcced4-6ef5-417f-92e3-da261af0a230-MacMini.jsonl"
+      },
+      "expect": {
+        "ok": [
+          {
+            "original": "78dcced4-6ef5-417f-92e3-da261af0a230.jsonl",
+            "machine": "MacMini"
+          },
+          {
+            "original": "78dcced4-6ef5-417f-92e3.jsonl",
+            "machine": "da261af0a230-MacMini"
+          },
+          {
+            "original": "78dcced4-6ef5-417f.jsonl",
+            "machine": "92e3-da261af0a230-MacMini"
+          },
+          {
+            "original": "78dcced4-6ef5.jsonl",
+            "machine": "417f-92e3-da261af0a230-MacMini"
+          },
+          {
+            "original": "78dcced4.jsonl",
+            "machine": "6ef5-417f-92e3-da261af0a230-MacMini"
+          }
+        ]
+      }
+    },
+    {
+      "id": "plain-uuid-is-not-a-copy",
+      "provenance": "observed",
+      "note": "Обычная карточка: дефисов много, заглавных нет ни после одного — значит копией её считать нельзя.",
+      "input": {
+        "name": "local_02ea2773-529f-4432-8fd1-605dcd6197cd.json"
+      },
+      "expect": {
+        "ok": []
+      }
+    },
+    {
+      "id": "lowercase-suffix-is-part-of-the-name",
+      "provenance": "computed",
+      "note": "Строчный суффикс — это часть имени файла, а не машина: иначе любой дефис делал бы файл копией.",
+      "input": {
+        "name": "notes-draft.md"
+      },
+      "expect": {
+        "ok": []
+      }
+    },
+    {
+      "id": "no-extension",
+      "provenance": "observed",
+      "note": "Надгробие удалённой сессии расширения не имеет; разбор от этого не меняется.",
+      "input": {
+        "name": "deleted_bac59ceb-a2cb-44d5-82d3-8ec1d4ae548d-GPD"
+      },
+      "expect": {
+        "ok": [
+          {
+            "original": "deleted_bac59ceb-a2cb-44d5-82d3-8ec1d4ae548d",
+            "machine": "GPD"
+          },
+          {
+            "original": "deleted_bac59ceb-a2cb-44d5-82d3",
+            "machine": "8ec1d4ae548d-GPD"
+          },
+          {
+            "original": "deleted_bac59ceb-a2cb-44d5",
+            "machine": "82d3-8ec1d4ae548d-GPD"
+          },
+          {
+            "original": "deleted_bac59ceb-a2cb",
+            "machine": "44d5-82d3-8ec1d4ae548d-GPD"
+          },
+          {
+            "original": "deleted_bac59ceb",
+            "machine": "a2cb-44d5-82d3-8ec1d4ae548d-GPD"
+          }
+        ]
+      }
+    },
+    {
+      "id": "leading-dash-names-nothing",
+      "provenance": "computed",
+      "note": "Пустая основа не называет файла, поэтому такое прочтение отбрасывается ещё до вызывающего.",
+      "input": {
+        "name": "-MacMini.json"
+      },
+      "expect": {
+        "ok": []
+      }
+    },
+    {
+      "id": "dotfile-keeps-its-name",
+      "provenance": "computed",
+      "note": "У файла, начинающегося с точки, расширения нет — точка часть имени; иначе основа стала бы пустой.",
+      "input": {
+        "name": ".keep-MacMini"
+      },
+      "expect": {
+        "ok": [
+          {
+            "original": ".keep",
+            "machine": "MacMini"
+          }
+        ]
+      }
+    }
+  ]
+}

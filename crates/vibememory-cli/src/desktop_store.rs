@@ -16,6 +16,7 @@ use vibememory_core::desktop::guard::{
     ExportVerdict, ImportVerdict, MachineFacts, export_verdict, import_verdict, shadow_repair,
 };
 use vibememory_core::desktop::roots::Roots;
+use vibememory_core::naming::conflict_copies;
 
 /// Prefix of a card file.
 const CARD_PREFIX: &str = "local_";
@@ -127,6 +128,133 @@ pub fn import(
         }
     }
     Ok(cards)
+}
+
+/// Folds a cloud client's conflict copies back into the cards they duplicate.
+///
+/// A copy is a whole second card in the sidebar: same session, same title, and — because its name
+/// carries a machine suffix — no shadow in any outbox, so it can never be repaired and stays
+/// marked unavailable for ever. Folding is therefore not tidying, it is the only way those cards
+/// stop being permanently broken duplicates.
+///
+/// What a copy knows is taken before it goes: when the original lost its transcript handle and the
+/// copy still has one, the original is repaired from it through the same guard that governs
+/// arrivals from other machines. The copy itself is then set aside in the quarantine rather than
+/// deleted — it is another machine's version of that card, and throwing it away is a person's
+/// decision, not a tick's.
+///
+/// A copy whose original is not there is not a duplicate at all: it *is* the card, and it is
+/// renamed into place.
+///
+/// # Errors
+///
+/// The text of what went wrong.
+pub fn fold_conflict_copies(
+    desktop_store: &Path,
+    engine_dir: &Path,
+    stamp: &str,
+    confirmed: &dyn Fn(&str) -> Option<String>,
+) -> Result<Folded, String> {
+    let mut folded = Folded::default();
+    for (name, path) in card_files(desktop_store) {
+        let Some(copy) = conflict_copies(&name)
+            .into_iter()
+            .find(|copy| path.with_file_name(&copy.original).exists())
+        else {
+            // Not a copy of anything here. A card whose name merely looks like one is left alone:
+            // the original is what decides, and there is none.
+            if conflict_copies(&name).is_empty() {
+                continue;
+            }
+            // No original on disk, so the name cannot say where the id ends — but the card
+            // itself can: `sessionId` is the file name Desktop would have written. Guessing from
+            // the name instead would cut into the machine suffix and invent a card id.
+            let Some(original) =
+                read_card(&path).map(|card| format!("{}{CARD_SUFFIX}", card.session_id))
+            else {
+                continue;
+            };
+            if path.with_file_name(&original).exists() {
+                continue;
+            }
+            std::fs::rename(&path, path.with_file_name(&original))
+                .map_err(|error| error.to_string())?;
+            folded.adopted.push((name, original));
+            continue;
+        };
+        let original_path = path.with_file_name(&copy.original);
+        if let (Some(mine), Some(theirs)) = (read_card(&original_path), read_card(&path))
+            && let Some(fixed) = repaired_from(&mine, &theirs, confirmed)
+        {
+            write_card(&original_path, &fixed)?;
+            folded.repaired.push(copy.original.clone());
+        }
+        // Through the same helper the memory uses: it refuses to overwrite what is already
+        // waiting and recognises a version it has seen before, so a tick that runs every two
+        // minutes does not fill the quarantine with copies of one card.
+        let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+        crate::memory::quarantine(engine_dir, &format!("{name}-{stamp}"), &bytes)?;
+        std::fs::remove_file(&path).map_err(|error| error.to_string())?;
+        folded.set_aside.push(name);
+    }
+    Ok(folded)
+}
+
+/// What one round of folding did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Folded {
+    /// Copies moved to the quarantine, their duplicates gone from the sidebar.
+    pub set_aside: Vec<String>,
+    /// Originals that got their transcript back from the copy before it was set aside.
+    pub repaired: Vec<String>,
+    /// Copies that turned out to be the only card of their session, renamed into place.
+    pub adopted: Vec<(String, String)>,
+}
+
+/// The original card repaired from a conflict copy, when it needs and can have that.
+fn repaired_from(
+    mine: &Descriptor,
+    theirs: &Descriptor,
+    confirmed: &dyn Fn(&str) -> Option<String>,
+) -> Option<Descriptor> {
+    let transcript = theirs.cli_session_id.clone();
+    let confirmed_path = transcript.as_deref().and_then(confirmed);
+    let facts = MachineFacts {
+        cwd_exists: mine.cwd.as_deref(),
+        // The copy travelled with the store, so its transcript is in the store by construction;
+        // what matters is whether this machine can reach it, which the confirmation answers.
+        transcript_in_store: transcript.is_some(),
+        confirmed_transcript_path: confirmed_path.as_deref(),
+    };
+    shadow_repair(mine, theirs, facts)
+}
+
+/// Every card file at or below a directory, by name and path.
+fn card_files(dir: &Path) -> Vec<(String, PathBuf)> {
+    let mut found = Vec::new();
+    collect_card_files(dir, MAX_CARD_DEPTH, &mut found);
+    found.sort();
+    found
+}
+
+/// The walk behind `card_files`.
+fn collect_card_files(dir: &Path, depth: usize, found: &mut Vec<(String, PathBuf)>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            if depth > 0 {
+                collect_card_files(&path, depth - 1, found);
+            }
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with(CARD_PREFIX) && name.ends_with(CARD_SUFFIX) {
+            found.push((name, path));
+        }
+    }
 }
 
 /// Repairs this machine's own cards from the shadow copies in its outbox.

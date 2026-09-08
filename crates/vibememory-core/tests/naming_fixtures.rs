@@ -15,7 +15,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use vibememory_core::naming::{
     GitProbe, IgnoreReason, NamingConfig, NamingError, NamingInput, PathSyntax, RawNamingConfig,
-    Resolution, StoreName, canonical_cwd, enc_from_transcript_path, encode_cwd, resolve_store_name,
+    Resolution, StoreName, canonical_cwd, conflict_copies, enc_from_transcript_path, encode_cwd,
+    resolve_store_name,
 };
 
 const ENC_FROM_TRANSCRIPT_PATH: &str =
@@ -24,6 +25,7 @@ const ENCODE_CWD: &str = include_str!("../../../fixtures/naming/encodeCwd.json")
 const RESOLVE_STORE_NAME: &str = include_str!("../../../fixtures/naming/resolveStoreName.json");
 const NAMING_CONFIG: &str = include_str!("../../../fixtures/naming/namingConfig.json");
 const CANONICAL_CWD: &str = include_str!("../../../fixtures/naming/canonicalCwd.json");
+const CONFLICT_COPIES: &str = include_str!("../../../fixtures/naming/conflictCopies.json");
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,6 +99,12 @@ struct ResolveInput {
 struct CanonicalInput {
     raw: String,
     syntax: PathSyntax,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NameInput {
+    name: String,
 }
 
 #[derive(Deserialize)]
@@ -237,6 +245,32 @@ fn canonical_cwd_fixtures() {
             let twice = canonical_cwd(&once, input.syntax);
             assert_eq!(once, twice, "canonicalization is not idempotent");
             Ok(json!(once))
+        },
+    );
+    assert_no_failures(&failures);
+}
+
+#[test]
+fn conflict_copies_fixtures() {
+    let failures = check(
+        "conflictCopies.json",
+        CONFLICT_COPIES,
+        |input: &NameInput| {
+            let found = conflict_copies(&input.name);
+            // Every candidate must name a shorter original than the one before it: the caller
+            // takes the first one it can find on disk, so the order is part of the contract.
+            for pair in found.windows(2) {
+                assert!(
+                    pair[0].original.len() > pair[1].original.len(),
+                    "candidates must run from the longest original down: {found:?}"
+                );
+            }
+            Ok(json!(
+                found
+                    .iter()
+                    .map(|copy| json!({"original": copy.original, "machine": copy.machine}))
+                    .collect::<Vec<_>>()
+            ))
         },
     );
     assert_no_failures(&failures);

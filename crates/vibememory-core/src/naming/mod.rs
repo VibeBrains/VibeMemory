@@ -9,6 +9,7 @@
 
 pub mod canonical;
 pub mod config;
+pub mod conflict;
 pub mod enc;
 pub mod error;
 pub mod git;
@@ -18,6 +19,7 @@ pub mod store_name;
 
 pub use canonical::canonical_cwd;
 pub use config::{NamingConfig, RawNamingConfig};
+pub use conflict::{ConflictCopy, conflict_copies};
 pub use enc::{
     EncSlug, PROJECTS_DIR_NAME, TRANSCRIPT_EXTENSION, enc_from_transcript_path, encode_cwd,
 };

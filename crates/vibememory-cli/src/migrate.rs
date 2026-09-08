@@ -231,13 +231,8 @@ fn is_dehydrated(_path: &Path) -> bool {
 /// beside `store.md` is two records, not a copy, and treating it as one would quarantine a real
 /// note.
 fn conflict_copy_of(file: &Path) -> Option<PathBuf> {
-    let (base, _) = split_copy_name(file)?;
-    let ext = file.extension().and_then(|ext| ext.to_str());
-    let sibling = match ext {
-        Some(ext) => format!("{base}.{ext}"),
-        None => base,
-    };
-    Some(file.with_file_name(sibling))
+    let (original, _) = split_copy_name(file)?;
+    Some(file.with_file_name(original))
 }
 
 /// The machine name a conflict copy carries in its suffix.
@@ -245,25 +240,16 @@ fn copy_suffix(file: &Path) -> Option<String> {
     split_copy_name(file).map(|(_, suffix)| suffix)
 }
 
-/// `(base, suffix)` of a conflict copy's stem, or `None` when the file is not one.
+/// `(original file name, suffix)` of a conflict copy, or `None` when the file is not one.
+///
+/// The reading of the name is the core's, the disk is ours: the core lists every plausible split
+/// and this picks the first whose original is actually there.
 fn split_copy_name(file: &Path) -> Option<(String, String)> {
-    let stem = file.file_stem()?.to_str()?;
-    let ext = file.extension().and_then(|ext| ext.to_str());
-    for (index, _) in stem.match_indices('-') {
-        let base = &stem[..index];
-        let suffix = &stem[index + 1..];
-        if base.is_empty() || !suffix.chars().any(|c| c.is_ascii_uppercase()) {
-            continue;
-        }
-        let sibling = match ext {
-            Some(ext) => format!("{base}.{ext}"),
-            None => base.to_owned(),
-        };
-        if file.with_file_name(sibling).is_file() {
-            return Some((base.to_owned(), suffix.to_owned()));
-        }
-    }
-    None
+    let name = file.file_name()?.to_str()?;
+    vibememory_core::naming::conflict_copies(name)
+        .into_iter()
+        .find(|copy| file.with_file_name(&copy.original).is_file())
+        .map(|copy| (copy.original, copy.machine))
 }
 
 /// What applying the plan did.
