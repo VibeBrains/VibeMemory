@@ -553,6 +553,12 @@
   файлов — в `Change::DesktopStore` под `serde(default)`), поиск рекурсивный глубины 3, входящая
   карточка пишется в каталог, где карточки уже лежат. Два новых гейта. Разбор —
   [knowledge/design/desktopCardsLayout.md](knowledge/design/desktopCardsLayout.md).
+- [x] **Хвост переезда закрыт и записан** — ✅ (2026-09-08, next) карантин разобран и очищен
+  (обе копии доказаны покрытыми: у транскрипта ноль строк сверх сторовой версии, у индекса —
+  пусто), одноразовый сторож `ru.vibememory.finishswitch` снят с launchd: `launchctl submit`
+  создаёт job без plist и перезапускал его, отчего после сделанного переезда он садился ждать
+  снова (`watcher done` → `watcher started` в логе). Разбор того, что не доделает ни сторож, ни
+  тик, — [knowledge/design/migrationTail.md](knowledge/design/migrationTail.md).
 
 ## Этап 4 — Windows
 
