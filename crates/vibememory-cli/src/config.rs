@@ -58,6 +58,10 @@ pub struct RawConfig {
     /// Code signing identity for the installed binary, e.g. `VibeMemory Local`. Optional, and
     /// meaningful on macOS only.
     pub signing_identity: Option<String>,
+    /// How many transcripts one tick may remove before it holds and asks. Absent means the
+    /// default; it is the owner's policy, because one person forgets single sessions and another
+    /// drops a whole project.
+    pub max_deletions_per_tick: Option<usize>,
     /// `nameOverrides` and `ignoreCwd`, validated by the core.
     #[serde(flatten)]
     pub naming: RawNamingConfig,
@@ -109,6 +113,8 @@ pub struct Config {
     pub signing_identity: Option<String>,
     /// Validated naming rules.
     pub naming: NamingConfig,
+    /// How many transcripts one tick may remove before holding.
+    pub max_deletions_per_tick: usize,
 }
 
 impl Config {
@@ -173,6 +179,9 @@ impl Config {
                 .signing_identity
                 .map(|identity| identity.trim().to_owned()),
             naming: NamingConfig::from_raw(&raw.naming)?,
+            max_deletions_per_tick: raw
+                .max_deletions_per_tick
+                .unwrap_or(crate::guard::DEFAULT_MAX_DELETIONS_PER_TICK),
         })
     }
 }

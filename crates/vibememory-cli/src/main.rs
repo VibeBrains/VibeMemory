@@ -45,7 +45,7 @@ fn main() -> ExitCode {
             let dry_run = args.any(|arg| arg == "--dry-run");
             install(dry_run)
         }
-        Some("tick") => tick_command(),
+        Some("tick") => tick_command(&args.collect::<Vec<String>>()),
         Some("migrate") => migrate_command(&args.collect::<Vec<String>>()),
         Some("switch") => switch_command(&args.collect::<Vec<String>>()),
         Some("relink") => relink_command(&args.collect::<Vec<String>>(), false),
@@ -718,7 +718,10 @@ fn find_transcript(store: &std::path::Path, session_id: &str) -> Option<String> 
 }
 
 /// `tick` — fetch, merge what is safe to merge, push, and keep the store honest.
-fn tick_command() -> ExitCode {
+fn tick_command(args: &[String]) -> ExitCode {
+    // One run released from the deletion cap, and only one: passing a rail by weakening it in the
+    // config would weaken it for every run after, which is how a guard quietly stops guarding.
+    let released = args.iter().any(|arg| arg == "--release-deletions");
     let layout = layout();
     let config = match read_config(&layout) {
         Ok(config) => config,
@@ -750,6 +753,8 @@ fn tick_command() -> ExitCode {
         roots: &roots,
         naming: &config.naming,
         desktop_store: desktop.as_deref(),
+        max_deletions: config.max_deletions_per_tick,
+        deletions_released: released,
     };
     let ticked = vibememory_cli::tick::run(
         &machine,
@@ -759,7 +764,7 @@ fn tick_command() -> ExitCode {
                 - i64::try_from(vibememory_cli::tick::HEARTBEAT_STALE_AFTER.as_secs()).unwrap_or(0),
         ),
     );
-    report_tick(&ticked);
+    report_tick(&ticked, config.max_deletions_per_tick);
     // Once a day, ask whether the backup still follows the host. Nobody runs `doctor` on a
     // schedule, so without this a mirror could stop following the day after it was set up and
     // nothing would ever say so.
@@ -837,7 +842,7 @@ fn relink_command(args: &[String], import: bool) -> ExitCode {
 }
 
 /// What one tick did, in the order it did it.
-fn report_tick(ticked: &vibememory_cli::tick::Ticked) {
+fn report_tick(ticked: &vibememory_cli::tick::Ticked, max_deletions: usize) {
     if ticked.merged {
         println!("merged what the other machines wrote");
     }
@@ -847,8 +852,20 @@ fn report_tick(ticked: &vibememory_cli::tick::Ticked) {
     for session in &ticked.forgotten {
         println!("forgotten: {session}");
     }
-    for path in &ticked.restored {
-        println!("restored: {path} was deleted in the working copy and put back");
+    // Above the same cap that holds deletions: putting back one file is routine, putting back a
+    // hundred means something on this machine is sweeping the store, and the per-file lines would
+    // bury that instead of saying it.
+    if ticked.restored.len() > max_deletions {
+        println!(
+            "restored {} transcript(s) that had vanished from the working copy — something on \
+             this machine is deleting them; the engine put them back, but find what is removing \
+             them",
+            ticked.restored.len()
+        );
+    } else {
+        for path in &ticked.restored {
+            println!("restored: {path} was deleted in the working copy and put back");
+        }
     }
     if ticked.recorded_links > 0 {
         println!(
@@ -870,6 +887,23 @@ fn report_tick(ticked: &vibememory_cli::tick::Ticked) {
     }
     for project in &ticked.projected_memory {
         println!("memory projected: {project}");
+    }
+    if ticked.deletions_held > 0 {
+        println!(
+            "HELD: {} deletion(s) asked for, more than the cap — nothing was deleted. Check whose \
+             machines/*/forgotten.json asks for this; to go ahead once, run `vibememory tick \
+             --release-deletions`",
+            ticked.deletions_held
+        );
+    }
+    match ticked.store_cycle {
+        vibememory_cli::tick::StoreCycle::Ran => {}
+        vibememory_cli::tick::StoreCycle::Paused => {
+            println!("store cycle paused after repeated failures; local work ran as usual");
+        }
+        vibememory_cli::tick::StoreCycle::Recovered => {
+            println!("store cycle recovered: fetching, merging and pushing again");
+        }
     }
     let managed = &ticked.managed;
     if !managed.pushed.is_empty() || !managed.pulled.is_empty() || !managed.conflicting.is_empty() {
@@ -1352,7 +1386,7 @@ fn usage() {
     println!("vibememory {}", env!("CARGO_PKG_VERSION"));
     println!(
         "commands: status [--json], doctor [--json], install [--dry-run], hook <event>, \
-         merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>, tick, \
+         merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>, tick [--release-deletions], \
          relink <enc> <name> <cwd>, import <enc> <name> <cwd>, \
          migrate --from <dir> [--apply], switch --from <dir> [--apply|--rollback], --version"
     );

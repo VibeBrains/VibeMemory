@@ -103,6 +103,8 @@ pub enum Step {
     Schedule,
     /// The engine's hooks in `settings.json`.
     Hooks,
+    /// No deletions held back by the tick's cap and waiting for a person.
+    DeletionsHeld,
     /// No flag in the `env` of `settings.json` that switches the prompt cache off or shortens it.
     /// Such a flag travels to every machine with the managed copy, and costs a share of the
     /// usage limits on each of them.
@@ -143,6 +145,7 @@ impl Step {
             Self::Schedule => "scheduled tick".to_owned(),
             Self::Hooks => "hooks in settings.json".to_owned(),
             Self::PromptCacheEnv => "prompt cache not switched off in settings.json".to_owned(),
+            Self::DeletionsHeld => "no deletions waiting for a decision".to_owned(),
             Self::ScaffoldCommitted { .. } => "store scaffolding committed".to_owned(),
             Self::Binary => "engine binary in place".to_owned(),
             Self::BinarySigned { identity } => format!("engine binary signed by {identity}"),
@@ -268,6 +271,10 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
     actions.push(Action {
         step: Step::PromptCacheEnv,
         state: prompt_cache_env_state(layout),
+    });
+    actions.push(Action {
+        step: Step::DeletionsHeld,
+        state: deletions_held_state(layout),
     });
     actions.push(Action {
         step: Step::Hooks,
@@ -541,8 +548,9 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
         }
         Step::ManagedCopy { name } => reconcile_managed(layout, &store, name),
         // Nothing to apply: a flag that switches the cache off is the owner's to remove, and the
-        // plan never reports this step as missing — only satisfied or in conflict.
-        Step::PromptCacheEnv => Ok(()),
+        // plan never reports this step as missing — only satisfied or in conflict. The same goes
+        // for a held deletion: releasing it is a decision, not a repair.
+        Step::PromptCacheEnv | Step::DeletionsHeld => Ok(()),
         Step::Schedule => install_schedule(layout),
         Step::Binary => install_binary(layout),
         Step::BinarySigned { identity } => sign_binary(&installed_binary(layout), identity),
@@ -907,6 +915,24 @@ fn hooks_state(layout: &Layout) -> State {
 }
 
 /// Adds the engine's hooks to `settings.json`, keeping everything else in it exactly as it is.
+/// Whether the tick is sitting on deletions it refused to make.
+///
+/// Read from the tick's own state rather than recounted here: the tick already did the counting,
+/// and a second implementation of "how many would be deleted" is a second thing to keep true.
+fn deletions_held_state(layout: &Layout) -> State {
+    let held = crate::guard::TickState::read(&layout.engine_dir).deletions_held;
+    if held == 0 {
+        State::Satisfied
+    } else {
+        State::Conflict {
+            found: format!(
+                "{held} deletion(s) held back by the cap; check machines/*/forgotten.json, then \
+                 `vibememory tick --release-deletions` to go ahead once"
+            ),
+        }
+    }
+}
+
 /// Prefix of the environment variables that switch the prompt cache off, per model or entirely.
 const CACHE_OFF_PREFIX: &str = "DISABLE_PROMPT_CACHING";
 /// The variable that shortens every cache to five minutes.

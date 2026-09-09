@@ -20,6 +20,7 @@ pub mod config;
 pub mod desktop_store;
 pub mod forget;
 pub mod git;
+pub mod guard;
 pub mod hook;
 pub mod install;
 pub mod links_file;

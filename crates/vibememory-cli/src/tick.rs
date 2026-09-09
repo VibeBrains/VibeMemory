@@ -27,6 +27,22 @@ pub const BRANCH: &str = "main";
 /// Where the store's own commits go.
 const REMOTE: &str = "origin";
 
+/// What became of the half of the tick that needs the network.
+///
+/// Three states rather than two flags: a run either tried or was backed off, and "recovered" is a
+/// run that tried and was the first to work after failures. Two independent booleans would allow
+/// "paused and recovered", which is not a thing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum StoreCycle {
+    /// Tried, as usual.
+    #[default]
+    Ran,
+    /// Skipped: earlier runs kept failing and the back-off is still counting down.
+    Paused,
+    /// Tried and worked, and the run before the failures was long enough ago to say so.
+    Recovered,
+}
+
 /// What one tick did, in the order it did it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Ticked {
@@ -80,6 +96,10 @@ pub struct Ticked {
     pub disagreements: Vec<String>,
     /// Whether anything was pushed.
     pub pushed: bool,
+    /// Deletions this run refused to make because the tombstones asked for more than the cap.
+    pub deletions_held: usize,
+    /// What happened to the part of the run that talks to the remote.
+    pub store_cycle: StoreCycle,
     /// What went wrong, if anything. A tick reports and returns; it never panics a machine.
     pub problems: Vec<String>,
 }
@@ -103,6 +123,10 @@ pub struct Machine<'a> {
     pub naming: &'a vibememory_core::naming::NamingConfig,
     /// Where Desktop keeps its cards, when this machine has them.
     pub desktop_store: Option<&'a Path>,
+    /// How many transcripts this run may remove before holding them all back.
+    pub max_deletions: usize,
+    /// Whether the person released this one run from that cap.
+    pub deletions_released: bool,
 }
 
 /// Runs one tick over the store.
@@ -118,22 +142,23 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         roots,
         naming,
         desktop_store,
+        max_deletions,
+        deletions_released,
     } = machine;
-    let mut result = Ticked {
-        fetched: fetch(store),
-        ..Ticked::default()
-    };
-
-    let live = live_sessions(store, machine_id);
-    match merge_if_safe(store, machine_id) {
-        Ok(Merge::Merged) => result.merged = true,
-        Ok(Merge::HeldBack { sessions }) => result.held_back = sessions,
-        Ok(Merge::NothingToDo) => {}
-        Err(problem) => result.problems.push(problem),
+    let engine_dir = engine_dir_of(store);
+    let state = crate::guard::TickState::read(&engine_dir);
+    let mut result = Ticked::default();
+    let allowed = state.store_cycle_allowed();
+    if allowed {
+        fetch_and_merge(store, machine_id, &mut result);
+    } else {
+        result.store_cycle = StoreCycle::Paused;
     }
 
-    match apply_tombstones(store, stamp) {
-        Ok(removed) => result.forgotten = removed,
+    let live = live_sessions(store, machine_id);
+    match apply_tombstones(store, stamp, max_deletions, deletions_released) {
+        Ok(Removals::Applied(removed)) => result.forgotten = removed,
+        Ok(Removals::Held { wanted }) => result.deletions_held = wanted,
         Err(problem) => result.problems.push(problem),
     }
 
@@ -212,7 +237,23 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         Err(problem) => result.problems.push(problem),
     }
 
-    result.pushed = push(store);
+    if allowed {
+        result.pushed = push(store);
+    }
+
+    // A run counts as failed when something went wrong with the store itself; a held deletion is
+    // the rail working as intended, not a failure, and must not push the machine into a back-off.
+    let (next, recovered) = state.after_run(!result.problems.is_empty());
+    if recovered {
+        result.store_cycle = StoreCycle::Recovered;
+    }
+    let next = crate::guard::TickState {
+        deletions_held: result.deletions_held,
+        ..next
+    };
+    if let Err(problem) = next.write(&engine_dir) {
+        result.problems.push(problem);
+    }
 
     result
 }
@@ -314,6 +355,22 @@ fn changed_paths(store: &Path, target: &str) -> Result<Option<Vec<String>>, Stri
     }))
 }
 
+/// The half of the run that needs the remote: take what is there, merge it when that is safe.
+///
+/// Split out because the back-off switches exactly this off and nothing else — everything the tick
+/// does locally (putting back a vanished transcript, the heartbeat, projecting memory) runs on
+/// every tick regardless. A rail that stopped the work which *saves* data would be worse than the
+/// failure it is backing off from.
+fn fetch_and_merge(store: &Path, machine_id: &str, result: &mut Ticked) {
+    result.fetched = fetch(store);
+    match merge_if_safe(store, machine_id) {
+        Ok(Merge::Merged) => result.merged = true,
+        Ok(Merge::HeldBack { sessions }) => result.held_back = sessions,
+        Ok(Merge::NothingToDo) => {}
+        Err(problem) => result.problems.push(problem),
+    }
+}
+
 /// Sessions this machine believes are running right now.
 fn live_sessions(store: &Path, machine_id: &str) -> BTreeSet<String> {
     let path = store.join("machines").join(machine_id).join("live.json");
@@ -324,11 +381,38 @@ fn live_sessions(store: &Path, machine_id: &str) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
+/// What one run did about the deletions its tombstones asked for.
+enum Removals {
+    /// Carried out, naming the sessions.
+    Applied(Vec<String>),
+    /// Refused as a whole, naming how many were asked for.
+    Held {
+        /// How many transcripts the tombstones named.
+        wanted: usize,
+    },
+}
+
 /// Removes the transcripts every machine has asked to forget, and commits the removal.
-fn apply_tombstones(store: &Path, stamp: &str) -> Result<Vec<String>, String> {
+///
+/// Counts before it removes: a tombstone file that arrived corrupted, mis-merged or simply wrong
+/// would otherwise take every transcript it names off this machine and then off all the others,
+/// and there is no guard on the other side — `restore_deleted_transcripts` puts back what vanished
+/// *without* a tombstone, so a deletion that carries one is honoured everywhere.
+fn apply_tombstones(
+    store: &Path,
+    stamp: &str,
+    cap: usize,
+    released: bool,
+) -> Result<Removals, String> {
+    let wanted = tombstoned_paths(store).len();
+    if let crate::guard::Deletions::Held { wanted, .. } =
+        crate::guard::deletions(wanted, cap, released)
+    {
+        return Ok(Removals::Held { wanted });
+    }
     let mut removed = Vec::new();
     let Ok(machines) = std::fs::read_dir(store.join("machines")) else {
-        return Ok(removed);
+        return Ok(Removals::Applied(removed));
     };
     for machine in machines.filter_map(Result::ok) {
         let file = machine.path().join(crate::forget::FORGOTTEN_FILE);
@@ -370,7 +454,33 @@ fn apply_tombstones(store: &Path, stamp: &str) -> Result<Vec<String>, String> {
             TIMEOUT,
         )?;
     }
-    Ok(removed)
+    Ok(Removals::Applied(removed))
+}
+
+/// The store paths every machine's tombstones name and this machine still holds.
+///
+/// The same walk `apply_tombstones` does, without touching anything: counting has to see exactly
+/// what the removal would see, or the cap would guard a different number than the one at risk.
+fn tombstoned_paths(store: &Path) -> Vec<String> {
+    let mut paths = Vec::new();
+    let Ok(machines) = std::fs::read_dir(store.join("machines")) else {
+        return paths;
+    };
+    for machine in machines.filter_map(Result::ok) {
+        let file = machine.path().join(crate::forget::FORGOTTEN_FILE);
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let Ok(forgotten) = serde_json::from_str::<Forgotten>(&text) else {
+            continue;
+        };
+        for tombstone in forgotten.sessions.into_values() {
+            if !tombstone.path.is_empty() && store.join(&tombstone.path).exists() {
+                paths.push(tombstone.path);
+            }
+        }
+    }
+    paths
 }
 
 /// Puts back transcripts that vanished from the working copy without a tombstone.

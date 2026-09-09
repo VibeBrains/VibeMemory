@@ -53,9 +53,10 @@ fn a_fresh_machine_needs_every_step_it_can_have() {
         match action.step {
             // A file neither the machine nor the store has is nothing to manage, and saying
             // otherwise would make install repeat the same no-op for ever.
-            // A missing settings file likewise holds no flag that switches the cache off, so
-            // that step, too, is already satisfied.
-            Step::ManagedCopy { .. } | Step::PromptCacheEnv => {
+            // A missing settings file likewise holds no flag that switches the cache off, and a
+            // machine that has never ticked holds back no deletions: both steps are already
+            // satisfied, and neither is ever something `install` performs.
+            Step::ManagedCopy { .. } | Step::PromptCacheEnv | Step::DeletionsHeld => {
                 assert_eq!(action.state, State::Satisfied);
             }
             _ => assert_eq!(action.state, State::Missing, "{action:?}"),

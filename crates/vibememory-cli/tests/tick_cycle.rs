@@ -83,6 +83,8 @@ fn tick(store: &Path, temp: &TempDir) -> Ticked {
         roots: &roots,
         naming: &naming,
         desktop_store: None,
+        max_deletions: vibememory_cli::guard::DEFAULT_MAX_DELETIONS_PER_TICK,
+        deletions_released: false,
     };
     run(&machine, STAMP, CUTOFF)
 }
@@ -400,6 +402,8 @@ fn a_fresh_heartbeat_is_left_alone() {
         roots: &roots,
         naming: &naming,
         desktop_store: None,
+        max_deletions: vibememory_cli::guard::DEFAULT_MAX_DELETIONS_PER_TICK,
+        deletions_released: false,
     };
     let ticked = run(&machine, STAMP, "2020-01-01T00:00:00Z");
     assert!(
@@ -554,6 +558,8 @@ fn a_real_directory_is_imported_by_the_tick_exactly_as_the_hook_promised() {
         roots: &Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix),
         naming: &naming,
         desktop_store: None,
+        max_deletions: vibememory_cli::guard::DEFAULT_MAX_DELETIONS_PER_TICK,
+        deletions_released: false,
     };
     let ticked = run(&machine, STAMP, CUTOFF);
 
@@ -597,6 +603,8 @@ fn links_made_by_switch_are_recorded_so_the_other_machine_learns_them() {
         roots: &Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix),
         naming: &naming,
         desktop_store: None,
+        max_deletions: vibememory_cli::guard::DEFAULT_MAX_DELETIONS_PER_TICK,
+        deletions_released: false,
     };
     let ticked = run(&machine, STAMP, CUTOFF);
     assert_eq!(ticked.recorded_links, 1, "{ticked:?}");
@@ -650,6 +658,8 @@ fn a_link_is_recorded_only_with_the_working_directory_that_encodes_to_it() {
         roots: &Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix),
         naming: &naming,
         desktop_store: None,
+        max_deletions: vibememory_cli::guard::DEFAULT_MAX_DELETIONS_PER_TICK,
+        deletions_released: false,
     };
     let ticked = run(&machine, STAMP, CUTOFF);
     assert_eq!(ticked.recorded_links, 2, "{ticked:?}");
@@ -766,6 +776,8 @@ fn a_tick_repairs_a_desktop_card_this_machine_can_prove() {
             roots: &roots,
             naming: &naming,
             desktop_store: Some(&desktop),
+            max_deletions: vibememory_cli::guard::DEFAULT_MAX_DELETIONS_PER_TICK,
+            deletions_released: false,
         },
         STAMP,
         CUTOFF,
@@ -862,6 +874,8 @@ fn a_card_of_an_old_session_is_repaired_through_the_link_that_session_proved() {
             roots: &roots,
             naming: &naming,
             desktop_store: Some(&desktop),
+            max_deletions: vibememory_cli::guard::DEFAULT_MAX_DELETIONS_PER_TICK,
+            deletions_released: false,
         },
         STAMP,
         CUTOFF,
@@ -918,4 +932,139 @@ fn a_tick_brings_a_changed_managed_copy_from_the_store_to_the_machine() {
         "shared rules\nand one more\n",
         "what another machine changed is what the CLI reads here now"
     );
+}
+
+/// One tick with a deletion cap of the caller's choosing, and optionally released from it.
+fn tick_with_cap(store: &Path, temp: &TempDir, cap: usize, released: bool) -> Ticked {
+    let config_dir = temp.dir("claude");
+    let roots = Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix);
+    let naming = vibememory_core::naming::NamingConfig::default();
+    run(
+        &Machine {
+            store,
+            config_dir: &config_dir,
+            machine_id: "mac-test",
+            roots: &roots,
+            naming: &naming,
+            desktop_store: None,
+            max_deletions: cap,
+            deletions_released: released,
+        },
+        STAMP,
+        CUTOFF,
+    )
+}
+
+#[test]
+fn a_tick_asked_to_delete_more_than_the_cap_deletes_nothing_until_released() {
+    let temp = TempDir::new("tick-mass-delete");
+    let pair = two_machines(&temp);
+    let second = "22222222-2222-4222-8222-222222222222";
+    let second_path = format!("projects/Project/{second}.jsonl");
+    write_commit(
+        &pair.mac,
+        &second_path,
+        "{\"uuid\":\"s\"}\n",
+        "second session",
+    );
+
+    // Two tombstones, a cap of one: the shape of a forgotten.json that arrived corrupted or
+    // mis-merged, only small enough to write down.
+    forget(&pair.mac, "other-machine", SESSION, &relative(), STAMP).expect("forget one");
+    forget(&pair.mac, "other-machine", second, &second_path, STAMP).expect("forget two");
+
+    let held = tick_with_cap(&pair.mac, &temp, 1, false);
+    assert_eq!(
+        held.deletions_held, 2,
+        "both were asked for, so both are named"
+    );
+    assert!(held.forgotten.is_empty(), "{:?}", held.forgotten);
+    assert!(
+        pair.mac.join(relative()).exists() && pair.mac.join(&second_path).exists(),
+        "all or nothing: half a deletion leaves the store in a state nobody chose"
+    );
+    // And it stays held: a rail that lets the next run through is not a rail.
+    let again = tick_with_cap(&pair.mac, &temp, 1, false);
+    assert_eq!(again.deletions_held, 2);
+    assert!(pair.mac.join(relative()).exists());
+
+    // The person looked and released one run.
+    let released = tick_with_cap(&pair.mac, &temp, 1, true);
+    assert_eq!(released.forgotten.len(), 2, "{:?}", released.forgotten);
+    assert!(
+        !pair.mac.join(relative()).exists() && !pair.mac.join(&second_path).exists(),
+        "released means released"
+    );
+    // The push-guard must not resurrect what was deliberately forgotten.
+    let after = tick_with_cap(&pair.mac, &temp, 1, false);
+    assert!(after.restored.is_empty(), "{:?}", after.restored);
+    assert_eq!(after.deletions_held, 0, "nothing is waiting any more");
+}
+
+#[test]
+fn a_held_deletion_is_not_a_failure_and_does_not_pause_the_store_cycle() {
+    let temp = TempDir::new("tick-hold-not-failure");
+    let pair = two_machines(&temp);
+    forget(&pair.mac, "other-machine", SESSION, &relative(), STAMP).expect("forget");
+
+    // Three runs that all hold: if a hold counted as a failure, the third would pause the cycle
+    // — and the machine would stop syncing because a rail did its job.
+    for _ in 0..3 {
+        let ticked = tick_with_cap(&pair.mac, &temp, 0, false);
+        assert_eq!(ticked.deletions_held, 1);
+        assert!(ticked.problems.is_empty(), "{:?}", ticked.problems);
+    }
+    let ticked = tick_with_cap(&pair.mac, &temp, 0, false);
+    assert_eq!(
+        ticked.store_cycle,
+        vibememory_cli::tick::StoreCycle::Ran,
+        "holding a deletion is the rail working, not the store failing"
+    );
+}
+
+#[test]
+fn a_paused_store_cycle_still_does_the_work_that_saves_data() {
+    let temp = TempDir::new("tick-paused-local");
+    let pair = two_machines(&temp);
+    let engine = pair.mac.parent().expect("engine dir");
+
+    // The machine is in the back-off: three failures happened and a wait is counting down.
+    vibememory_cli::guard::TickState {
+        consecutive_failures: 3,
+        runs_to_skip: 5,
+        deletions_held: 0,
+    }
+    .write(engine)
+    .expect("state");
+
+    // Meanwhile something on this machine deletes a transcript — a sweeper, a sync client, a
+    // person tidying up. This is exactly when the engine must not be asleep.
+    fs::remove_file(pair.mac.join(relative())).expect("remove");
+
+    let ticked = tick(&pair.mac, &temp);
+
+    assert_eq!(
+        ticked.store_cycle,
+        vibememory_cli::tick::StoreCycle::Paused,
+        "the remote is what the back-off switches off"
+    );
+    assert!(
+        !ticked.fetched && !ticked.pushed,
+        "and it really is switched off"
+    );
+    assert_eq!(
+        ticked.restored,
+        vec![relative()],
+        "but the work that puts records back must run on every tick: a rail that stopped it \
+         would be worse than the failure it is backing off from"
+    );
+    assert!(
+        pair.mac.join(relative()).exists(),
+        "the transcript is back on disk"
+    );
+
+    // The wait counted down by exactly one run, and the failures are remembered.
+    let state = vibememory_cli::guard::TickState::read(engine);
+    assert_eq!(state.runs_to_skip, 4);
+    assert_eq!(state.consecutive_failures, 3);
 }
