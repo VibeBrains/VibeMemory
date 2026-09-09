@@ -57,11 +57,10 @@ pub fn catalogue() -> Value {
                     "project": { "type": "string" },
                     "id": { "type": "string", "description": "Short kebab-case slug; also the file name of its projection." },
                     "kind": { "type": "string", "enum": ["user", "feedback", "project", "reference"] },
-                    "title": { "type": "string", "description": "One line." },
                     "description": { "type": "string", "description": "One line: what is inside, so a reader can tell whether it is relevant." },
                     "body": { "type": "string", "description": "The memory itself, markdown. Link others with [[their-id]]." }
                 },
-                "required": ["project", "id", "kind", "title", "description", "body"]
+                "required": ["project", "id", "kind", "description", "body"]
             }
         },
         {
@@ -74,7 +73,6 @@ pub fn catalogue() -> Value {
                 "properties": {
                     "project": { "type": "string" },
                     "id": { "type": "string" },
-                    "title": { "type": "string" },
                     "description": { "type": "string" },
                     "body": { "type": "string" },
                     "status": { "type": "string", "enum": ["active", "stale"] }
@@ -163,7 +161,7 @@ fn search(arguments: &Value, memories: &dyn Memories) -> ToolResult {
                 // Always reported, never only when stale: an agent that has to ask a second
                 // question to learn a fact is out of date will skip asking.
                 "status": record.status.as_str(),
-                "title": record.title,
+                "title": record.title(),
                 "description": record.description,
                 "agent": record.agent,
                 "updated": record.updated_at,
@@ -179,7 +177,7 @@ fn matches(record: &Record, needle: &str) -> bool {
         return true;
     }
     needle.split_whitespace().all(|word| {
-        record.title.to_lowercase().contains(word)
+        record.title().to_lowercase().contains(word)
             || record.description.to_lowercase().contains(word)
             || record.body.to_lowercase().contains(word)
             || record.id.as_str().contains(word)
@@ -197,7 +195,7 @@ fn get(arguments: &Value, memories: &dyn Memories) -> ToolResult {
                 "project": record.project,
                 "kind": record.kind.as_str(),
                 "status": record.status.as_str(),
-                "title": record.title,
+                "title": record.title(),
                 "description": record.description,
                 "body": record.body,
                 "links": record.links.iter().map(RecordId::as_str).collect::<Vec<_>>(),
@@ -230,8 +228,10 @@ fn save(arguments: &Value, agent: &str, memories: &dyn Memories) -> ToolResult {
         id: id.clone(),
         kind: RecordKind::parse(&text(arguments, "kind")?).map_err(|error| error.to_string())?,
         project: project.clone(),
-        title: text(arguments, "title")?,
         description: text(arguments, "description")?,
+        // Nothing the caller can set: the real memory format has no such field, and the heading
+        // shown in the index is derived from the identifier.
+        metadata: std::collections::BTreeMap::new(),
         body,
         status: RecordStatus::Active,
         agent: agent.to_owned(),
@@ -258,9 +258,6 @@ fn update(arguments: &Value, agent: &str, memories: &dyn Memories) -> ToolResult
         .ok_or_else(|| format!("no memory with id {} in {project}", id.as_str()))?;
 
     let mut record = entry.record.clone();
-    if let Some(title) = optional(arguments, "title") {
-        record.title = title;
-    }
     if let Some(description) = optional(arguments, "description") {
         record.description = description;
     }

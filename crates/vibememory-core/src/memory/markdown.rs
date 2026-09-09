@@ -17,6 +17,11 @@ use super::record::{Record, RecordId, RecordKind, RecordStatus};
 pub const INDEX_FILE: &str = "MEMORY.md";
 /// Extension of a projected record.
 const DOCUMENT_EXTENSION: &str = "md";
+/// Keys of `metadata` this format names itself; everything else is carried untouched.
+const KNOWN_METADATA: &[&str] = &[
+    "type", "project", "status", "agent", "created", "updated", "version",
+];
+
 /// Fence around the frontmatter block.
 const FRONTMATTER_FENCE: &str = "---";
 /// Indent of a nested frontmatter key.
@@ -91,7 +96,7 @@ fn index(memory: &Memory) -> Vec<u8> {
         let _ = writeln!(
             text,
             "- [{}]({}) — {mark}{}",
-            record.title,
+            record.title(),
             document_name(&record.id),
             record.description
         );
@@ -111,7 +116,7 @@ fn index(memory: &Memory) -> Vec<u8> {
                 let _ = writeln!(
                     text,
                     "- [{}]({}) also exists as [{}]({})",
-                    entry.record.title,
+                    entry.record.title(),
                     document_name(&entry.record.id),
                     version,
                     rival_name(&entry.record.id, version)
@@ -127,12 +132,16 @@ fn document(record: &Record, version: &str) -> Vec<u8> {
     text.push_str(FRONTMATTER_FENCE);
     text.push('\n');
     let _ = writeln!(text, "name: {}", record.id.as_str());
-    let _ = writeln!(text, "title: {}", record.title);
     let _ = writeln!(text, "description: {}", record.description);
     text.push_str("metadata:\n");
     // `status` only when it is not the default: writing `status: active` into every document
     // would rewrite every projection on the machine the day this field appeared, and say nothing.
     let status = (!record.status.is_default()).then(|| ("status", record.status.as_str()));
+    // What the CLI wrote and this format does not interpret goes back first, in its own order:
+    // dropping it would mean the engine silently deletes fields somebody else owns.
+    for (key, value) in &record.metadata {
+        let _ = writeln!(text, "{NESTED_INDENT}{key}: {value}");
+    }
     for (key, value) in [
         Some(("type", record.kind.as_str())),
         Some(("project", record.project.as_str())),
@@ -215,11 +224,19 @@ pub fn parse_document(path: &str, bytes: &[u8]) -> Result<Document, MemoryError>
         Some(word) => RecordStatus::parse(word)?,
         None => RecordStatus::default(),
     };
+    // Everything in `metadata` this format does not name is carried, not dropped: the real files
+    // hold `node_type`, `originSessionId` and `modified`, written by the CLI, and they have to
+    // survive the projection being rewritten.
+    let carried: BTreeMap<String, String> = nested
+        .iter()
+        .filter(|(key, _)| !KNOWN_METADATA.contains(&key.as_str()))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
     let record = Record {
         kind: RecordKind::parse(&required(&nested, "type")?)?,
         status,
+        metadata: carried,
         project: nested.get("project").cloned().unwrap_or_default(),
-        title: required(&top, "title")?,
         description: required(&top, "description")?,
         links: links_in(&body),
         body: body.trim().to_owned(),
@@ -316,12 +333,12 @@ pub fn import(
 /// Whether the file says the same as the record it was projected from. The fields the writer
 /// cannot see in the file — who wrote it and when — are not part of the question.
 fn unchanged(known: &Record, edited: &Record) -> bool {
-    known.title == edited.title
-        && known.description == edited.description
+    known.description == edited.description
         && known.body == edited.body
         && known.kind == edited.kind
         && known.links == edited.links
         // Visible in the file, so it has to be part of the question: otherwise marking a memory
         // stale by hand would be silently undone by the next projection.
         && known.status == edited.status
+        && known.metadata == edited.metadata
 }

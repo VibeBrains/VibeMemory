@@ -5,6 +5,8 @@
 //! agents — but the shape follows the format the model already writes, so nothing has to be
 //! taught a new one.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::error::MemoryError;
@@ -186,8 +188,6 @@ pub struct Record {
     /// Which project it belongs to. The store path says the same thing, but a record read over
     /// MCP arrives without a path, and memory is shared across projects there.
     pub project: String,
-    /// Human name, shown in the index.
-    pub title: String,
     /// One line saying what is inside: the hook the index shows and the model reads to decide
     /// whether the memory is relevant.
     pub description: String,
@@ -199,6 +199,13 @@ pub struct Record {
     /// left out of the line when it is `active`, so old journals and new ones stay comparable.
     #[serde(default, skip_serializing_if = "RecordStatus::is_default")]
     pub status: RecordStatus,
+    /// Keys the CLI wrote into `metadata` that this format does not interpret — `node_type`,
+    /// `originSessionId`, `modified` and whatever the next release adds.
+    ///
+    /// Carried, not understood. The projection is rewritten by the engine, and a field dropped on
+    /// the way out is a field the CLI wrote and the engine quietly deleted.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
     /// Which agent wrote this version — memory is shared between agents, so it has to say.
     pub agent: String,
     /// When the record was first written, in the writer's clock.
@@ -208,16 +215,33 @@ pub struct Record {
 }
 
 impl Record {
-    /// Rejects a record that could not survive the round trip through a file: a title or a
-    /// description spanning lines would break the index they are written into, and an empty body
-    /// is not a memory.
+    /// The human name to show. Derived, never stored: the real memory format has no title field,
+    /// and a name is a way of showing a record rather than something it knows about itself.
+    ///
+    /// `promed-branch-names` becomes `Promed branch names` — the shape a person would have typed
+    /// if asked for a heading, and stable, because it is a function of the identifier.
+    #[must_use]
+    pub fn title(&self) -> String {
+        let mut out = String::with_capacity(self.id.as_str().len());
+        for (index, word) in self.id.as_str().split('-').enumerate() {
+            if index > 0 {
+                out.push(' ');
+            }
+            let mut characters = word.chars();
+            if index == 0
+                && let Some(first) = characters.next()
+            {
+                out.extend(first.to_uppercase());
+            }
+            out.push_str(characters.as_str());
+        }
+        out
+    }
+
+    /// Rejects a record that could not survive the round trip through a file: a description
+    /// spanning lines would break the index it is written into, and an empty body is not a memory.
     pub fn validate(&self) -> Result<(), MemoryError> {
         let one_line = |text: &str| !text.trim().is_empty() && !text.contains('\n');
-        if !one_line(&self.title) {
-            return Err(MemoryError::InvalidTitle {
-                id: self.id.as_str().to_owned(),
-            });
-        }
         if !one_line(&self.description) {
             return Err(MemoryError::InvalidDescription {
                 id: self.id.as_str().to_owned(),

@@ -23,8 +23,8 @@
       "provenance": "computed",
       "note": "A single record: the index carries its title and hook, the document carries the whole memory with the version it was projected from.",
       "journal": [
-        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
-        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir, never the worktree.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:05:00Z\"}}"
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
+        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir, never the worktree.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:05:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -43,7 +43,7 @@
           },
           {
             "name": "store-naming.md",
-            "text": "---\nname: store-naming\ntitle: Store naming\ndescription: one line about store naming\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:05:00Z\n  version: e2\n---\n\nThe name follows the git common dir, never the worktree.\n"
+            "text": "---\nname: store-naming\ndescription: one line about store naming\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:05:00Z\n  version: e2\n---\n\nThe name follows the git common dir, never the worktree.\n"
           }
         ]
       }
@@ -53,8 +53,8 @@
       "provenance": "computed",
       "note": "A version whose parent is the previous one supersedes it: one leaf, no conflict, and the newer text is what the projection shows.",
       "journal": [
-        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
-        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir, never the worktree.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:05:00Z\"}}"
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
+        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir, never the worktree.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:05:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -73,9 +73,9 @@
       "provenance": "computed",
       "note": "Two machines wrote from the same version: neither is dropped. The first by (updatedAt, uuid) is projected, the other lands beside it and the index asks for them to be merged.",
       "journal": [
-        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Merge rules\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership. See [[store-naming]].\", \"links\": [\"store-naming\"], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}",
-        "{\"uuid\": \"mac\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Merge rules\", \"description\": \"one line about merge rules\", \"body\": \"Mac wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
-        "{\"uuid\": \"gpd\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Merge rules\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}"
+        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership. See [[store-naming]].\", \"links\": [\"store-naming\"], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}",
+        "{\"uuid\": \"mac\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Mac wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"gpd\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -101,7 +101,7 @@
       "provenance": "computed",
       "note": "Nothing was written after the delete saw the record, so the record stops being projected — and the journal still holds every version of it.",
       "journal": [
-        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
         "{\"uuid\": \"d1\", \"parent\": \"e1\", \"action\": \"delete\", \"id\": \"store-naming\", \"agent\": \"claude-code\", \"updatedAt\": \"2026-09-03T10:10:00Z\"}"
       ],
       "expect": {
@@ -123,9 +123,9 @@
       "provenance": "computed",
       "note": "One machine asked to forget the record while the other was editing it: somebody still wanted it, so it stays and the delete is not honoured.",
       "journal": [
-        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
         "{\"uuid\": \"d1\", \"parent\": \"e1\", \"action\": \"delete\", \"id\": \"store-naming\", \"agent\": \"claude-code\", \"updatedAt\": \"2026-09-03T10:10:00Z\"}",
-        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir, never the worktree.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:05:00Z\"}}"
+        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir, never the worktree.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:05:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -144,7 +144,7 @@
       "provenance": "computed",
       "note": "A line no version of the engine understands is counted and left alone: it may be one a newer version wrote.",
       "journal": [
-        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
         "{not json",
         ""
       ],
@@ -165,7 +165,7 @@
       "provenance": "computed",
       "note": "Links in the body are part of the record: the projection keeps them and reading the document back finds them in order.",
       "journal": [
-        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Merge rules\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership. See [[store-naming]].\", \"links\": [\"store-naming\"], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}"
+        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership. See [[store-naming]].\", \"links\": [\"store-naming\"], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -189,8 +189,8 @@
       "provenance": "computed",
       "note": "Reading back a projection nobody touched produces no events: the tick must not fill the journal with noise.",
       "journal": [
-        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
-        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir, never the worktree.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:05:00Z\"}}"
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
+        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir, never the worktree.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:05:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -216,8 +216,8 @@
       "provenance": "computed",
       "note": "An edited document becomes one new version whose parent is the version the file was projected from.",
       "journal": [
-        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
-        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir, never the worktree.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:05:00Z\"}}"
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
+        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir, never the worktree.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:05:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -235,7 +235,7 @@
           "documents": [
             {
               "name": "store-naming.md",
-              "text": "---\nname: store-naming\ntitle: Store naming\ndescription: one line about store naming\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:05:00Z\n  version: e2\n---\n\nThe name follows the git common dir, never the worktree, and a submodule keeps its own name.\n"
+              "text": "---\nname: store-naming\ndescription: one line about store naming\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:05:00Z\n  version: e2\n---\n\nThe name follows the git common dir, never the worktree, and a submodule keeps its own name.\n"
             }
           ],
           "events": [
@@ -256,7 +256,7 @@
       "provenance": "computed",
       "note": "A document the journal has never seen becomes a first version: no parent, and its creation time is the moment it was read.",
       "journal": [
-        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}"
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -274,7 +274,7 @@
           "documents": [
             {
               "name": "quarantine-path.md",
-              "text": "---\nname: quarantine-path\ntitle: Quarantine path\ndescription: where a set-aside version goes\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n---\n\nQuarantined versions live in `~/.vibememory/quarantine/`.\n"
+              "text": "---\nname: quarantine-path\ndescription: where a set-aside version goes\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n---\n\nQuarantined versions live in `~/.vibememory/quarantine/`.\n"
             }
           ],
           "events": [
@@ -295,8 +295,8 @@
       "provenance": "computed",
       "note": "The document still names an older version, so the edit was made without seeing the newer one: it becomes a concurrent version rather than overwriting work it never saw.",
       "journal": [
-        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
-        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir, never the worktree.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:05:00Z\"}}"
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
+        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir, never the worktree.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:05:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -314,7 +314,7 @@
           "documents": [
             {
               "name": "store-naming.md",
-              "text": "---\nname: store-naming\ntitle: Store naming\ndescription: one line about store naming\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:05:00Z\n  version: e1\n---\n\nThe name follows the git common dir, edited from an old projection.\n"
+              "text": "---\nname: store-naming\ndescription: one line about store naming\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:05:00Z\n  version: e1\n---\n\nThe name follows the git common dir, edited from an old projection.\n"
             }
           ],
           "events": [
@@ -335,7 +335,7 @@
       "provenance": "computed",
       "note": "The projection of a known record is simply absent: forgetting is an explicit act, and a file can go missing for a dozen innocent reasons.",
       "journal": [
-        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}"
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -361,7 +361,7 @@
       "provenance": "computed",
       "note": "A file in the memory directory that is not a projected record is reported and left where it is.",
       "journal": [
-        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Store naming\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}"
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -407,7 +407,7 @@
           "documents": [
             {
               "name": "odd.md",
-              "text": "---\nname: odd\ntitle: Quarantine path\ndescription: where a set-aside version goes\nmetadata:\n  type: hunch\n  project: VibeMemory\n  agent: claude-code\n---\n\nQuarantined versions live in `~/.vibememory/quarantine/`.\n"
+              "text": "---\nname: odd\ndescription: where a set-aside version goes\nmetadata:\n  type: hunch\n  project: VibeMemory\n  agent: claude-code\n---\n\nQuarantined versions live in `~/.vibememory/quarantine/`.\n"
             }
           ],
           "events": [],
@@ -425,9 +425,9 @@
       "provenance": "computed",
       "note": "A rival file is a copy of a version the journal already holds: reading it back would write it a second time under a new identity.",
       "journal": [
-        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Merge rules\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership. See [[store-naming]].\", \"links\": [\"store-naming\"], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}",
-        "{\"uuid\": \"mac\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Merge rules\", \"description\": \"one line about merge rules\", \"body\": \"Mac wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
-        "{\"uuid\": \"gpd\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Merge rules\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}"
+        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership. See [[store-naming]].\", \"links\": [\"store-naming\"], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}",
+        "{\"uuid\": \"mac\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Mac wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"gpd\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -455,8 +455,8 @@
       "provenance": "computed",
       "note": "Устаревший факт выглядит как свежий, если его не пометить: пометка стоит и в документе, и в строке индекса — читатель чаще смотрит именно в индекс. Кейс живой: совет про ENABLE_PROMPT_CACHING_1H перестал быть нужным основному разговору за три недели.",
       "journal": [
-        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"cache-ttl\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Prompt cache TTL\", \"description\": \"how long the cache lives\", \"body\": \"Set ENABLE_PROMPT_CACHING_1H=1 to get an hour.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
-        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"cache-ttl\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Prompt cache TTL\", \"description\": \"how long the cache lives\", \"body\": \"Set ENABLE_PROMPT_CACHING_1H=1 to get an hour.\", \"links\": [], \"status\": \"stale\", \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}"
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"cache-ttl\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"how long the cache lives\", \"body\": \"Set ENABLE_PROMPT_CACHING_1H=1 to get an hour.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
+        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"cache-ttl\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"how long the cache lives\", \"body\": \"Set ENABLE_PROMPT_CACHING_1H=1 to get an hour.\", \"links\": [], \"status\": \"stale\", \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -471,11 +471,11 @@
         "files": [
           {
             "name": "MEMORY.md",
-            "text": "# Memory\n\nOne line per memory; the file holds the whole of it.\n\n- [Prompt cache TTL](cache-ttl.md) — **stale**, how long the cache lives\n"
+            "text": "# Memory\n\nOne line per memory; the file holds the whole of it.\n\n- [Cache ttl](cache-ttl.md) — **stale**, how long the cache lives\n"
           },
           {
             "name": "cache-ttl.md",
-            "text": "---\nname: cache-ttl\ntitle: Prompt cache TTL\ndescription: how long the cache lives\nmetadata:\n  type: project\n  project: VibeMemory\n  status: stale\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T11:00:00Z\n  version: e2\n---\n\nSet ENABLE_PROMPT_CACHING_1H=1 to get an hour.\n"
+            "text": "---\nname: cache-ttl\ndescription: how long the cache lives\nmetadata:\n  type: project\n  project: VibeMemory\n  status: stale\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T11:00:00Z\n  version: e2\n---\n\nSet ENABLE_PROMPT_CACHING_1H=1 to get an hour.\n"
           }
         ]
       }
@@ -485,7 +485,7 @@
       "provenance": "computed",
       "note": "Значение по умолчанию в файл не пишется: иначе в день появления поля переписались бы все проекции на машине, ничего при этом не сообщив. Журнал без поля читается как active.",
       "journal": [
-        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"cache-ttl\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Prompt cache TTL\", \"description\": \"how long the cache lives\", \"body\": \"Set ENABLE_PROMPT_CACHING_1H=1 to get an hour.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}"
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"cache-ttl\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"how long the cache lives\", \"body\": \"Set ENABLE_PROMPT_CACHING_1H=1 to get an hour.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -500,7 +500,7 @@
         "files": [
           {
             "name": "cache-ttl.md",
-            "text": "---\nname: cache-ttl\ntitle: Prompt cache TTL\ndescription: how long the cache lives\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:00:00Z\n  version: e1\n---\n\nSet ENABLE_PROMPT_CACHING_1H=1 to get an hour.\n"
+            "text": "---\nname: cache-ttl\ndescription: how long the cache lives\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:00:00Z\n  version: e1\n---\n\nSet ENABLE_PROMPT_CACHING_1H=1 to get an hour.\n"
           }
         ]
       }
@@ -510,7 +510,7 @@
       "provenance": "computed",
       "note": "Статус виден в файле, значит входит в сравнение при импорте: иначе пометка, поставленная рукой или моделью, молча откатывалась бы следующей проекцией. Движок сам статус не ставит никогда — устарел факт или нет, знает только тот, кто это заметил.",
       "journal": [
-        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"cache-ttl\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"title\": \"Prompt cache TTL\", \"description\": \"how long the cache lives\", \"body\": \"Set ENABLE_PROMPT_CACHING_1H=1 to get an hour.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}"
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"cache-ttl\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"how long the cache lives\", \"body\": \"Set ENABLE_PROMPT_CACHING_1H=1 to get an hour.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}"
       ],
       "expect": {
         "records": [
@@ -528,7 +528,7 @@
           "documents": [
             {
               "name": "cache-ttl.md",
-              "text": "---\nname: cache-ttl\ntitle: Prompt cache TTL\ndescription: how long the cache lives\nmetadata:\n  type: project\n  project: VibeMemory\n  status: stale\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:00:00Z\n  version: e1\n---\n\nSet ENABLE_PROMPT_CACHING_1H=1 to get an hour.\n"
+              "text": "---\nname: cache-ttl\ndescription: how long the cache lives\nmetadata:\n  type: project\n  project: VibeMemory\n  status: stale\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:00:00Z\n  version: e1\n---\n\nSet ENABLE_PROMPT_CACHING_1H=1 to get an hour.\n"
             }
           ],
           "events": [
@@ -560,7 +560,7 @@
           "documents": [
             {
               "name": "odd.md",
-              "text": "---\nname: odd\ntitle: Quarantine path\ndescription: where a set-aside version goes\nmetadata:\n  type: project\n  project: VibeMemory\n  status: disputed\n  agent: claude-code\n---\n\nQuarantined versions live in `~/.vibememory/quarantine/`.\n"
+              "text": "---\nname: odd\ndescription: where a set-aside version goes\nmetadata:\n  type: project\n  project: VibeMemory\n  status: disputed\n  agent: claude-code\n---\n\nQuarantined versions live in `~/.vibememory/quarantine/`.\n"
             }
           ],
           "events": [],
@@ -571,6 +571,62 @@
             }
           ]
         }
+      }
+    },
+    {
+      "id": "realCliMemoryFileIsAccepted",
+      "provenance": "observed",
+      "note": "Файл в том виде, в каком его пишет сам Claude Code: поля `name` + `description` + `metadata`, и НИКАКОГО `title`. Ровно на этом разбор отвергал все 135 файлов памяти в сторе владельца, журнал не создавался никогда, и весь слой записей ни разу не встретился с реальностью. Frontmatter скопирован дословно по набору и порядку полей; описание и тело синтетические, потому что записи владельца приватны.",
+      "journal": [],
+      "expect": {
+        "records": [],
+        "forgotten": [],
+        "unreadable": 0,
+        "import": {
+          "stamp": "2026-09-09T12:00:00Z",
+          "agent": "claude-code",
+          "documents": [
+            {
+              "name": "promed-branch-names.md",
+              "text": "---\nname: promed-branch-names\ndescription: \"Одна работа называется по-разному в двух репозиториях\"\nmetadata: \n  node_type: memory\n  type: project\n  originSessionId: e303dd59-ad00-47b4-94a6-76fd3936ad41\n  modified: 2026-08-14T07:46:19.118Z\n---\n\nВ рабочем репозитории ветка называется одним именем, в локальном — другим.\n"
+            }
+          ],
+          "events": [
+            {
+              "uuid": "2026-09-09T12:00:00Z-promed-branch-names",
+              "parent": null,
+              "id": "promed-branch-names",
+              "bodyContains": "В рабочем репозитории",
+              "createdAt": "2026-09-09T12:00:00Z"
+            }
+          ],
+          "rejected": []
+        }
+      }
+    },
+    {
+      "id": "unknownMetadataSurvivesTheProjection",
+      "provenance": "observed",
+      "note": "`node_type`, `originSessionId` и `modified` пишет CLI, а не мы. Движок перезаписывает проекцию на каждой остановке сессии — поле, потерянное на этом пути, движок молча удалил бы у пользователя.",
+      "journal": [
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"promed-branch-names\", \"kind\": \"project\", \"project\": \"Promed\", \"description\": \"Одна работа называется по-разному в двух репозиториях\", \"body\": \"В рабочем репозитории ветка называется одним именем, в локальном — другим.\", \"links\": [], \"metadata\": {\"node_type\": \"memory\", \"originSessionId\": \"e303dd59-ad00-47b4-94a6-76fd3936ad41\", \"modified\": \"2026-08-14T07:46:19.118Z\"}, \"agent\": \"claude-code\", \"createdAt\": \"2026-08-14T07:46:19Z\", \"updatedAt\": \"2026-08-14T07:46:19Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "promed-branch-names",
+            "version": "e1",
+            "rivals": []
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "files": [
+          {
+            "name": "promed-branch-names.md",
+            "text": "---\nname: promed-branch-names\ndescription: Одна работа называется по-разному в двух репозиториях\nmetadata:\n  modified: 2026-08-14T07:46:19.118Z\n  node_type: memory\n  originSessionId: e303dd59-ad00-47b4-94a6-76fd3936ad41\n  type: project\n  project: Promed\n  agent: claude-code\n  created: 2026-08-14T07:46:19Z\n  updated: 2026-08-14T07:46:19Z\n  version: e1\n---\n\nВ рабочем репозитории ветка называется одним именем, в локальном — другим.\n"
+          }
+        ]
       }
     }
   ]

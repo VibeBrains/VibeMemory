@@ -108,7 +108,22 @@ pub fn sync(
 
     // 1. Edits first: what the projection holds now becomes versions before anything is written.
     let documents = read_documents(memory_dir)?;
-    let import = markdown::import(&documents, &memory, stamp, agent);
+    let mut import = markdown::import(&documents, &memory, stamp, agent);
+    // The file never says which project it belongs to — it does not have to, it lives inside one.
+    // A record does have to say: over MCP it arrives without a path, and "which project is this
+    // memory about" then has no other answer.
+    let project = journal_path
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    for event in &mut import.events {
+        if let journal::Action::Upsert { record } = &mut event.action
+            && record.project.is_empty()
+        {
+            record.project.clone_from(&project);
+        }
+    }
     for (name, error) in import.rejected {
         synced.rejected.push((name, error.to_string()));
     }

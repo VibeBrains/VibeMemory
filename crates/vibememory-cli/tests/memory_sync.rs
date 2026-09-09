@@ -271,3 +271,34 @@ fn the_quarantine_notice_names_what_is_actually_waiting() {
         "the notice must not ask for a reconciliation that cannot happen"
     );
 }
+
+#[test]
+fn an_imported_record_learns_which_project_it_belongs_to() {
+    use vibememory_core::memory::journal::{self, Action};
+
+    let temp = TempDir::new("memory-project");
+    let project = temp.dir("store/projects/Promed");
+    let memory_dir = project.join("memory");
+    fs::create_dir_all(&memory_dir).expect("dirs");
+    // A real memory file, in the shape the CLI writes it: it never names its project, because it
+    // lives inside one. A record has to name it — over MCP it arrives without a path.
+    fs::write(
+        memory_dir.join("branch-names.md"),
+        "---\nname: branch-names\ndescription: one line\nmetadata:\n  type: project\n---\n\nBody.\n",
+    )
+    .expect("write");
+
+    let journal = project.join("memory.jsonl");
+    vibememory_cli::memory::sync(&memory_dir, &journal, "2026-09-09T12:00:00Z", "mac-test")
+        .expect("sync");
+
+    let bytes = fs::read(&journal).expect("journal");
+    let (events, _) = journal::parse(&bytes);
+    let Action::Upsert { record } = &events[0].action else {
+        panic!("an import writes an upsert");
+    };
+    assert_eq!(
+        record.project, "Promed",
+        "the project comes from the directory the journal lives in"
+    );
+}

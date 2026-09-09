@@ -24,7 +24,7 @@ Claude Code, — проекция записей: движок их генери
 Запись новой версии:
 
 ```json
-{"uuid":"mac-main-2026-09-03T12:00:00Z-store-naming","parent":"mac-main-2026-09-03T10:05:00Z-store-naming","action":"upsert","record":{"id":"store-naming","kind":"project","project":"VibeMemory","title":"Store naming","description":"откуда берётся имя стора","body":"Имя следует из общего git-каталога.","links":["merge-rules"],"agent":"claude-code","createdAt":"2026-09-03T10:00:00Z","updatedAt":"2026-09-03T12:00:00Z"}}
+{"uuid":"mac-main-2026-09-03T12:00:00Z-store-naming","parent":"mac-main-2026-09-03T10:05:00Z-store-naming","action":"upsert","record":{"id":"store-naming","kind":"project","project":"VibeMemory","description":"откуда берётся имя стора","body":"Имя следует из общего git-каталога.","links":["merge-rules"],"agent":"claude-code","createdAt":"2026-09-03T10:00:00Z","updatedAt":"2026-09-03T12:00:00Z"}}
 ```
 
 Просьба забыть:
@@ -41,7 +41,7 @@ Claude Code, — проекция записей: движок их генери
 | `record.id` | идентичность записи: `[a-z0-9-]`, до 64 символов, без двойных и краевых дефисов |
 | `record.kind` | `user`, `feedback`, `project`, `reference` — неизвестный вид отвергается, а не угадывается |
 | `record.project` | к какому проекту относится (по MCP запись приходит без пути) |
-| `record.title` | человеческое имя, одна строка — идёт в индекс |
+| `record.metadata` | поля `metadata`, которых этот формат не знает (`node_type`, `originSessionId`, `modified`) — переносятся как есть |
 | `record.description` | одна строка «что внутри»: по ней решают, нужна ли запись |
 | `record.body` | сама память, markdown |
 | `record.links` | другие записи, на которые ссылается тело (`[[id]]`), в порядке появления |
@@ -54,7 +54,6 @@ Claude Code, — проекция записей: движок их генери
 ```markdown
 ---
 name: store-naming
-title: Store naming
 description: откуда берётся имя стора
 metadata:
   type: project
@@ -73,7 +72,6 @@ metadata:
 ```markdown
 ---
 name: cache-ttl
-title: Prompt cache TTL
 description: how long the cache lives
 metadata:
   type: project
@@ -93,6 +91,19 @@ metadata:
 `metadata.version` — не украшение: по нему правка файла узнаёт, из какой версии она сделана.
 Если модель перепишет файл и потеряет это поле, движок возьмёт текущую версию записи — правка не
 потеряется, но станет неотличима от сделанной «поверх свежего».
+
+## Заголовка у записи нет
+
+В файле, который пишет Claude Code, поля `title` **не существует** — только `name`, `description`
+и `metadata`. Человеческое имя живёт в строке индекса `MEMORY.md`, а не в записи.
+
+Поэтому заголовок **выводится** из идентификатора в момент проекции: `promed-branch-names` →
+`Promed branch names`. Он не хранится нигде и не может разойтись с идентификатором.
+
+Цена названа прямо: выведенный заголовок машинный и хуже написанного человеком. Взамен модель
+описывает файл, который существует, а не тот, который мы придумали, — до 2026-09-09 разбор
+требовал `title` и отвергал **все** 135 файлов памяти на машине владельца, из-за чего журнал не
+создавался никогда (разбор: `knowledge/design/memoryNeverMetReality.md`).
 
 ## Правила, которые стоит знать
 
