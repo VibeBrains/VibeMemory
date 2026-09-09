@@ -38,9 +38,15 @@ pub struct SideReport {
 pub struct Fork {
     /// The side of the last `uuid` line of the result.
     pub tail_side: Side,
-    /// The side holding the leaf Claude Code resumes from: the `leafUuid` of the last
-    /// `last-prompt` line. `None` when that leaf sits in the common prefix — neither branch is
-    /// singled out, and the fresh turns of both machines stay out of the conversation.
+    /// The side holding the leaf of the last `last-prompt` line. `None` when that leaf sits in
+    /// the common prefix — neither branch is singled out.
+    ///
+    /// **Not** "the side the client will show", although it was named for that. Measured
+    /// 2026-09-09 on CLI 2.1.260: a non-interactive `--resume -p` continued from the last `user`
+    /// record in file order, not from this leaf, and moving the `last-prompt` to the very last
+    /// line of the file changed nothing. Interactive resume and Desktop are not measured, so the
+    /// field is kept — it may well describe them — but nothing user-facing may promise a choice
+    /// on its strength. See `docs/knowledge/claudeCode/forkResumeMeasured.md`.
     pub visible: Option<Side>,
 }
 

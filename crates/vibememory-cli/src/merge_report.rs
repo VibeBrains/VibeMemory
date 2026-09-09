@@ -56,13 +56,21 @@ pub fn route(path: &str, report: &MergeReport, duplicate_message_ids: &BTreeSet<
     };
 
     if let Some(fork) = report.fork {
-        let visible = fork.visible.map_or_else(
-            || "neither branch is singled out".to_owned(),
-            |side| format!("the branch from {side:?} is the one it will show"),
+        // Deliberately no promise about which branch the client will show. Measured 2026-09-09 on
+        // 2.1.260: a non-interactive `--resume -p` continued from the last `user` record in file
+        // order, not from the leaf of the last `last-prompt` that `visible` names — and it did so
+        // even with that `last-prompt` written as the very last line. Interactive resume and
+        // Desktop are not measured, so naming both sides is the only honest sentence available.
+        // See docs/knowledge/claudeCode/forkResumeMeasured.md.
+        let named = fork.visible.map_or_else(
+            || "no `last-prompt` singles out either branch".to_owned(),
+            |side| format!("`last-prompt` names the branch from {side:?}"),
         );
         routed.session.push(format!(
-            "VibeMemory: {path} was continued on two machines and both branches are kept; \
-             {visible}. The other branch is in the file and can be reached with /rewind."
+            "VibeMemory: {path} was continued on two machines and both branches are kept. The \
+             file ends on the branch from {:?}, and {named}. Which one your client shows depends \
+             on the client; the other is in the file and can be reached with /rewind.",
+            fork.tail_side
         ));
     }
     if report.before_boundary > 0 {

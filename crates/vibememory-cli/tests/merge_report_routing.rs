@@ -63,10 +63,35 @@ fn a_fork_is_told_to_the_session_because_it_changes_what_a_person_reads() {
 
     let routed = route(PATH, &merged.report, &BTreeSet::new());
     assert_eq!(routed.session.len(), 1, "{:?}", routed.session);
+    let said = &routed.session[0];
     assert!(
-        routed.session[0].contains("/rewind"),
-        "a person needs to be told how to reach the other branch: {}",
-        routed.session[0]
+        said.contains("/rewind"),
+        "a person needs to be told how to reach the other branch: {said}"
+    );
+    // The sentence must not promise which branch the client will show. Measured 2026-09-09 on CLI
+    // 2.1.260: it resumed from the file's tail, not from the leaf `last-prompt` names — and the
+    // engine had been telling the owner the opposite. A person decides which branch to rescue by
+    // this sentence, so a promise here is worse than silence.
+    for promise in ["is the one it will show", "will show", "you will see"] {
+        assert!(
+            !said.contains(promise),
+            "the message may not promise the client's choice ({promise:?}): {said}"
+        );
+    }
+    // What it must do instead: state the two facts a person can act on — where the file ends and
+    // what `last-prompt` names. They may point at the same side (they do here), so requiring both
+    // words would be wrong; requiring both *facts* is the point.
+    assert!(
+        said.contains("The file ends on the branch from"),
+        "the message must say where the file ends: {said}"
+    );
+    assert!(
+        said.contains("last-prompt"),
+        "and what last-prompt names: {said}"
+    );
+    assert!(
+        said.contains("depends on the client"),
+        "and that the choice is the client's, not ours to promise: {said}"
     );
 }
 
