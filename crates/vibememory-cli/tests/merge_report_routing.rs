@@ -21,7 +21,7 @@ use vibememory_cli::merge_report::{
     LOG_FILE, append_to_log, clear_pending, duplicate_message_ids, read_pending, route,
     save_pending,
 };
-use vibememory_core::merge::jsonl::{MergeReport, SideReport, merge_jsonl};
+use vibememory_core::merge::jsonl::{Fork, MergeReport, Side, SideReport, merge_jsonl};
 
 const PATH: &str = "projects/Project/session.jsonl";
 
@@ -68,30 +68,93 @@ fn a_fork_is_told_to_the_session_because_it_changes_what_a_person_reads() {
         said.contains("/rewind"),
         "a person needs to be told how to reach the other branch: {said}"
     );
-    // The sentence must not promise which branch the client will show. Measured 2026-09-09 on CLI
-    // 2.1.260: it resumed from the file's tail, not from the leaf `last-prompt` names — and the
-    // engine had been telling the owner the opposite. A person decides which branch to rescue by
-    // this sentence, so a promise here is worse than silence.
+    // The sentence may not promise a branch on `visible`, which is what it used to do: measured
+    // 2026-09-09 and again 09-10 on CLI 2.1.260, a resume goes to the file's tail on all three
+    // paths, never to the leaf `last-prompt` names. A person decides which branch to rescue by
+    // this sentence.
     for promise in ["is the one it will show", "will show", "you will see"] {
         assert!(
             !said.contains(promise),
             "the message may not promise the client's choice ({promise:?}): {said}"
         );
     }
-    // What it must do instead: state the two facts a person can act on — where the file ends and
-    // what `last-prompt` names. They may point at the same side (they do here), so requiring both
-    // words would be wrong; requiring both *facts* is the point.
+    // What it must say instead: where the file ends, that a resume goes there, and the scope of
+    // that claim. The version is part of the fact — the old message was wrong precisely because
+    // it stated behaviour with no measurement behind it.
     assert!(
         said.contains("The file ends on the branch from"),
         "the message must say where the file ends: {said}"
     );
     assert!(
+        said.contains("a resume continues from there"),
+        "and that a resume goes there, which is the measured fact: {said}"
+    );
+    assert!(
+        said.contains("2.1.260"),
+        "and the version the claim was measured on: {said}"
+    );
+    // The old hedge is now a false statement, not a modest one: three paths gave one answer.
+    assert!(
+        !said.contains("depends on the client"),
+        "the client's choice is measured, so the hedge may not come back: {said}"
+    );
+    // `last-prompt` still gets named — it is a real fact about the file — but only alongside what
+    // it is not, so nobody reads it as the resume point again.
+    assert!(
         said.contains("last-prompt"),
         "and what last-prompt names: {said}"
     );
     assert!(
-        said.contains("depends on the client"),
-        "and that the choice is the client's, not ours to promise: {said}"
+        said.contains("not where a resume goes"),
+        "named together with what it is not: {said}"
+    );
+}
+
+#[test]
+fn the_message_names_the_file_tail_even_when_last_prompt_points_the_other_way() {
+    // The fork that matters is the one where the two facts disagree — that disagreement is the
+    // whole subject of the measurement, and in an ordinary two-record fork the sides coincide, so
+    // a gate built on one cannot tell them apart. Built as a report rather than as a transcript:
+    // what merge computes is gated by the merge fixtures, what routing says about it is gated
+    // here.
+    let mut report = empty_report();
+    report.fork = Some(Fork {
+        tail_side: Side::Ours,
+        visible: Some(Side::Theirs),
+    });
+
+    let routed = route(PATH, &report, &BTreeSet::new());
+    assert_eq!(routed.session.len(), 1, "{:?}", routed.session);
+    let said = &routed.session[0];
+    assert!(
+        said.contains("The file ends on the branch from Ours"),
+        "the resume point is the file's tail, and the message must name that side: {said}"
+    );
+    assert!(
+        said.contains("`last-prompt` names the branch from Theirs"),
+        "the other side is named as what `last-prompt` says, not as the resume point: {said}"
+    );
+}
+
+#[test]
+fn a_fork_with_no_last_prompt_still_reads_as_a_sentence() {
+    // `visible` is None whenever the leaf sits in the common prefix. The clause that follows it
+    // used to be glued on regardless, which produced "no `last-prompt` singles out either branch,
+    // which is not where a resume goes" — a sentence that says the opposite of the truth.
+    let mut report = empty_report();
+    report.fork = Some(Fork {
+        tail_side: Side::Theirs,
+        visible: None,
+    });
+
+    let said = &route(PATH, &report, &BTreeSet::new()).session[0];
+    assert!(
+        said.contains("No `last-prompt` singles out either branch."),
+        "{said}"
+    );
+    assert!(
+        !said.contains("branch, which is not where a resume goes"),
+        "the disclaimer belongs to a named branch, not to the absence of one: {said}"
     );
 }
 

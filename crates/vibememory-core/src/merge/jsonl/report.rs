@@ -41,12 +41,13 @@ pub struct Fork {
     /// The side holding the leaf of the last `last-prompt` line. `None` when that leaf sits in
     /// the common prefix — neither branch is singled out.
     ///
-    /// **Not** "the side the client will show", although it was named for that. Measured
-    /// 2026-09-09 on CLI 2.1.260: a non-interactive `--resume -p` continued from the last `user`
-    /// record in file order, not from this leaf, and moving the `last-prompt` to the very last
-    /// line of the file changed nothing. Interactive resume and Desktop are not measured, so the
-    /// field is kept — it may well describe them — but nothing user-facing may promise a choice
-    /// on its strength. See `docs/knowledge/claudeCode/forkResumeMeasured.md`.
+    /// **Not** "the side the client will show", although it was named for that. Measured on CLI
+    /// 2.1.260 across all three resume paths — non-interactive `--resume -p`, an interactive tty,
+    /// and the binary under Desktop's entrypoint: every one continued from the last `user` record
+    /// in file order (`tail_side`), never from this leaf, and moving the `last-prompt` to the very
+    /// last line of the file changed nothing. What `last-prompt` is for stays unknown, so the
+    /// field is kept as the fact it really is; nothing user-facing may call it the resume point.
+    /// See `docs/knowledge/claudeCode/forkResumeMeasured.md`.
     pub visible: Option<Side>,
 }
 

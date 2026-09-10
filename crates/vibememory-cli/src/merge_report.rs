@@ -56,20 +56,26 @@ pub fn route(path: &str, report: &MergeReport, duplicate_message_ids: &BTreeSet<
     };
 
     if let Some(fork) = report.fork {
-        // Deliberately no promise about which branch the client will show. Measured 2026-09-09 on
-        // 2.1.260: a non-interactive `--resume -p` continued from the last `user` record in file
-        // order, not from the leaf of the last `last-prompt` that `visible` names — and it did so
-        // even with that `last-prompt` written as the very last line. Interactive resume and
-        // Desktop are not measured, so naming both sides is the only honest sentence available.
-        // See docs/knowledge/claudeCode/forkResumeMeasured.md.
+        // What a resume actually does, measured rather than assumed: on 2.1.260 all three paths
+        // — non-interactive `-p`, an interactive tty, and the binary under Desktop's entrypoint —
+        // continued from the last `user` record in file order, never from the leaf of the last
+        // `last-prompt` that `visible` names. The version is named in the sentence because that
+        // is the scope of the measurement, and a claim without its scope is the reason this
+        // message was wrong before. See docs/knowledge/claudeCode/forkResumeMeasured.md.
         let named = fork.visible.map_or_else(
-            || "no `last-prompt` singles out either branch".to_owned(),
-            |side| format!("`last-prompt` names the branch from {side:?}"),
+            || "No `last-prompt` singles out either branch.".to_owned(),
+            |side| {
+                format!(
+                    "`last-prompt` names the branch from {side:?}, which is not where a resume \
+                     goes."
+                )
+            },
         );
         routed.session.push(format!(
             "VibeMemory: {path} was continued on two machines and both branches are kept. The \
-             file ends on the branch from {:?}, and {named}. Which one your client shows depends \
-             on the client; the other is in the file and can be reached with /rewind.",
+             file ends on the branch from {:?}, and a resume continues from there — measured on \
+             CLI 2.1.260 through three paths. {named} The branch you are not on is in the file \
+             and can be reached with /rewind.",
             fork.tail_side
         ));
     }
