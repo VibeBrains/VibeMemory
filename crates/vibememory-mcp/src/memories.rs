@@ -36,11 +36,36 @@ pub trait Memories {
     /// What went wrong writing it.
     fn append(&self, project: &str, event: &Event) -> Result<(), String>;
 
+    /// The sessions of a project, newest first. Names and times only — a corpus of 1.7 GiB
+    /// cannot be read to answer "which sessions mention this".
+    ///
+    /// # Errors
+    ///
+    /// What went wrong reading the store.
+    fn transcripts(&self, project: &str) -> Result<Vec<TranscriptRef>, String>;
+
+    /// The bytes of one transcript, read only when the search actually reaches it.
+    ///
+    /// # Errors
+    ///
+    /// What went wrong reading the file.
+    fn read_transcript(&self, project: &str, session: &str) -> Result<Vec<u8>, String>;
+
     /// A uuid for a new event: unique on this machine, and the same shape the engine writes.
     fn new_version(&self, id: &str) -> String;
 
     /// The clock, so the tools do not have one.
     fn now(&self) -> String;
+}
+
+/// One session of a project, without its content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptRef {
+    /// The session id, which is also the file name.
+    pub session: String,
+    /// When the file was last written, as seconds since the epoch. Only for ordering: the search
+    /// goes newest first, because that is the order a person asks about their own history in.
+    pub modified: u64,
 }
 
 /// The real store under `<engine>/store/projects/<name>/memory.jsonl`.
@@ -116,6 +141,52 @@ impl Memories for StoreMemories {
         file.write_all(&line).map_err(|error| error.to_string())
     }
 
+    fn transcripts(&self, project: &str) -> Result<Vec<TranscriptRef>, String> {
+        let dir = self.store.join("projects").join(project);
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(format!("{}: {error}", dir.display())),
+        };
+        let mut found: Vec<TranscriptRef> = entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let path = entry.path();
+                if path.extension()? != "jsonl" {
+                    return None;
+                }
+                let session = path.file_stem()?.to_string_lossy().into_owned();
+                // The memory journal lives beside the transcripts and is not one of them.
+                if session == "memory" {
+                    return None;
+                }
+                let modified = entry
+                    .metadata()
+                    .ok()
+                    .and_then(|data| data.modified().ok())
+                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |since| since.as_secs());
+                Some(TranscriptRef { session, modified })
+            })
+            .collect();
+        found.sort_by(|left, right| {
+            right
+                .modified
+                .cmp(&left.modified)
+                .then_with(|| left.session.cmp(&right.session))
+        });
+        Ok(found)
+    }
+
+    fn read_transcript(&self, project: &str, session: &str) -> Result<Vec<u8>, String> {
+        let path = self
+            .store
+            .join("projects")
+            .join(project)
+            .join(format!("{session}.jsonl"));
+        std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))
+    }
+
     fn new_version(&self, id: &str) -> String {
         // Machine first, exactly as the engine's own events are named: two agents writing in the
         // same second on two machines must not produce the same uuid, or the union merge would
@@ -135,6 +206,9 @@ impl Memories for StoreMemories {
     }
 }
 
+/// One transcript of the fake: session id, modified time, raw lines.
+pub type FakeTranscript = (String, u64, String);
+
 /// A journal held in memory, for tests and for anyone embedding the server.
 #[derive(Debug, Default)]
 pub struct FakeMemories {
@@ -144,6 +218,11 @@ pub struct FakeMemories {
     pub stamp: String,
     /// Same job as the real one's: a fixed clock makes collisions certain rather than likely.
     written: AtomicU64,
+    /// Transcripts by project.
+    pub history: std::cell::RefCell<BTreeMap<String, Vec<FakeTranscript>>>,
+    /// How many transcripts were actually read. The cap on results is cheap to check; the cap on
+    /// *reading* is the one that matters on a 1.7 GiB corpus, and it is invisible without this.
+    pub reads: AtomicU64,
 }
 
 impl FakeMemories {
@@ -154,6 +233,8 @@ impl FakeMemories {
             events: std::cell::RefCell::new(BTreeMap::new()),
             stamp: stamp.to_owned(),
             written: AtomicU64::new(0),
+            history: std::cell::RefCell::new(BTreeMap::new()),
+            reads: AtomicU64::new(0),
         }
     }
 
@@ -165,7 +246,14 @@ impl FakeMemories {
 
 impl Memories for FakeMemories {
     fn projects(&self) -> Result<Vec<String>, String> {
-        Ok(self.events.borrow().keys().cloned().collect())
+        // Memory journals and transcripts both live under `projects/<name>`, and the real store
+        // answers by listing that directory. A project with sessions but no memory yet is still a
+        // project, so the fake has to say so too.
+        let mut names: Vec<String> = self.events.borrow().keys().cloned().collect();
+        names.extend(self.history.borrow().keys().cloned());
+        names.sort();
+        names.dedup();
+        Ok(names)
     }
 
     fn load(&self, project: &str) -> Result<Memory, String> {
@@ -181,6 +269,33 @@ impl Memories for FakeMemories {
             .or_default()
             .push(event.clone());
         Ok(())
+    }
+
+    fn transcripts(&self, project: &str) -> Result<Vec<TranscriptRef>, String> {
+        let borrowed = self.history.borrow();
+        let mut found: Vec<TranscriptRef> = borrowed
+            .get(project)
+            .into_iter()
+            .flatten()
+            .map(|(session, modified, _)| TranscriptRef {
+                session: session.clone(),
+                modified: *modified,
+            })
+            .collect();
+        found.sort_by_key(|transcript| std::cmp::Reverse(transcript.modified));
+        Ok(found)
+    }
+
+    fn read_transcript(&self, project: &str, session: &str) -> Result<Vec<u8>, String> {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        let borrowed = self.history.borrow();
+        borrowed
+            .get(project)
+            .into_iter()
+            .flatten()
+            .find(|(id, _, _)| id == session)
+            .map(|(_, _, text)| text.clone().into_bytes())
+            .ok_or_else(|| format!("no transcript {session}"))
     }
 
     fn new_version(&self, id: &str) -> String {

@@ -81,6 +81,22 @@ pub fn catalogue() -> Value {
             }
         },
         {
+            "name": "history_search",
+            "description": "Search past sessions by words said in them. Returns which session, \
+                            when, and a short excerpt — never whole transcripts. Newest first, \
+                            because that is the order a person asks about their own history in. \
+                            Narrow with `project` when you know it: the corpus is gigabytes.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Words that must all appear in one message." },
+                    "project": { "type": "string", "description": "Limit to one project. Omit to search all of them." },
+                    "limit": { "type": "integer", "description": "How many matches to return; 20 by default, 100 at most." }
+                },
+                "required": ["query"]
+            }
+        },
+        {
             "name": "memory_delete",
             "description": "Forget a fact. The versions stay in the journal; the record stops \
                             being shown. Prefer marking it stale when it explains why something \
@@ -109,6 +125,7 @@ pub fn call(name: &str, arguments: &Value, agent: &str, memories: &dyn Memories)
         "memory_save" => save(arguments, agent, memories),
         "memory_update" => update(arguments, agent, memories),
         "memory_delete" => delete(arguments, agent, memories),
+        "history_search" => history_search(arguments, memories),
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -302,6 +319,139 @@ fn delete(arguments: &Value, agent: &str, memories: &dyn Memories) -> ToolResult
     };
     memories.append(&project, &event)?;
     Ok(json!({ "forgotten": id.as_str(), "version": event.uuid }))
+}
+
+/// How many matches a search returns when the caller does not say.
+const DEFAULT_HISTORY_LIMIT: usize = 20;
+/// The most it will return however loudly it is asked. The corpus is gigabytes; an answer that
+/// does not fit in a reply is not an answer.
+const MAX_HISTORY_LIMIT: usize = 100;
+/// How much of a matching message comes back. Enough to recognise the moment, not enough to
+/// quietly hand a whole conversation to whoever asked.
+const EXCERPT: usize = 240;
+
+/// Searches past sessions for words said in them.
+///
+/// Newest first, and stops as soon as it has enough: the store here holds 1959 transcripts and
+/// 1.7 GiB, so reading all of them to answer one question would make the tool useless. A file is
+/// read only when the search actually reaches it.
+fn history_search(arguments: &Value, memories: &dyn Memories) -> ToolResult {
+    let needle = text(arguments, "query")?.to_lowercase();
+    if needle.trim().is_empty() {
+        return Err("query is required: an empty search would return the whole history".to_owned());
+    }
+    let words: Vec<&str> = needle.split_whitespace().collect();
+    let limit =
+        arguments
+            .get("limit")
+            .and_then(Value::as_u64)
+            .map_or(DEFAULT_HISTORY_LIMIT, |asked| {
+                usize::try_from(asked)
+                    .unwrap_or(MAX_HISTORY_LIMIT)
+                    .clamp(1, MAX_HISTORY_LIMIT)
+            });
+
+    // Newest first across projects too, not project by project: "what did I say about X" is a
+    // question about time, not about directories.
+    let mut sessions = Vec::new();
+    for project in scope(arguments, memories)? {
+        for transcript in memories.transcripts(&project)? {
+            sessions.push((transcript.modified, project.clone(), transcript.session));
+        }
+    }
+    sessions.sort_by_key(|(modified, _, _)| std::cmp::Reverse(*modified));
+
+    let mut found = Vec::new();
+    for (_, project, session) in sessions {
+        if found.len() >= limit {
+            break;
+        }
+        let bytes = memories.read_transcript(&project, &session)?;
+        for hit in matches_in(&bytes, &words, limit - found.len()) {
+            found.push(json!({
+                "project": project,
+                "session": session,
+                "at": hit.at,
+                "role": hit.role,
+                "excerpt": hit.excerpt,
+            }));
+        }
+    }
+    Ok(json!({ "results": found }))
+}
+
+/// One message that matched.
+struct Hit {
+    at: String,
+    role: String,
+    excerpt: String,
+}
+
+/// Every matching message of one transcript, up to `wanted`.
+///
+/// A line that cannot be read is skipped, never fatal: the format is Anthropic's and changes
+/// between versions, and a search that dies on one unknown line is a search nobody can rely on.
+fn matches_in(bytes: &[u8], words: &[&str], wanted: usize) -> Vec<Hit> {
+    let mut hits = Vec::new();
+    for line in String::from_utf8_lossy(bytes).lines() {
+        if hits.len() >= wanted {
+            break;
+        }
+        let Ok(record) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let role = record
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if role != "user" && role != "assistant" {
+            continue;
+        }
+        let said = spoken_text(&record);
+        let lowered = said.to_lowercase();
+        if !words.iter().all(|word| lowered.contains(word)) {
+            continue;
+        }
+        hits.push(Hit {
+            at: record
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            role: role.to_owned(),
+            excerpt: excerpt_of(&said),
+        });
+    }
+    hits
+}
+
+/// The words of a record, whether the content is a string or a list of blocks.
+fn spoken_text(record: &Value) -> String {
+    let Some(content) = record
+        .get("message")
+        .and_then(|message| message.get("content"))
+    else {
+        return String::new();
+    };
+    match content {
+        Value::String(text) => text.clone(),
+        Value::Array(blocks) => blocks
+            .iter()
+            .filter_map(|block| block.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => String::new(),
+    }
+}
+
+/// The first part of a message, cut on a character boundary.
+fn excerpt_of(said: &str) -> String {
+    let trimmed = said.trim();
+    if trimmed.chars().count() <= EXCERPT {
+        return trimmed.to_owned();
+    }
+    let cut: String = trimmed.chars().take(EXCERPT).collect();
+    format!("{cut}…")
 }
 
 /// The records a body points at, in the order they appear.

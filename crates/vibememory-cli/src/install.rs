@@ -112,6 +112,13 @@ pub enum Step {
     /// A copy of this binary under the engine directory, so hooks and the scheduler survive a
     /// rebuild or a `cargo clean` of wherever it was built.
     Binary,
+    /// The MCP server beside it, placed and signed the same way.
+    ///
+    /// It is installed rather than copied by hand for one measured reason: writing over a binary
+    /// that has already been executed makes macOS kill it with SIGKILL and no message, while
+    /// `codesign --verify` still calls the file valid. The atomic rename here sidesteps that; a
+    /// `cp` in a manual does not.
+    McpBinary,
     /// The installed binary signed with the owner's own identity, so macOS stops asking for the
     /// same permission after every rebuild.
     BinarySigned {
@@ -148,6 +155,7 @@ impl Step {
             Self::DeletionsHeld => "no deletions waiting for a decision".to_owned(),
             Self::ScaffoldCommitted { .. } => "store scaffolding committed".to_owned(),
             Self::Binary => "engine binary in place".to_owned(),
+            Self::McpBinary => "MCP server binary in place".to_owned(),
             Self::BinarySigned { identity } => format!("engine binary signed by {identity}"),
             Self::ProjectLink { enc, name } => format!("link {enc} -> projects/{name}"),
         }
@@ -253,6 +261,7 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
         step: Step::Binary,
         state: binary,
     });
+    push_mcp_step(layout, &mut actions);
     // Signing is macOS's answer to "why does it ask me again after every rebuild"; elsewhere the
     // question does not exist, so neither does the step.
     if cfg!(target_os = "macos")
@@ -553,7 +562,20 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
         Step::PromptCacheEnv | Step::DeletionsHeld => Ok(()),
         Step::Schedule => install_schedule(layout),
         Step::Binary => install_binary(layout),
-        Step::BinarySigned { identity } => sign_binary(&installed_binary(layout), identity),
+        Step::McpBinary => match mcp_source() {
+            Some(source) => install_named(layout, MCP_BINARY, &source),
+            None => Ok(()),
+        },
+        Step::BinarySigned { identity } => {
+            sign_binary(&installed_binary(layout), identity)?;
+            // The server is launched by the client, not by us, and an unsigned copy beside a
+            // signed engine would ask the owner for permission all over again.
+            let mcp = installed_named(layout, MCP_BINARY);
+            if mcp.exists() {
+                sign_binary(&mcp, identity)?;
+            }
+            Ok(())
+        }
         Step::Hooks => write_hooks(layout),
         Step::ScaffoldCommitted { machine_id } => {
             commit_scaffolding(&store, &scaffolding_paths(machine_id))
@@ -690,7 +712,18 @@ fn install_schedule(layout: &Layout) -> Result<(), String> {
 /// Where the engine's own copy of the binary lives.
 #[must_use]
 pub fn installed_binary(layout: &Layout) -> PathBuf {
-    layout.engine_dir.join("bin").join("vibememory")
+    installed_named(layout, ENGINE_BINARY)
+}
+
+/// The engine itself.
+pub const ENGINE_BINARY: &str = "vibememory";
+/// The MCP server, installed beside it and treated exactly the same way.
+pub const MCP_BINARY: &str = "vibememory-mcp";
+
+/// Where a binary of this engine lives once installed.
+#[must_use]
+pub fn installed_named(layout: &Layout, name: &str) -> PathBuf {
+    layout.engine_dir.join("bin").join(name)
 }
 
 /// The note beside the installed binary saying which build it was copied from.
@@ -700,7 +733,12 @@ pub fn installed_binary(layout: &Layout) -> PathBuf {
 /// signing machine finds a difference, replaces the binary under the running hooks and signs it
 /// again — for ever, and for nothing.
 fn source_note(layout: &Layout) -> PathBuf {
-    layout.engine_dir.join("bin").join("vibememory.source")
+    source_note_named(layout, ENGINE_BINARY)
+}
+
+/// The same note, for any binary this engine installs.
+fn source_note_named(layout: &Layout, name: &str) -> PathBuf {
+    layout.engine_dir.join("bin").join(format!("{name}.source"))
 }
 
 /// Whether the installed copy is this build.
@@ -780,6 +818,95 @@ fn install_binary(layout: &Layout) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+
+/// Adds the MCP server step, and only when this machine has anything to do about it.
+///
+/// A machine that never built the server does not need it, and a step it can do nothing about
+/// would make `doctor` fail for ever on a perfectly healthy install.
+fn push_mcp_step(layout: &Layout, actions: &mut Vec<Action>) {
+    let source = mcp_source();
+    if source.is_none() && !installed_named(layout, MCP_BINARY).exists() {
+        return;
+    }
+    actions.push(Action {
+        step: Step::McpBinary,
+        state: named_binary_state(layout, MCP_BINARY, source.as_deref()),
+    });
+}
+
+/// The MCP server built beside whatever is running, when there is one.
+///
+/// `install` is normally run from a fresh build, and the server is that build's sibling. Running
+/// the installed engine finds the installed server, and copying a file onto itself is refused
+/// below rather than attempted.
+fn mcp_source() -> Option<PathBuf> {
+    let running = std::env::current_exe().ok()?;
+    let candidate = running.with_file_name(MCP_BINARY);
+    candidate.is_file().then_some(candidate)
+}
+
+/// Whether the installed copy of `name` came from this `source`.
+///
+/// Public so it can be gated with an explicit source: deriving it from `current_exe` would make
+/// the test write a file next to the shared test harness, which every other test in the binary
+/// then sees.
+#[must_use]
+pub fn named_binary_state(layout: &Layout, name: &str, source: Option<&Path>) -> State {
+    let installed = installed_named(layout, name);
+    let Some(source) = source else {
+        // Nothing to install from. What is already there stays; saying "missing" would make
+        // `doctor` fail on a machine that simply has no build beside it.
+        return State::Satisfied;
+    };
+    if source == installed {
+        return State::Satisfied; // the installed engine found itself
+    }
+    let Ok(bytes) = std::fs::read(source) else {
+        return State::Unknown {
+            reason: format!("{} could not be read", source.display()),
+        };
+    };
+    if !installed.exists() {
+        return State::Missing;
+    }
+    let wanted = crate::sha256::hex(&bytes);
+    match std::fs::read_to_string(source_note_named(layout, name)) {
+        Ok(noted) if noted.trim() == wanted => State::Satisfied,
+        _ => State::Missing,
+    }
+}
+
+/// Places a binary the way the engine places itself: atomically, then proves it runs.
+///
+/// # Errors
+///
+/// The text of what went wrong.
+pub fn install_named(layout: &Layout, name: &str, source: &Path) -> Result<(), String> {
+    let target = installed_named(layout, name);
+    if source == target {
+        return Ok(());
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let temporary = target.with_extension("new");
+    std::fs::copy(source, &temporary).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| e.to_string())?;
+    }
+    // Rename, never write in place. Measured 2026-09-10: overwriting a binary that had already
+    // been executed made the kernel kill every later run with SIGKILL and nothing on stderr,
+    // while `codesign --verify` kept calling the file valid on disk. A rename makes a new inode
+    // and the problem cannot arise.
+    std::fs::rename(&temporary, &target).map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(source).map_err(|e| e.to_string())?;
+    std::fs::write(source_note_named(layout, name), crate::sha256::hex(&bytes))
+        .map_err(|e| e.to_string())?;
+    binary_runs(&target)
 }
 
 /// Runs what was just installed and insists it answers.

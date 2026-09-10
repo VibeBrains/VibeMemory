@@ -23,6 +23,13 @@ const ENGINE_DIR_VAR: &str = "VIBEMEMORY_DIR";
 const DEFAULT_AGENT: &str = "mcp";
 
 fn main() -> ExitCode {
+    // Answered before anything else, and without touching the store: `install` asks it to prove
+    // that what it just placed actually runs. "Installed" is not the same as "works" — on macOS a
+    // binary written over in place is killed by the kernel with no message at all.
+    if std::env::args().any(|argument| argument == "--version") {
+        println!("vibememory-mcp {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
     let Some(engine_dir) = engine_dir() else {
         eprintln!("vibememory-mcp: no HOME and no {ENGINE_DIR_VAR}; cannot find the store");
         return ExitCode::FAILURE;

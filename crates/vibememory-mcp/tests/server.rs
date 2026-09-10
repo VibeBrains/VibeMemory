@@ -68,6 +68,7 @@ fn the_handshake_and_the_catalogue_are_what_a_client_expects() {
             "memory_get",
             "memory_save",
             "memory_update",
+            "history_search",
             "memory_delete"
         ]
     );
@@ -335,5 +336,202 @@ fn two_updates_in_the_same_second_are_two_versions_and_not_one() {
     assert_eq!(
         after["rivalVersions"], 0,
         "a chain of parents is not a fork: each update saw the one before it"
+    );
+}
+
+/// A transcript as the CLI writes one: one JSON record per line.
+fn transcript(
+    fake: &FakeMemories,
+    project: &str,
+    session: &str,
+    modified: u64,
+    said: &[(&str, &str)],
+) {
+    let text = said
+        .iter()
+        .map(|(role, words)| {
+            json!({
+                "type": role,
+                "timestamp": "2026-09-10T09:00:00Z",
+                "message": { "content": words }
+            })
+            .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fake.history
+        .borrow_mut()
+        .entry(project.to_owned())
+        .or_default()
+        .push((session.to_owned(), modified, text));
+}
+
+#[test]
+fn history_finds_what_was_said_and_answers_newest_first() {
+    let fake = memories();
+    transcript(
+        &fake,
+        "Promed",
+        "old-session",
+        100,
+        &[
+            ("user", "давай разберёмся с ветками репозитория"),
+            ("assistant", "ответ про что-то другое"),
+        ],
+    );
+    transcript(
+        &fake,
+        "VibeMemory",
+        "new-session",
+        900,
+        &[("user", "ещё раз про ветками и слияние")],
+    );
+
+    let found = call("history_search", &json!({"query": "ветками"}), &fake).expect("search");
+    let hits = found["results"].as_array().expect("array");
+    assert_eq!(hits.len(), 2, "{hits:?}");
+    assert_eq!(
+        hits[0]["session"], "new-session",
+        "newest first: that is the order a person asks about their own history in"
+    );
+    assert_eq!(hits[0]["project"], "VibeMemory");
+    assert_eq!(hits[1]["session"], "old-session");
+    assert_eq!(hits[0]["role"], "user");
+    assert!(
+        hits[0]["excerpt"]
+            .as_str()
+            .expect("excerpt")
+            .contains("слияние"),
+        "the excerpt has to show the moment: {}",
+        hits[0]["excerpt"]
+    );
+    // Every word must appear, as in memory_search.
+    let both = call(
+        "history_search",
+        &json!({"query": "ветками слияние"}),
+        &fake,
+    )
+    .expect("search");
+    assert_eq!(both["results"].as_array().expect("array").len(), 1);
+}
+
+#[test]
+fn history_stops_at_the_limit_and_never_returns_a_whole_corpus() {
+    let fake = memories();
+    for n in 0..30 {
+        transcript(
+            &fake,
+            "Promed",
+            &format!("s{n}"),
+            n,
+            &[("user", "одно и то же слово")],
+        );
+    }
+
+    let default = call("history_search", &json!({"query": "слово"}), &fake).expect("search");
+    assert_eq!(
+        default["results"].as_array().expect("array").len(),
+        20,
+        "twenty by default: an answer that does not fit in a reply is not an answer"
+    );
+
+    let asked = call(
+        "history_search",
+        &json!({"query": "слово", "limit": 3}),
+        &fake,
+    )
+    .expect("search");
+    assert_eq!(asked["results"].as_array().expect("array").len(), 3);
+
+    // Stops READING, not just stops collecting. On a 1.7 GiB corpus the difference between the
+    // two is the difference between a usable tool and one that reads every file every time.
+    fake.reads.store(0, std::sync::atomic::Ordering::Relaxed);
+    call(
+        "history_search",
+        &json!({"query": "слово", "limit": 3}),
+        &fake,
+    )
+    .expect("search");
+    let read = fake.reads.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(
+        read <= 4,
+        "three matches needed three files; it read {read} of thirty"
+    );
+
+    // However loudly it is asked. Enough sessions that only the clamp can hold the answer down.
+    for n in 30..150 {
+        transcript(
+            &fake,
+            "Promed",
+            &format!("s{n}"),
+            n,
+            &[("user", "одно и то же слово")],
+        );
+    }
+    let greedy = call(
+        "history_search",
+        &json!({"query": "слово", "limit": 1000}),
+        &fake,
+    )
+    .expect("s");
+    assert_eq!(
+        greedy["results"].as_array().expect("array").len(),
+        100,
+        "the ceiling is the ceiling: an answer that does not fit in a reply is not an answer"
+    );
+
+    // An empty query would return the whole history, so it is refused rather than obeyed.
+    assert!(call("history_search", &json!({"query": "   "}), &fake).is_err());
+}
+
+#[test]
+fn history_narrows_to_one_project_and_survives_a_line_it_cannot_read() {
+    let fake = memories();
+    transcript(&fake, "Promed", "a", 10, &[("user", "общее слово")]);
+    transcript(&fake, "VibeMemory", "b", 20, &[("user", "общее слово")]);
+    // A line this build cannot parse: the format is Anthropic's and changes between versions.
+    // A search that dies on one unknown line is a search nobody can rely on.
+    fake.history
+        .borrow_mut()
+        .get_mut("Promed")
+        .expect("project")
+        .push((
+            "broken".to_owned(),
+            30,
+            "не json вовсе\n{\"type\":\"user\",\"message\":{\"content\":\"общее слово\"}}"
+                .to_owned(),
+        ));
+
+    let narrowed = call(
+        "history_search",
+        &json!({"query": "слово", "project": "Promed"}),
+        &fake,
+    )
+    .expect("s");
+    let hits = narrowed["results"].as_array().expect("array");
+    assert_eq!(
+        hits.len(),
+        2,
+        "only Promed, and the broken line did not stop it: {hits:?}"
+    );
+    assert!(hits.iter().all(|hit| hit["project"] == "Promed"));
+}
+
+#[test]
+fn an_excerpt_shows_the_moment_without_handing_over_the_conversation() {
+    let fake = memories();
+    let long = "слово ".repeat(300); // far past any sensible excerpt
+    transcript(&fake, "Promed", "long", 10, &[("user", long.as_str())]);
+
+    let found = call("history_search", &json!({"query": "слово"}), &fake).expect("search");
+    let excerpt = found["results"][0]["excerpt"].as_str().expect("excerpt");
+    assert!(
+        excerpt.chars().count() <= 241,
+        "an excerpt is a hint, not a copy of the conversation: {} chars",
+        excerpt.chars().count()
+    );
+    assert!(
+        excerpt.ends_with('…'),
+        "and it says that it was cut: {excerpt}"
     );
 }

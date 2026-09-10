@@ -588,7 +588,7 @@ fn a_signed_binary_is_not_mistaken_for_a_different_build() {
     // Signing rewrites the binary — here, any change to its bytes stands for that. Byte
     // comparison would now report a different build, replace it under the running hooks and sign
     // it again, on this and on every later run.
-    fs::write(&installed, b"same build, signed: different bytes").expect("sign");
+    runnable(&installed, "one, signed: different bytes");
 
     assert_eq!(
         state_of(&plan(&layout, &config, &[]), &Step::Binary),
@@ -663,4 +663,104 @@ fn a_flag_that_switches_the_prompt_cache_off_is_named_as_a_conflict() {
         ]
     );
     assert!(cache_killing_flags(&serde_json::json!({})).is_empty());
+}
+
+/// A file that really runs and answers `--version`, so the install's own check is exercised.
+fn runnable(path: &Path, version: &str) {
+    fs::write(path, format!("#!/bin/sh\necho 'probe {version}'\n")).expect("write");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+}
+
+#[test]
+fn a_second_binary_is_placed_by_rename_and_a_signature_is_not_a_new_build() {
+    use vibememory_cli::install::{install_named, named_binary_state};
+
+    let temp = TempDir::new("install-named");
+    let layout = layout(&temp);
+    let source = temp.path().join("vibememory-mcp");
+    let installed = layout.engine_dir.join("bin").join("vibememory-mcp");
+
+    // Nothing to install from and nothing installed: a machine that never built the server has
+    // nothing to manage, and calling that "missing" would make `doctor` fail for ever.
+    assert_eq!(
+        named_binary_state(&layout, "vibememory-mcp", None),
+        State::Satisfied
+    );
+
+    // A real executable, not a stand-in: `install_named` insists that what it placed answers
+    // `--version`, and a test whose "binary" cannot run would not exercise that promise at all.
+    runnable(&source, "one");
+    assert_eq!(
+        named_binary_state(&layout, "vibememory-mcp", Some(&source)),
+        State::Missing,
+        "there is a build and it is not installed yet"
+    );
+
+    install_named(&layout, "vibememory-mcp", &source).expect("install");
+    assert_eq!(
+        fs::read(&installed).expect("read"),
+        fs::read(&source).expect("read source"),
+        "placed byte for byte"
+    );
+    assert_eq!(
+        named_binary_state(&layout, "vibememory-mcp", Some(&source)),
+        State::Satisfied
+    );
+
+    // Signing rewrites the file. Measured 2026-09-10: comparing bytes would then call it a new
+    // build for ever, and every run would replace it — which is exactly what makes macOS kill a
+    // binary that was written over in place.
+    fs::write(&installed, b"same build, signed: different bytes").expect("sign");
+    assert_eq!(
+        named_binary_state(&layout, "vibememory-mcp", Some(&source)),
+        State::Satisfied,
+        "a signature is not a different build"
+    );
+
+    // A genuinely newer build is owed again.
+    runnable(&source, "two");
+    assert_eq!(
+        named_binary_state(&layout, "vibememory-mcp", Some(&source)),
+        State::Missing
+    );
+}
+
+#[test]
+fn installing_a_second_time_verifies_the_new_copy_as_well() {
+    use std::process::Command;
+    use vibememory_cli::install::install_named;
+
+    let temp = TempDir::new("install-over-executed");
+    let layout = layout(&temp);
+    let source = temp.path().join("vibememory-mcp");
+    let installed = layout.engine_dir.join("bin").join("vibememory-mcp");
+
+    runnable(&source, "one");
+    install_named(&layout, "vibememory-mcp", &source).expect("first install");
+
+    // Execute it, then replace it, then execute again — the sequence that broke the real server
+    // binary on 2026-09-10 when a manual told the owner to `cp`. What this gate proves is that
+    // the second install also verifies its copy; it does NOT prove the SIGKILL is gone, because
+    // that trap belongs to signed Mach-O binaries and a shell script cannot stand in for one.
+    // The protection there rests on the rename and on the measurement recorded in
+    // knowledge/design/binaryReplacement.md, which anyone can redo in half a minute.
+    let ran = Command::new(&installed)
+        .arg("--version")
+        .status()
+        .expect("run");
+    assert!(ran.success(), "the freshly installed file has to run");
+
+    // A newer build over the top of it.
+    runnable(&source, "two");
+    install_named(&layout, "vibememory-mcp", &source).expect("second install must also verify");
+
+    let again = Command::new(&installed)
+        .arg("--version")
+        .status()
+        .expect("run");
+    assert!(again.success(), "and what it placed still runs");
 }
