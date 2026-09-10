@@ -27,6 +27,19 @@ pub const BRANCH: &str = "main";
 /// Where the store's own commits go.
 const REMOTE: &str = "origin";
 
+/// A directory the naming rules told the tick to leave alone.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IgnoredDirectory {
+    /// The encoded directory name under `projects/`.
+    pub enc: String,
+    /// Why it was left alone, in the words of the rule that decided.
+    pub reason: String,
+    /// How many transcripts sit in it. "Skipped one" and "skipped one holding four transcripts"
+    /// are different sentences: the second names the cost, the first only the fact.
+    pub transcripts: usize,
+}
+
 /// What became of the half of the tick that needs the network.
 ///
 /// Three states rather than two flags: a run either tried or was backed off, and "recovered" is a
@@ -66,6 +79,13 @@ pub struct Ticked {
     pub recorded_links: usize,
     /// Real `projects/<enc>` directories copied into the store and replaced by links.
     pub imported_directories: Vec<String>,
+    /// Directories the rules told the tick to leave alone, and what they hold.
+    ///
+    /// There is a field for what was taken; without one for what was not, a directory whose
+    /// transcripts will never leave this disk does not exist as far as anyone outside can tell.
+    /// Same argument as `held_back` above: a synchronisation that never happens is one somebody
+    /// has to be able to see the reason for.
+    pub ignored_directories: Vec<IgnoredDirectory>,
     /// Files under `projects/` committed by this tick: side files, `.keep` markers, imported
     /// directories, memory — everything a session is not writing right now.
     pub shared_files_committed: usize,
@@ -140,7 +160,9 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         config_dir,
         machine_id,
         roots,
-        naming,
+        // `naming` is read through `machine` by `take_real_directories`, which needs the whole
+        // of it; destructuring a copy here would leave two names for one thing.
+        naming: _,
         desktop_store,
         max_deletions,
         deletions_released,
@@ -196,16 +218,7 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         Err(problem) => result.problems.push(problem),
     }
 
-    result
-        .imported_directories
-        .append(&mut import_real_directories(
-            store,
-            config_dir,
-            &engine_dir_of(store),
-            stamp,
-            roots,
-            naming,
-        ));
+    let seen_before = take_real_directories(machine, stamp, &state, &mut result);
 
     // Before `config/` is committed, so that what this machine changed in its managed copies is
     // in the store when the commit looks — and after the merge above, so that what another
@@ -249,6 +262,7 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
     }
     let next = crate::guard::TickState {
         deletions_held: result.deletions_held,
+        ignored: seen_before,
         ..next
     };
     if let Err(problem) = next.write(&engine_dir) {
@@ -353,6 +367,35 @@ fn changed_paths(store: &Path, target: &str) -> Result<Option<Vec<String>>, Stri
             .map(str::to_owned)
             .collect()
     }))
+}
+
+/// Imports the real project directories, and reports the ones the rules said to leave alone.
+///
+/// Returns every ignored directory, for the state to remember. What goes into the report is only
+/// what the state has not seen: a directory ignored by an explicit rule is ignored for ever, and
+/// a line repeated every two minutes is a line nobody reads. `status` answers from the state at
+/// any time, so saying it once loses nothing.
+fn take_real_directories(
+    machine: &Machine<'_>,
+    stamp: &str,
+    state: &crate::guard::TickState,
+    result: &mut Ticked,
+) -> Vec<IgnoredDirectory> {
+    let (imported, ignored) = import_real_directories(
+        machine.store,
+        machine.config_dir,
+        &engine_dir_of(machine.store),
+        stamp,
+        machine.roots,
+        machine.naming,
+    );
+    result.imported_directories = imported;
+    result.ignored_directories = ignored
+        .iter()
+        .filter(|directory| !state.ignored.contains(directory))
+        .cloned()
+        .collect();
+    ignored
 }
 
 /// The half of the run that needs the remote: take what is there, merge it when that is safe.
@@ -917,10 +960,11 @@ fn import_real_directories(
     stamp: &str,
     roots: &Roots,
     naming: &vibememory_core::naming::NamingConfig,
-) -> Vec<String> {
+) -> (Vec<String>, Vec<IgnoredDirectory>) {
     let mut imported = Vec::new();
+    let mut ignored = Vec::new();
     let Ok(entries) = std::fs::read_dir(config_dir.join("projects")) else {
-        return imported;
+        return (imported, ignored);
     };
     let existing = crate::store::existing(store, TIMEOUT).names;
     for entry in entries.filter_map(Result::ok) {
@@ -949,8 +993,20 @@ fn import_real_directories(
             naming,
             &existing,
         );
-        let Ok(vibememory_core::naming::Resolution::Named { name, .. }) = resolved else {
-            continue; // ignored, or the rules could not name it: not the tick's to decide
+        let name = match resolved {
+            Ok(vibememory_core::naming::Resolution::Named { name, .. }) => name,
+            // Ignored is not a failure and not the tick's to overturn — `ignoreCwd` is the
+            // owner's own rule. It is only reported, so that "these transcripts stay on this
+            // disk" is something a person can find out.
+            Ok(vibememory_core::naming::Resolution::Ignored { reason }) => {
+                ignored.push(IgnoredDirectory {
+                    reason: describe_ignore(&reason),
+                    transcripts: transcripts_in(&path),
+                    enc,
+                });
+                continue;
+            }
+            Err(_) => continue, // the rules could not name it; the hook already said so
         };
         // A refusal means a live session somewhere, or a path this build does not handle: the
         // hook already said so, and the next tick tries again.
@@ -970,7 +1026,39 @@ fn import_real_directories(
             ));
         }
     }
-    imported
+    (imported, ignored)
+}
+
+/// The rule's own words for why a directory is left alone.
+///
+/// Public because both reasons have to be named, and the environment variable behind the second
+/// one cannot be set from a test — the workspace forbids `unsafe`, and `set_var` is unsafe. A
+/// pure function is the honest thing to gate anyway.
+#[must_use]
+pub fn describe_ignore(reason: &vibememory_core::naming::IgnoreReason) -> String {
+    use vibememory_core::naming::IgnoreReason;
+
+    match reason {
+        IgnoreReason::Pattern(pattern) => format!("ignoreCwd matches {pattern}"),
+        IgnoreReason::ProjectDirName(name) => {
+            format!("CLAUDE_CODE_PROJECT_DIR_NAME is {name}, shared by every working directory")
+        }
+    }
+}
+
+/// How many transcripts a directory holds, counted so the report can name the cost.
+fn transcripts_in(dir: &Path) -> usize {
+    std::fs::read_dir(dir).map_or(0, |entries| {
+        entries
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "jsonl")
+            })
+            .count()
+    })
 }
 
 /// The working directory of a link, proven rather than guessed.

@@ -47,6 +47,14 @@ pub struct TickState {
     /// them. Kept so `doctor` can say so without recounting the tombstones itself.
     #[serde(default)]
     pub deletions_held: usize,
+    /// Directories the last run left alone, with the reason and what they hold.
+    ///
+    /// Two jobs at once: the tick reports only what is *not* already here, so a permanently
+    /// ignored directory is named once rather than every two minutes; and `status` answers from
+    /// this list instead of scanning again, so the answer costs nothing and matches what the
+    /// engine actually saw.
+    #[serde(default)]
+    pub ignored: Vec<crate::tick::IgnoredDirectory>,
 }
 
 impl TickState {
@@ -114,6 +122,7 @@ impl TickState {
                     consecutive_failures: failures,
                     runs_to_skip: skip,
                     deletions_held: self.deletions_held,
+                    ignored: self.ignored.clone(),
                 },
                 false,
             );
@@ -124,6 +133,7 @@ impl TickState {
                 consecutive_failures: 0,
                 runs_to_skip: 0,
                 deletions_held: self.deletions_held,
+                ignored: self.ignored.clone(),
             },
             recovered,
         )

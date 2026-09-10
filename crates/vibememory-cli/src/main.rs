@@ -145,6 +145,16 @@ fn report(strict: bool, json: bool) -> ExitCode {
             _ => {}
         }
     }
+    // Not a step and never a failure: `ignoreCwd` is the owner's rule, and obeying it is correct.
+    // It is printed because obeying it silently means a directory whose transcripts never leave
+    // this machine cannot be found out about from anywhere.
+    let ignored = vibememory_cli::guard::TickState::read(&layout.engine_dir).ignored;
+    for directory in &ignored {
+        println!(
+            "left alone {} ({}) — {} transcript(s) stay on this machine only",
+            directory.enc, directory.reason, directory.transcripts
+        );
+    }
     if let Some(mirror) = &mirror {
         println!("{}", mirror.describe());
         if mirror.is_fault() {
@@ -875,6 +885,14 @@ fn report_tick(ticked: &vibememory_cli::tick::Ticked, max_deletions: usize) {
     }
     for imported in &ticked.imported_directories {
         println!("imported: {imported}");
+    }
+    // Said once per directory, not every run: the rule that skips it is the owner's own, and a
+    // line repeated every two minutes is a line nobody reads. `status` answers at any time.
+    for ignored in &ticked.ignored_directories {
+        println!(
+            "left alone: {} ({}) — {} transcript(s) stay on this machine only",
+            ignored.enc, ignored.reason, ignored.transcripts
+        );
     }
     for enc in &ticked.linked {
         println!("linked: {enc}");

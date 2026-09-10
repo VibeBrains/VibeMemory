@@ -139,6 +139,7 @@ fn the_state_survives_a_round_trip_and_a_machine_that_never_ticked_is_clean() {
         consecutive_failures: 4,
         runs_to_skip: 2,
         deletions_held: 37,
+        ignored: Vec::new(),
     };
     state.write(&engine).expect("write");
     assert_eq!(TickState::read(&engine), state);

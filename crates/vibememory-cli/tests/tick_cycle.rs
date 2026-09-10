@@ -1033,6 +1033,7 @@ fn a_paused_store_cycle_still_does_the_work_that_saves_data() {
         consecutive_failures: 3,
         runs_to_skip: 5,
         deletions_held: 0,
+        ignored: Vec::new(),
     }
     .write(engine)
     .expect("state");
@@ -1067,4 +1068,130 @@ fn a_paused_store_cycle_still_does_the_work_that_saves_data() {
     let state = vibememory_cli::guard::TickState::read(engine);
     assert_eq!(state.runs_to_skip, 4);
     assert_eq!(state.consecutive_failures, 3);
+}
+
+/// One tick whose naming rules ignore a working directory, as the owner's `ignoreCwd` does.
+fn tick_ignoring(store: &Path, temp: &TempDir, config_dir: &Path, ignore: &str) -> Ticked {
+    let roots = Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix);
+    let raw = vibememory_core::naming::RawNamingConfig {
+        ignore_cwd: vec![ignore.to_owned()],
+        ..vibememory_core::naming::RawNamingConfig::default()
+    };
+    let naming = vibememory_core::naming::NamingConfig::from_raw(&raw).expect("naming");
+    let _ = temp;
+    run(
+        &Machine {
+            store,
+            config_dir,
+            machine_id: "mac-test",
+            roots: &roots,
+            naming: &naming,
+            desktop_store: None,
+            max_deletions: vibememory_cli::guard::DEFAULT_MAX_DELETIONS_PER_TICK,
+            deletions_released: false,
+        },
+        STAMP,
+        CUTOFF,
+    )
+}
+
+/// A real project directory holding transcripts written in `cwd`.
+fn real_directory(config_dir: &Path, enc: &str, cwd: &str, transcripts: usize) {
+    let dir = config_dir.join("projects").join(enc);
+    fs::create_dir_all(&dir).expect("dirs");
+    for n in 0..transcripts {
+        fs::write(
+            dir.join(format!("1111111{n}-1111-4111-8111-111111111111.jsonl")),
+            format!("{{\"uuid\":\"u{n}\",\"cwd\":\"{cwd}\"}}\n"),
+        )
+        .expect("transcript");
+    }
+}
+
+#[test]
+fn a_directory_left_alone_is_named_with_what_it_holds_and_said_only_once() {
+    let temp = TempDir::new("tick-ignored");
+    let pair = two_machines(&temp);
+    let config_dir = temp.dir("claude-ignored");
+    // The owner's own rule: this working directory is not to be stored. Obeying it is right —
+    // saying nothing about it is not, because these transcripts never leave this machine.
+    real_directory(&config_dir, "-ignored-here", "/ignored/here", 4);
+
+    let first = tick_ignoring(&pair.mac, &temp, &config_dir, "/ignored/here");
+    assert_eq!(
+        first.ignored_directories.len(),
+        1,
+        "{:?}",
+        first.ignored_directories
+    );
+    let named = &first.ignored_directories[0];
+    assert_eq!(named.enc, "-ignored-here");
+    assert_eq!(
+        named.transcripts, 4,
+        "\"skipped one\" and \"skipped one holding four transcripts\" are different sentences"
+    );
+    assert!(
+        named.reason.contains("ignoreCwd"),
+        "the reason is the rule's own words: {}",
+        named.reason
+    );
+    assert!(
+        first.imported_directories.is_empty(),
+        "an ignored directory is reported, never imported: the rule is the owner's"
+    );
+    assert!(
+        config_dir.join("projects").join("-ignored-here").is_dir(),
+        "and it is left exactly where it was"
+    );
+
+    // Ignored for ever means ignored for ever: repeating the line every two minutes would train
+    // the reader to skip it.
+    let second = tick_ignoring(&pair.mac, &temp, &config_dir, "/ignored/here");
+    assert!(
+        second.ignored_directories.is_empty(),
+        "said once: {:?}",
+        second.ignored_directories
+    );
+
+    // But `status` must still be able to answer, so the state keeps the whole list.
+    let remembered =
+        vibememory_cli::guard::TickState::read(pair.mac.parent().expect("engine dir")).ignored;
+    assert_eq!(remembered.len(), 1);
+    assert_eq!(remembered[0].transcripts, 4);
+
+    // A directory that appears later is new, and is named.
+    real_directory(&config_dir, "-ignored-here-two", "/ignored/here", 1);
+    let third = tick_ignoring(&pair.mac, &temp, &config_dir, "/ignored/here");
+    assert_eq!(
+        third
+            .ignored_directories
+            .iter()
+            .map(|directory| directory.enc.as_str())
+            .collect::<Vec<_>>(),
+        vec!["-ignored-here-two"],
+        "only the one nobody has been told about"
+    );
+}
+
+#[test]
+fn both_reasons_for_ignoring_name_themselves() {
+    use vibememory_cli::tick::describe_ignore;
+    use vibememory_core::naming::IgnoreReason;
+
+    // The owner's own rule.
+    let pattern = describe_ignore(&IgnoreReason::Pattern("/ignored/here".to_owned()));
+    assert!(
+        pattern.contains("ignoreCwd") && pattern.contains("/ignored/here"),
+        "the reason must quote the rule that decided: {pattern}"
+    );
+
+    // The quieter one: `CLAUDE_CODE_PROJECT_DIR_NAME` makes one project directory serve every
+    // working directory of that environment, and it leaves transcripts on one disk exactly like
+    // `ignoreCwd` does. It was just as silent, so it has to speak too.
+    let shared = describe_ignore(&IgnoreReason::ProjectDirName("Shared".to_owned()));
+    assert!(
+        shared.contains("PROJECT_DIR_NAME") && shared.contains("Shared"),
+        "the second reason has to name itself as well: {shared}"
+    );
+    assert_ne!(pattern, shared, "two reasons, two sentences");
 }
