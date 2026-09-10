@@ -259,6 +259,71 @@ fn running_again_is_a_no_op_and_brings_in_what_the_other_machine_added() {
 }
 
 #[test]
+fn a_store_checked_out_with_windows_line_endings_comes_back_whole() {
+    // A store cloned on Windows before its `.gitattributes` landed carries CRLF on disk. The next
+    // run merges that copy with the source, and a line with no `uuid` is identified by its bytes:
+    // before the format reader learned that the carriage return is git's and not the record's,
+    // every such line came out twice — no conflict, no report, nothing to notice.
+    let temp = TempDir::new("migrate-crlf");
+    let source = old_folder(&temp);
+    let state = "{\"type\":\"bridge-session\",\"sessionId\":\"s\"}\n";
+    let transcript = source.join("projects/-ALL-/VibeIDE/s1.jsonl");
+    let original = fs::read_to_string(&transcript).expect("read");
+    fs::write(&transcript, format!("{original}{state}")).expect("write");
+
+    let store = store(&temp);
+    let engine = temp.dir("engine");
+    apply(
+        &source,
+        &store,
+        &engine,
+        &plan(&source, MACHINE).expect("plan"),
+        STAMP,
+    )
+    .expect("first");
+
+    let dest = store.join("projects/VibeIDE/s1.jsonl");
+    let lf = fs::read(&dest).expect("read");
+    let mut crlf = Vec::with_capacity(lf.len());
+    for byte in &lf {
+        if *byte == b'\n' {
+            crlf.push(b'\r');
+        }
+        crlf.push(*byte);
+    }
+    assert_ne!(
+        crlf, lf,
+        "the store copy must really change, or this proves nothing"
+    );
+    fs::write(&dest, &crlf).expect("write");
+
+    let again = apply(
+        &source,
+        &store,
+        &engine,
+        &plan(&source, MACHINE).expect("plan"),
+        STAMP,
+    )
+    .expect("second");
+    assert!(
+        again.mismatched.is_empty(),
+        "a line ending is not a divergence: {:?}",
+        again.mismatched
+    );
+
+    let merged = fs::read_to_string(&dest).expect("read");
+    assert_eq!(
+        merged.matches("bridge-session").count(),
+        1,
+        "the state line was kept once, not once per line ending: {merged}"
+    );
+    assert!(
+        merged.contains('\r'),
+        "and the store copy was not rewritten to another line ending behind git's back: {merged:?}"
+    );
+}
+
+#[test]
 fn a_cloud_placeholder_stops_the_apply_before_anything_is_read() {
     let temp = TempDir::new("migrate-placeholder");
     let source = old_folder(&temp);

@@ -266,10 +266,12 @@ fn index_lines<'a>(side: &'a ParsedSide<'a>) -> HashMap<Key<'a>, &'a Line<'a>> {
         .collect()
 }
 
+/// The base as it is compared against: line bodies, not raw bytes, so that a checkout which
+/// converted line endings does not read as an edit on every line.
 fn index_bytes<'a>(side: &'a ParsedSide<'a>) -> HashMap<Key<'a>, &'a [u8]> {
     side.lines
         .iter()
-        .map(|line| (line.key.clone(), line.bytes))
+        .map(|line| (line.key.clone(), line.body))
         .collect()
 }
 
@@ -384,7 +386,7 @@ fn build_spine<'a>(
             });
             continue;
         };
-        if line.bytes == theirs.bytes {
+        if line.body == theirs.body {
             spine.push(Emitted {
                 line,
                 bytes: line.bytes,
@@ -393,14 +395,14 @@ fn build_spine<'a>(
             continue;
         }
         match base.get(&line.key) {
-            Some(base_bytes) if *base_bytes == theirs.bytes => {
+            Some(base_bytes) if *base_bytes == theirs.body => {
                 spine.push(Emitted {
                     line,
                     bytes: line.bytes,
                     origin: Origin::Both,
                 });
             }
-            Some(base_bytes) if *base_bytes == line.bytes => {
+            Some(base_bytes) if *base_bytes == line.body => {
                 spine.push(Emitted {
                     line,
                     bytes: theirs.bytes,
@@ -408,7 +410,7 @@ fn build_spine<'a>(
                 });
             }
             _ => {
-                // Only a record can conflict: a line keyed by its bytes has equal bytes whenever
+                // Only a record can conflict: a line keyed by its body has an equal body whenever
                 // it has an equal key, so it never reaches this arm.
                 if let Some(uuid) = line.uuid() {
                     conflicts.push(uuid.to_owned());

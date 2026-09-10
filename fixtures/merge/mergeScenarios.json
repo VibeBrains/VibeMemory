@@ -2593,9 +2593,9 @@
       }
     },
     {
-      "id": "crlfLineKept",
-      "provenance": "unverified",
-      "note": "The same record written by a Windows writer carries a trailing CR; the CR is JSON whitespace so the line still parses and keeps its uuid key, but the bytes differ from theirs, and base arbitration hands the CRLF form through unchanged while theirs' own new turn is still appended after it.",
+      "id": "crlfCarriageReturnIsNotPartOfTheLine",
+      "provenance": "computed",
+      "note": "The same record, written once with a trailing CR: git converts line endings when it checks a store out, and the engine reads the working tree. The CR belongs to the terminator, not to the record, so both sides hold one and the same line -- and the bytes that go back out are the ones that came in, because a merge rewrites nobody's line endings. Until 2026-09-10 the CR was part of the identity; see docs/knowledge/git/lineEndings.md for what that cost.",
       "input": {
         "base": {
           "file": "cli255Isolated.jsonl",
@@ -3639,9 +3639,9 @@
       }
     },
     {
-      "id": "crlfStateLineDuplicated",
-      "provenance": "unverified",
-      "note": "A Windows editor rewrote the state block with CRLF endings: a state line is keyed by its bytes, so the CR makes it a different line and the block is kept twice. Nothing is lost, but this is the price of touching the store with an editor -- doctor checks core.autocrlf=false and `* -text` for exactly this reason. Not verified on Windows.",
+      "id": "crlfStateLineKeptOnce",
+      "provenance": "computed",
+      "note": "A state line has no uuid, so it is identified by its bytes -- and that is exactly why a stray CR used to make it a second line and the block was kept twice, silently and without a conflict. Measured cost before the fix: a memory journal, whose lines carry no uuid at all, would have doubled whole. The terminator is now read as the terminator, and the line is one line.",
       "input": {
         "base": {
           "file": "cli255Isolated.jsonl",
@@ -3696,19 +3696,13 @@
               0,
               2
             ]
-          },
-          {
-            "from": "theirs",
-            "pick": [
-              1
-            ]
           }
         ],
         "report": {
           "baseTruncated": 0,
           "ours": {
             "truncated": 0,
-            "added": 1,
+            "added": 0,
             "addedUuid": 0,
             "dropped": 0,
             "resurrected": 0,
@@ -3716,7 +3710,7 @@
           },
           "theirs": {
             "truncated": 0,
-            "added": 1,
+            "added": 0,
             "addedUuid": 0,
             "dropped": 0,
             "resurrected": 0,
@@ -3725,7 +3719,7 @@
           "conflicts": [],
           "opaque": 0,
           "beforeBoundary": 0,
-          "resultEqualsOurs": false,
+          "resultEqualsOurs": true,
           "fork": null
         }
       }

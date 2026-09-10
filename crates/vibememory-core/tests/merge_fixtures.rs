@@ -229,10 +229,20 @@ fn expected(picks: &[Pick], base: &[u8], ours: &[u8], theirs: &[u8]) -> Vec<u8> 
 
 /// Line identity as the scenarios understand it, recomputed here so that a bug in the crate
 /// cannot hide behind its own definition.
+///
+/// The carriage return is dropped for the same reason the crate drops it — a terminator git
+/// converted is not part of the record — but the arithmetic is written out again here rather than
+/// borrowed, which is the whole point of a second opinion.
 fn keys(bytes: &[u8]) -> Vec<(String, usize)> {
     let mut ordinals: HashMap<String, usize> = HashMap::new();
     let mut out = Vec::new();
-    for line in split(bytes) {
+    for line in split(bytes)
+        .into_iter()
+        .map(|line| match line.split_last() {
+            Some((b'\r', head)) => head,
+            _ => line,
+        })
+    {
         let uuid = line
             .iter()
             .find(|byte| !byte.is_ascii_whitespace())

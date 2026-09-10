@@ -38,6 +38,11 @@ const GIT_SETTINGS: &[(&str, &str, &str)] = &[
 ];
 
 /// Contents of the store's `.gitattributes`. The order is fixed so the file compares equal.
+///
+/// `-text` guards the **working tree**, not the merge drivers: measured on git 2.50.1, the temp
+/// files a driver is handed carry index form and never a carriage return, even under
+/// `text eol=crlf`. What a conversion would reach is the checked-out file the engine reads
+/// directly — see `docs/knowledge/git/lineEndings.md`.
 pub const GITATTRIBUTES: &str =
     "* -text\n* merge=vibememory-keepboth\n**/*.jsonl merge=vibememory-jsonl\n";
 

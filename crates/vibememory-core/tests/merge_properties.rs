@@ -336,3 +336,161 @@ fn keep_both_properties_hold_on_generated_files() {
     }
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n"));
 }
+
+/// The same bytes with every terminator's carriage return removed: how two results are compared
+/// when only the ending may differ.
+fn normalized(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut previous = None;
+    for byte in bytes {
+        if *byte == b'\n' && previous == Some(b'\r') {
+            out.pop();
+        }
+        out.push(*byte);
+        previous = Some(*byte);
+    }
+    out
+}
+
+/// LF, but with git's carriage return in front of every terminator: a Windows checkout of a store
+/// whose `* -text` guard is missing or not yet in place.
+fn crlf(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    for byte in bytes {
+        if *byte == b'\n' {
+            out.push(b'\r');
+        }
+        out.push(*byte);
+    }
+    out
+}
+
+/// A carriage return before the terminator belongs to git, not to the record, and may not change
+/// which lines a merge produces — while the bytes that came in are the bytes that go back out.
+///
+/// The law lives here and not in the scenarios because the failure it guards is silent and
+/// input-shaped: a line's identity is its `uuid` when it has one and **its bytes** otherwise, so
+/// one stray `\r` made every state line a different line. Measured before the fix on
+/// `cli255Session.jsonl`: an LF side merged with a CRLF side produced 16 lines where 12 were due,
+/// with `bridge-session`, `queue-operation` and `last-prompt` kept twice — no conflict, no report,
+/// nothing to notice. Memory journals were worse: not one of the 16 lines of
+/// `cli255Journal.jsonl` carries a `uuid`, so the whole journal would have doubled.
+#[test]
+fn the_terminator_is_not_part_of_the_line() {
+    let mut failures: Vec<String> = Vec::new();
+    for seed in 1..=SEEDS {
+        let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15).max(1));
+        let (shared, mine, yours) = (1 + rng.below(4), rng.below(3), rng.below(3));
+        let common = generate(&mut rng, shared);
+        let ours_own = generate(&mut rng, mine);
+        let theirs_own = generate(&mut rng, yours);
+        let base = join(&common);
+        let ours = side(&mut rng, &common, &ours_own);
+        // One side rewrites a record it shares with the base. Without this the merge never has to
+        // ask "which side changed this line since the base", and that question is asked of the
+        // base's own bytes — the place a converted checkout does its damage.
+        let mut theirs_common = common.clone();
+        if rng.chance(60) {
+            let at = rng.below(theirs_common.len());
+            theirs_common[at] = theirs_common[at].replace("10:", "11:");
+        }
+        let theirs = side(&mut rng, &theirs_common, &theirs_own);
+
+        let Ok(reference) = merge_jsonl(&base, &ours, &theirs) else {
+            continue;
+        };
+
+        // Every mix of the two endings, because a fork is exactly the case where the two machines
+        // may disagree about them.
+        for mask in 0..8_u8 {
+            let pick = |bytes: &[u8], bit: u8| {
+                if mask & bit == 0 {
+                    bytes.to_vec()
+                } else {
+                    crlf(bytes)
+                }
+            };
+            let mixed_base = pick(&base, 1);
+            let mixed_ours = pick(&ours, 2);
+            let mixed_theirs = pick(&theirs, 4);
+            let mut check = |what: &str, ok: bool| {
+                if !ok {
+                    failures.push(format!("seed {seed}, mix {mask:03b}: {what}"));
+                }
+            };
+            let Ok(merged) = merge_jsonl(&mixed_base, &mixed_ours, &mixed_theirs) else {
+                check("a merge that succeeds on LF must not fail on CRLF", false);
+                continue;
+            };
+            // Content, compared as the format defines a line. Byte equality would be the
+            // wrong law here and the fixtures say why: normalising the output would rewrite a
+            // Windows checkout to LF, git would convert it back on the next checkout, and the
+            // file would never stop looking modified.
+            check(
+                "the line ending changed which lines came out",
+                normalized(&merged.bytes) == normalized(&reference.bytes),
+            );
+            check(
+                "a file that came in wholly as CRLF did not go back out as it came",
+                mask != 7 || merged.bytes == crlf(&reference.bytes),
+            );
+
+            let left = serde_json::to_value(&merged.report).unwrap();
+            let right = serde_json::to_value(&reference.report).unwrap();
+            check("the report depends on the line ending", left == right);
+        }
+    }
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n"));
+}
+
+/// The rule is about the terminator alone: a carriage return **inside** a line is content, and an
+/// opaque line is kept byte for byte — that promise is what an over-eager strip would break.
+///
+/// Reachable in practice: `serde_json` and `JSON.stringify` both escape a carriage return inside a
+/// string as the two characters `\r`, so a raw `0x0D` can only sit inside a line no parser
+/// accepts — a torn record, a half-written snapshot — and those are exactly the lines the merge
+/// promises to carry across untouched.
+#[test]
+fn a_carriage_return_inside_a_line_is_content() {
+    let lines = vec![
+        "{\"type\":\"user\",\"parentUuid\":null,\"uuid\":\"00000001-0000-4000-8000-000000000001\",\"timestamp\":\"2026-09-03T10:00:00.000Z\"}".to_owned(),
+        "torn\rrecord".to_owned(),
+        "{\"type\":\"custom-title\",\"customTitle\":\"a\rb\",\"sessionId\":\"s\"}".to_owned(),
+    ];
+    let bytes = join(&lines);
+    let merged = merge_jsonl(&bytes, &bytes, &bytes).expect("identical sides merge");
+    assert_eq!(
+        merged.bytes, bytes,
+        "merging a file with itself must return it untouched, carriage returns included"
+    );
+    for line in &lines {
+        assert!(
+            merged
+                .bytes
+                .windows(line.len())
+                .any(|window| window == line.as_bytes()),
+            "a line lost bytes on the way through: {line:?}"
+        );
+    }
+
+    // Identity, not just output: two lines that differ only after an inner carriage return are
+    // two lines. Stripping from the first `\r` instead of from the terminator would give them one
+    // key, and a union would then keep one of them and drop the other without a word.
+    let one = "torn\rone";
+    let two = "torn\rtwo";
+    let ours = join(&[one.to_owned()]);
+    let theirs = join(&[two.to_owned()]);
+    let merged = merge_jsonl(b"", &ours, &theirs).expect("union");
+    let text = String::from_utf8_lossy(&merged.bytes);
+    assert!(text.contains(one) && text.contains(two), "{text:?}");
+
+    // And the same file written with CRLF terminators: it comes back as it went in. A merge is
+    // not a converter — rewriting a Windows checkout to LF would leave it permanently modified
+    // against the next checkout.
+    let windows = crlf(&bytes);
+    let merged = merge_jsonl(&windows, &windows, &windows).expect("merge");
+    assert_eq!(
+        merged.bytes, windows,
+        "merging a CRLF file with itself must return exactly it"
+    );
+}

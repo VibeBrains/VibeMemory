@@ -5,9 +5,8 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-/// Separator of JSONL records. Claude Code writes `JSON.stringify(entry) + "\n"`, so a raw
-/// newline never occurs inside a record.
-pub(crate) const LINE_END: u8 = b'\n';
+pub(crate) use crate::jsonl::{LINE_END, line_body};
+
 /// `type` of the state line that names the leaf a reader resumes from.
 pub(crate) const LAST_PROMPT_TYPE: &str = "last-prompt";
 /// `type` and `subtype` of the record that starts a compaction window.
@@ -52,8 +51,13 @@ pub(crate) type Key<'a> = (Id<'a>, usize);
 /// A line together with everything the merge needs to place it.
 #[derive(Debug, Clone)]
 pub(crate) struct Line<'a> {
-    /// The bytes of the line, without the terminator.
+    /// The bytes of the line exactly as they were read, without the terminator. What goes back
+    /// out: a merge rewrites line endings for nobody.
     pub(crate) bytes: &'a [u8],
+    /// The same line without the carriage return git may have put before the terminator. What
+    /// identity and every comparison are made of, so that one conversion cannot turn a line into
+    /// two. See `crate::jsonl`.
+    pub(crate) body: &'a [u8],
     /// What makes this line the same line on the other side.
     pub(crate) key: Key<'a>,
     /// Own `timestamp`, inherited from the previous line when absent.
@@ -149,12 +153,13 @@ pub(crate) fn read_side(bytes: &[u8]) -> Side<'_> {
     let mut ordinals: HashMap<Id<'_>, usize> = HashMap::new();
     let mut at = String::new();
     for raw in pieces {
-        let head = parse_head(raw);
+        let body = line_body(raw);
+        let head = parse_head(body);
         let uuid = head
             .as_ref()
             .and_then(|head| string(head.uuid.as_ref()))
             .filter(|uuid| !uuid.is_empty());
-        let id = uuid.map_or(Id::Bytes(raw), Id::Uuid);
+        let id = uuid.map_or(Id::Bytes(body), Id::Uuid);
         let ordinal = ordinals.entry(id.clone()).or_insert(0);
         *ordinal += 1;
         let key = (id, *ordinal);
@@ -166,6 +171,7 @@ pub(crate) fn read_side(bytes: &[u8]) -> Side<'_> {
         }
         lines.push(Line {
             bytes: raw,
+            body,
             key,
             at: at.clone(),
             parent_uuid: head
