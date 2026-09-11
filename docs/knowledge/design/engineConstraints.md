@@ -315,8 +315,14 @@ git-transport («ClaudeSync», рабочее имя движка, ставше�
   or PowerShell when Git Bash isn't installed» (доки hooks; строки 2.1.255 упоминают Git Bash). Утверждение
   git-дизайна «Claude Code на Windows требует Git for Windows» доками не подтверждено: без Git Bash хуки
   уходят в PowerShell, а Bash-тул не регистрируется — движок обязан проверять наличие Git Bash в doctor.
-  Не проверено: node/python в PATH внутри Git Bash, выживание отсоединённого push после SessionEnd,
-  hook-путь с обратными слешами под `sh -c`.
+  Пути в строке — одинарные кавычки POSIX, на Windows с прямыми слешами: без кавычек путь ломается на
+  пробеле везде, а Git Bash читает обратный слеш как экранирование (закрыто гейтом на Mac, 2026-09-11,
+  [windowsReadiness.md](windowsReadiness.md)). Не проверено: node/python в PATH внутри Git Bash,
+  выживание отсоединённого push после SessionEnd, та же строка вживую под Git Bash.
+- **Обязан** писать драйвер слияния абсолютным путём. Почему: git запускает его шеллом с `PATH` того,
+  кто запустил git, а у тика под launchd это `/usr/bin:/bin:/usr/sbin:/sbin`; голое имя давало
+  `command not found` и текстовый конфликт на каждом трёхстороннем слиянии
+  ([driverNeverRan.md](driverNeverRan.md)).
 - Не проверено вживую: вся Windows-сторона (хуки Desktop-CLI через Git Bash, junction под реальным
   каталогом, pid reuse); утверждение судьи, что rmdir-свипер удаляет саму junction (RemoveDirectory) —
   вывод, не измерение; реконсилер на tick пересоздаёт ссылки, чтобы окно было ограничено.

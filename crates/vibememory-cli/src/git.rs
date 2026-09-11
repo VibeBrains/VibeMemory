@@ -82,7 +82,21 @@ fn run_rev_parse(cwd: &Path, timeout: Duration) -> Result<Option<String>, String
 /// # Errors
 ///
 /// The text of what went wrong, meant for a log and for `doctor`.
-pub fn run_with_timeout(mut command: Command, timeout: Duration) -> Result<Option<String>, String> {
+pub fn run_with_timeout(command: Command, timeout: Duration) -> Result<Option<String>, String> {
+    run_capturing(command, timeout).map(Result::ok)
+}
+
+/// [`run_with_timeout`], keeping what a refusing command said: `Ok(Ok(stdout))` when it exited 0,
+/// `Ok(Err(stderr))` when it ran and refused. For a caller that has to tell a person why — a probe
+/// whose whole answer is the shell's "command not found".
+///
+/// # Errors
+///
+/// As [`run_with_timeout`].
+pub fn run_capturing(
+    mut command: Command,
+    timeout: Duration,
+) -> Result<Result<String, String>, String> {
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => return Err(format!("git could not be started: {error}")),
@@ -115,11 +129,13 @@ pub fn run_with_timeout(mut command: Command, timeout: Duration) -> Result<Optio
         Err(error) => return Err(format!("reading git output failed: {error}")),
     };
     if !output.status.success() {
-        return Ok(None);
+        return Ok(Err(String::from_utf8_lossy(&output.stderr)
+            .trim()
+            .to_owned()));
     }
-    Ok(Some(
-        String::from_utf8_lossy(&output.stdout).trim().to_owned(),
-    ))
+    Ok(Ok(String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .to_owned()))
 }
 
 /// Runs a prepared command, writing `stdin_bytes` to its input first.

@@ -78,3 +78,24 @@ pub fn git_repo_with_commit(dir: &Path) {
     git(dir, &["config", "user.name", "test"]);
     git(dir, &["config", "commit.gpgsign", "false"]);
 }
+
+/// Runs git the way the tick does, and hands back what it said.
+///
+/// Under launchd the tick has a fixed `PATH` that holds nothing of the engine
+/// (`vibememory_cli::install::LAUNCHD_PATH`) and a home of its own: a merge driver git cannot find
+/// from here is one the tick cannot run, whatever a developer's shell would say. The home is the
+/// test's, never a real one. Elsewhere the environment is kept — the scheduled task on Windows runs
+/// with the user's.
+pub fn git_as_the_tick(dir: &Path, home: &Path, args: &[&str]) -> std::process::Output {
+    let mut command = Command::new("git");
+    command.args(args).current_dir(dir);
+    if cfg!(target_os = "macos") {
+        command
+            .env_clear()
+            .env("PATH", vibememory_cli::install::LAUNCHD_PATH)
+            .env("HOME", home);
+    }
+    command
+        .output()
+        .unwrap_or_else(|e| panic!("run git {args:?} as the tick: {e}"))
+}

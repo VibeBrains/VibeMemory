@@ -11,14 +11,11 @@
 )]
 
 use std::io::{BufRead as _, Write as _};
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 use vibememory_mcp::memories::{Memories, from_engine};
 use vibememory_mcp::protocol;
 
-/// The environment variable that names the engine directory, same as the hooks use.
-const ENGINE_DIR_VAR: &str = "VIBEMEMORY_DIR";
 /// Who the records say wrote them, when the client does not introduce itself.
 const DEFAULT_AGENT: &str = "mcp";
 
@@ -30,9 +27,14 @@ fn main() -> ExitCode {
         println!("vibememory-mcp {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
-    let Some(engine_dir) = engine_dir() else {
-        eprintln!("vibememory-mcp: no HOME and no {ENGINE_DIR_VAR}; cannot find the store");
-        return ExitCode::FAILURE;
+    // The engine's own rule for where it lives, not a second copy of it: the server used to read
+    // `HOME` itself, which on Windows exists only inside Git Bash.
+    let engine_dir = match vibememory_cli::install::engine_dir_from_environment() {
+        Ok(engine_dir) => engine_dir,
+        Err(problem) => {
+            eprintln!("vibememory-mcp: {problem}; cannot find the store");
+            return ExitCode::FAILURE;
+        }
     };
     let config_dir = engine_dir.clone();
     let memories = match from_engine(&engine_dir, &config_dir) {
@@ -85,16 +87,4 @@ fn serve(memories: &dyn Memories, agent: &str) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
-}
-
-/// Where the engine keeps its things: the variable the hooks set, else `~/.vibememory`.
-fn engine_dir() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var(ENGINE_DIR_VAR)
-        && !dir.trim().is_empty()
-    {
-        return Some(PathBuf::from(dir));
-    }
-    std::env::var("HOME")
-        .ok()
-        .map(|home| PathBuf::from(home).join(".vibememory"))
 }

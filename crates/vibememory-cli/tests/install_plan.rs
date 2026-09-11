@@ -19,7 +19,8 @@ use std::path::Path;
 use support::TempDir;
 use vibememory_cli::config::Config;
 use vibememory_cli::install::{
-    Action, GITATTRIBUTES, Layout, State, Step, apply, launch_agent, plan, schedule_path,
+    Action, GITATTRIBUTES, Layout, State, Step, apply, driver_probe, git_settings, hook_command,
+    installed_binary, launch_agent, merge_driver_command, plan, schedule_path, shell_word_for,
 };
 use vibememory_core::naming::PathSyntax;
 
@@ -763,4 +764,210 @@ fn installing_a_second_time_verifies_the_new_copy_as_well() {
         .status()
         .expect("run");
     assert!(again.success(), "and what it placed still runs");
+}
+
+#[test]
+fn a_layout_without_a_home_is_an_error_not_a_relative_path() {
+    // An absent home used to become an empty string, and the engine then lived in `.vibememory`
+    // under whatever directory it was started in — on Windows, where the scheduler sets no `HOME`,
+    // a project folder.
+    let home = Path::new("/work/me");
+    let found = Layout::resolve(Some(home), None, None).expect("a home is enough");
+    assert_eq!(found.engine_dir, home.join(".vibememory"));
+    assert_eq!(found.config_dir, home.join(".claude"));
+
+    let refused = Layout::resolve(None, None, None);
+    assert!(
+        refused.is_err(),
+        "no home and no variables must be refused, not guessed: {refused:?}"
+    );
+
+    let given = Layout::resolve(
+        None,
+        Some("/work/claude".into()),
+        Some("/work/engine".into()),
+    )
+    .expect("the variables are enough without a home");
+    assert_eq!(given.engine_dir, Path::new("/work/engine"));
+    assert_eq!(given.config_dir, Path::new("/work/claude"));
+
+    // An empty variable is unset, as the shell has it — not a directory called "".
+    let empty = Layout::resolve(Some(home), Some("".into()), Some("".into()))
+        .expect("an empty variable falls back to the home");
+    assert_eq!(empty.engine_dir, home.join(".vibememory"));
+}
+
+#[test]
+fn shell_words_survive_spaces_quotes_and_windows_separators() {
+    assert_eq!(
+        shell_word_for("/work/a b/it's", PathSyntax::Posix),
+        r"'/work/a b/it'\''s'"
+    );
+    // Git Bash reads a backslash as an escape: unconverted, `D:\Work` reaches the program as
+    // `D:Work`.
+    assert_eq!(
+        shell_word_for(r"D:\Work\A B\engine", PathSyntax::Windows),
+        "'D:/Work/A B/engine'"
+    );
+    // On POSIX a backslash is an ordinary file-name character and stays one.
+    assert_eq!(
+        shell_word_for(r"/work/a\b", PathSyntax::Posix),
+        r"'/work/a\b'"
+    );
+}
+
+/// A stand-in for the engine that says what it was given, installed where the lines point.
+#[cfg(unix)]
+fn install_script(layout: &Layout, script: &str) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let binary = installed_binary(layout);
+    fs::create_dir_all(binary.parent().expect("bin")).expect("bin");
+    fs::write(&binary, script).expect("write the stand-in");
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).expect("make it runnable");
+}
+
+#[cfg(unix)]
+#[test]
+fn hook_and_driver_lines_reach_the_binary_with_every_argument_intact() {
+    let temp = TempDir::new("install-shell-words");
+    // A space and a quote: the two things an unquoted word does not survive.
+    let engine = temp.dir("an engine's dir");
+    let layout = Layout {
+        config_dir: temp.dir("claude"),
+        engine_dir: engine.clone(),
+    };
+    install_script(
+        &layout,
+        "#!/bin/sh\nprintf '%s|%s|%s|%s' \"$VIBEMEMORY_DIR\" \"$1\" \"$2\" \"$3\"\n",
+    );
+    let run = |line: &str| {
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(line)
+            .output()
+            .expect("run sh");
+        assert!(
+            output.status.success(),
+            "{line}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    assert_eq!(
+        run(&hook_command(&layout, "stop")),
+        format!("{}|hook|stop|", engine.display())
+    );
+    assert_eq!(
+        run(&merge_driver_command(&layout, "jsonl")),
+        format!("{}|merge-driver|jsonl|%O", engine.display())
+    );
+}
+
+#[test]
+fn the_probe_is_the_driver_line_asking_for_a_version_instead_of_merging() {
+    let temp = TempDir::new("install-probe-line");
+    let layout = layout(&temp);
+    let line = merge_driver_command(&layout, "jsonl");
+    let probe = driver_probe(&line, "jsonl").expect("a line the engine wrote");
+    assert!(
+        probe.ends_with(" --version") && !probe.contains("%O"),
+        "{probe}"
+    );
+    assert!(
+        probe.starts_with("VIBEMEMORY_DIR="),
+        "the engine directory stays in front, as git would run it: {probe}"
+    );
+    assert_eq!(
+        driver_probe("meld-wrapper %O %A %B", "jsonl"),
+        None,
+        "a driver the engine did not write has nothing of ours to run"
+    );
+}
+
+/// The state of the git setting `key` in a fresh plan.
+fn setting_state(actions: &[Action], key: &str) -> State {
+    actions
+        .iter()
+        .find(|action| matches!(&action.step, Step::GitSetting { key: found, .. } if *found == key))
+        .map(|action| action.state.clone())
+        .expect("the setting is planned")
+}
+
+#[test]
+fn a_driver_an_earlier_install_wrote_is_replaced_and_a_foreign_one_is_not() {
+    let temp = TempDir::new("install-driver-replace");
+    let layout = layout(&temp);
+    let store = layout.store();
+    fs::create_dir_all(&store).expect("store");
+    support::git(&store, &["init", "--quiet"]);
+    // What every install wrote until 2026-09-11: the bare name, which git could not find.
+    support::git(
+        &store,
+        &[
+            "config",
+            "--local",
+            "merge.vibememory-jsonl.driver",
+            "vibememory merge-driver jsonl %O %A %B %P",
+        ],
+    );
+    support::git(
+        &store,
+        &[
+            "config",
+            "--local",
+            "merge.vibememory-keepboth.driver",
+            "meld-wrapper %O %A %B",
+        ],
+    );
+
+    let actions = plan(&layout, &config(), &[]);
+    assert_eq!(
+        setting_state(&actions, "merge.vibememory-jsonl.driver"),
+        State::Missing,
+        "an earlier install's driver is the engine's own to replace"
+    );
+    assert!(
+        matches!(
+            setting_state(&actions, "merge.vibememory-keepboth.driver"),
+            State::Conflict { .. }
+        ),
+        "somebody else's driver is theirs"
+    );
+}
+
+/// What the plan says about the drivers starting, on a store configured as `install` does and
+/// with `script` standing in for the engine.
+#[cfg(unix)]
+fn probe_with(label: &str, script: &str) -> State {
+    let temp = TempDir::new(label);
+    let layout = layout(&temp);
+    let store = layout.store();
+    fs::create_dir_all(&store).expect("store");
+    support::git(&store, &["init", "--quiet"]);
+    for (key, value) in git_settings(&layout) {
+        support::git(&store, &["config", "--local", key, &value]);
+    }
+    install_script(&layout, script);
+    plan(&layout, &config(), &[])
+        .into_iter()
+        .find(|action| action.step == Step::MergeDriverRuns)
+        .expect("the probe is planned")
+        .state
+}
+
+#[cfg(unix)]
+#[test]
+fn a_driver_that_does_not_start_is_not_reported_as_running() {
+    assert_eq!(
+        probe_with("install-probe-ok", "#!/bin/sh\necho 'vibememory 0.1.0'\n"),
+        State::Satisfied
+    );
+    let broken = probe_with(
+        "install-probe-broken",
+        "#!/bin/sh\necho 'no such thing here' >&2\nexit 127\n",
+    );
+    assert!(
+        matches!(&broken, State::Conflict { found } if found.contains("no such thing here")),
+        "what the shell said has to reach doctor: {broken:?}"
+    );
 }

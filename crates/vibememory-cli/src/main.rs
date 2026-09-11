@@ -31,11 +31,6 @@ use vibememory_core::naming::{
     enc_from_transcript_path, resolve_store_name,
 };
 
-/// The engine's own directory, under the home directory unless told otherwise.
-const ENGINE_DIR_VAR: &str = "VIBEMEMORY_DIR";
-/// Where Claude Code keeps its configuration.
-const CONFIG_DIR_VAR: &str = "CLAUDE_CONFIG_DIR";
-
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
@@ -87,13 +82,12 @@ fn main() -> ExitCode {
 /// The paths this machine works with. Both are overridable so that nothing but a deliberate run
 /// ever touches the real directories.
 fn layout() -> Layout {
-    let home = std::env::var("HOME").unwrap_or_default();
-    Layout {
-        config_dir: std::env::var(CONFIG_DIR_VAR)
-            .map_or_else(|_| PathBuf::from(&home).join(".claude"), PathBuf::from),
-        engine_dir: std::env::var(ENGINE_DIR_VAR)
-            .map_or_else(|_| PathBuf::from(&home).join(".vibememory"), PathBuf::from),
-    }
+    // Exit 1, not 2: for a hook, 2 means "block the prompt", and a machine without a home is not
+    // a reason to stop somebody typing.
+    Layout::from_environment().unwrap_or_else(|problem| {
+        eprintln!("vibememory: {problem}");
+        std::process::exit(1)
+    })
 }
 
 /// Reads the configuration, or explains why the engine will not start on it.
@@ -492,8 +486,8 @@ fn desktop_store_path(config: &Config) -> Option<PathBuf> {
     let path = match &config.desktop_store {
         DesktopStore::Path(path) => PathBuf::from(path),
         DesktopStore::Auto => {
-            let home = std::env::var("HOME").ok()?;
-            vibememory_cli::desktop_store::default_store(std::path::Path::new(&home))
+            let home = vibememory_cli::install::home_dir()?;
+            vibememory_cli::desktop_store::default_store(&home)
         }
     };
     path.is_dir().then_some(path)
@@ -1174,10 +1168,8 @@ fn desktop_store_link(config: &Config) -> Option<PathBuf> {
     match &config.desktop_store {
         DesktopStore::Path(path) => Some(PathBuf::from(path)),
         DesktopStore::Auto => {
-            let home = std::env::var("HOME").ok()?;
-            Some(vibememory_cli::desktop_store::default_store(
-                std::path::Path::new(&home),
-            ))
+            let home = vibememory_cli::install::home_dir()?;
+            Some(vibememory_cli::desktop_store::default_store(&home))
         }
     }
 }

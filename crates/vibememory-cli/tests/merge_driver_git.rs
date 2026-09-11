@@ -1,5 +1,9 @@
 //! The merge drivers driven by git itself: two branches that both appended to one transcript, and
 //! one that both edited a memory document.
+//!
+//! Every repository here is configured by what `install` writes and every merge is run the way the
+//! tick runs it — launchd's `PATH`, a home of its own. Anything kinder would test a driver nobody
+//! runs.
 
 // The test drives real git, so the purity gate is lifted here.
 #![allow(
@@ -16,38 +20,44 @@ mod support;
 use std::fs;
 use std::path::Path;
 
-use support::{TempDir, git, git_repo_with_commit};
+use support::{TempDir, git, git_as_the_tick, git_repo_with_commit};
+use vibememory_cli::install::{GITATTRIBUTES, Layout, git_settings, installed_binary};
 
-/// Registers the drivers in the repository, pointing at the binary this test run built.
-/// `engine` is where a quarantined version will land.
+/// Configures the store exactly as `install` does for an engine in `engine`: the same git settings,
+/// the same `.gitattributes`, the driver lines `install` writes — and the binary at the path those
+/// lines name. `engine` is where a quarantined version will land.
+///
+/// The drivers used to be registered here with the test binary's own absolute path. That is why
+/// every test in this file stayed green while the line `install` really wrote — the bare name
+/// `vibememory` — could not be found by git at all.
 fn register_drivers_with_engine(store: &Path, engine: &Path) {
-    let binary = env!("CARGO_BIN_EXE_vibememory");
-    git(
-        store,
-        &[
-            "config",
-            "--local",
-            "vibememory.engineDir",
-            &engine.display().to_string(),
-        ],
-    );
-    for (key, driver) in [
-        ("merge.vibememory-jsonl.driver", "jsonl"),
-        ("merge.vibememory-keepboth.driver", "keepboth"),
-    ] {
-        let value = format!(
-            "VIBEMEMORY_DIR={} {binary} merge-driver {driver} %O %A %B %P",
-            engine.display()
-        );
+    let layout = Layout {
+        config_dir: engine.join("claude"),
+        engine_dir: engine.to_path_buf(),
+    };
+    let binary = installed_binary(&layout);
+    fs::create_dir_all(binary.parent().expect("bin directory")).expect("create bin");
+    fs::copy(env!("CARGO_BIN_EXE_vibememory"), &binary).expect("place the engine binary");
+    for (key, value) in git_settings(&layout) {
         git(store, &["config", "--local", key, &value]);
     }
-    fs::write(
-        store.join(".gitattributes"),
-        "* -text\n* merge=vibememory-keepboth\n**/*.jsonl merge=vibememory-jsonl\n",
-    )
-    .expect("write attributes");
+    fs::write(store.join(".gitattributes"), GITATTRIBUTES).expect("write attributes");
     git(store, &["add", ".gitattributes"]);
     git(store, &["commit", "--quiet", "-m", "attributes"]);
+}
+
+/// Merges `branch` the way the tick does and fails the test with what git and the driver said
+/// when that does not work.
+fn merge(store: &Path, branch: &str) {
+    let home = store.join("..").join("home");
+    fs::create_dir_all(&home).expect("home");
+    let output = git_as_the_tick(store, &home, &["merge", "--quiet", "--no-edit", branch]);
+    assert!(
+        output.status.success(),
+        "the merge the tick would run failed:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 /// The common case: the quarantine directory is of no interest to the test.
@@ -102,7 +112,7 @@ fn two_machines_that_both_appended_keep_every_record() {
     );
     commit_file(&store, relative, &ours, "our turn");
 
-    git(&store, &["merge", "--quiet", "--no-edit", "other"]);
+    merge(&store, "other");
 
     let merged = read(&store, relative);
     assert!(merged.contains("\"ours\""), "our record survives: {merged}");
@@ -131,7 +141,7 @@ fn a_memory_document_edited_on_both_sides_keeps_ours_and_sets_theirs_aside() {
     git(&store, &["checkout", "--quiet", "-"]);
     commit_file(&store, relative, "our text\n", "our edit");
 
-    git(&store, &["merge", "--quiet", "--no-edit", "other"]);
+    merge(&store, "other");
 
     let merged = read(&store, relative);
     assert_eq!(
@@ -180,7 +190,7 @@ fn a_merge_leaves_no_temporary_files_behind() {
         ),
         "ours",
     );
-    git(&store, &["merge", "--quiet", "--no-edit", "other"]);
+    merge(&store, "other");
 
     let left: Vec<String> = fs::read_dir(store.join("projects").join("Project"))
         .expect("read dir")
@@ -265,7 +275,7 @@ fn the_losing_memory_version_is_written_into_the_quarantine() {
     commit_file(&store, relative, "their text\n", "their edit");
     git(&store, &["checkout", "--quiet", "-"]);
     commit_file(&store, relative, "our text\n", "our edit");
-    git(&store, &["merge", "--quiet", "--no-edit", "other"]);
+    merge(&store, "other");
 
     assert_eq!(read(&store, relative), "our text\n");
     let set_aside = vibememory_cli::memory::quarantined(&engine);
@@ -312,9 +322,9 @@ fn a_criss_cross_history_keeps_every_record() {
     commit_file(&store, relative, &right.concat(), "right one");
 
     // Each side takes the other's first record: this is what makes the history criss-cross.
-    git(&store, &["merge", "--quiet", "--no-edit", "left"]);
+    merge(&store, "left");
     git(&store, &["checkout", "--quiet", "left"]);
-    git(&store, &["merge", "--quiet", "--no-edit", "right"]);
+    merge(&store, "right");
 
     // And now each adds one more and they meet again.
     let after_left = read(&store, relative);
@@ -332,7 +342,7 @@ fn a_criss_cross_history_keeps_every_record() {
         &format!("{after_right}{}", record("right-2", "2026-09-05T08:04:00Z")),
         "right two",
     );
-    git(&store, &["merge", "--quiet", "--no-edit", "left"]);
+    merge(&store, "left");
 
     let merged = read(&store, relative);
     for uuid in ["base", "left-1", "right-1", "left-2", "right-2"] {

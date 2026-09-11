@@ -11,6 +11,8 @@
 
 use std::path::{Path, PathBuf};
 
+use vibememory_core::naming::PathSyntax;
+
 use crate::config::Config;
 
 /// Git settings the store repository must carry, with the reason each one exists.
@@ -46,18 +48,16 @@ const GIT_SETTINGS: &[(&str, &str, &str)] = &[
 pub const GITATTRIBUTES: &str =
     "* -text\n* merge=vibememory-keepboth\n**/*.jsonl merge=vibememory-jsonl\n";
 
-/// The merge drivers git must know about, as `merge.<name>.driver` settings. `%O %A %B %P` is
-/// git's own vocabulary: base, ours, theirs, and the path inside the repository.
+/// The merge drivers git must know about: the `merge.<name>.driver` key, and which driver of the
+/// binary it runs. The command itself belongs to the machine — see [`merge_driver_command`].
 const MERGE_DRIVERS: &[(&str, &str)] = &[
-    (
-        "merge.vibememory-jsonl.driver",
-        "vibememory merge-driver jsonl %O %A %B %P",
-    ),
-    (
-        "merge.vibememory-keepboth.driver",
-        "vibememory merge-driver keepboth %O %A %B %P",
-    ),
+    ("merge.vibememory-jsonl.driver", "jsonl"),
+    ("merge.vibememory-keepboth.driver", "keepboth"),
 ];
+
+/// `PATH` of a launchd agent that sets none, read off this machine with `launchctl print`: what the
+/// tick and every git it starts actually see. Nothing of the engine is on it.
+pub const LAUNCHD_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 
 /// Files of the config directory the store manages as copies.
 /// The files of the config directory the store keeps a copy of.
@@ -78,6 +78,90 @@ impl Layout {
     pub fn store(&self) -> PathBuf {
         self.engine_dir.join("store")
     }
+
+    /// This machine's layout, from the environment.
+    ///
+    /// # Errors
+    ///
+    /// When there is no home directory and no variable naming the directory instead. Never a
+    /// relative path in its place: an absent home used to become an empty string, and the engine
+    /// then lived in `.vibememory` under whatever directory it was started in — on Windows, where
+    /// the scheduler sets no `HOME`, that is a project folder.
+    pub fn from_environment() -> Result<Self, String> {
+        let home = home_dir();
+        Ok(Self {
+            config_dir: resolve_dir(
+                std::env::var_os(CONFIG_DIR_VAR),
+                home.as_deref(),
+                ".claude",
+                CONFIG_DIR_VAR,
+            )?,
+            engine_dir: engine_dir_from_environment()?,
+        })
+    }
+
+    /// [`Layout::from_environment`] with the environment passed in, so the rule can be checked
+    /// without one.
+    ///
+    /// # Errors
+    ///
+    /// As [`Layout::from_environment`].
+    pub fn resolve(
+        home: Option<&Path>,
+        config_dir: Option<std::ffi::OsString>,
+        engine_dir: Option<std::ffi::OsString>,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            config_dir: resolve_dir(config_dir, home, ".claude", CONFIG_DIR_VAR)?,
+            engine_dir: resolve_dir(engine_dir, home, ".vibememory", ENGINE_DIR_VAR)?,
+        })
+    }
+}
+
+/// Names the engine directory. Hooks and merge drivers carry it, see [`hook_command`].
+pub const ENGINE_DIR_VAR: &str = "VIBEMEMORY_DIR";
+/// Names the configuration directory of Claude Code.
+pub const CONFIG_DIR_VAR: &str = "CLAUDE_CONFIG_DIR";
+
+/// The home directory of whoever runs the engine.
+///
+/// The standard library's answer rather than `HOME`: on Windows `HOME` exists only inside Git
+/// Bash, so the hooks would see it and the scheduled tick would not, while the profile directory
+/// is what the system itself answers. Read once, here — it used to be read in five places, each
+/// with its own idea of what an absent value means.
+#[must_use]
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::home_dir().filter(|home| !home.as_os_str().is_empty())
+}
+
+/// The engine directory alone: what the MCP server needs, without also requiring a config
+/// directory it never reads.
+///
+/// # Errors
+///
+/// As [`Layout::from_environment`].
+pub fn engine_dir_from_environment() -> Result<PathBuf, String> {
+    resolve_dir(
+        std::env::var_os(ENGINE_DIR_VAR),
+        home_dir().as_deref(),
+        ".vibememory",
+        ENGINE_DIR_VAR,
+    )
+}
+
+/// A directory named by a variable, else under the home. An empty variable counts as unset, as it
+/// does for the shell, and no home is an error — never a relative path.
+fn resolve_dir(
+    given: Option<std::ffi::OsString>,
+    home: Option<&Path>,
+    under_home: &str,
+    variable: &str,
+) -> Result<PathBuf, String> {
+    match (given.filter(|value| !value.is_empty()), home) {
+        (Some(value), _) => Ok(PathBuf::from(value)),
+        (None, Some(home)) => Ok(home.join(under_home)),
+        (None, None) => Err(format!("no home directory and no {variable}")),
+    }
 }
 
 /// One thing that must be true about this machine.
@@ -87,8 +171,9 @@ pub enum Step {
     GitSetting {
         /// Key, e.g. `core.autocrlf`.
         key: &'static str,
-        /// The value it must have.
-        value: &'static str,
+        /// The value it must have. Owned, because a merge driver's value names this machine's
+        /// binary.
+        value: String,
     },
     /// The store's `.gitattributes`, which decides how merges are driven.
     Gitattributes,
@@ -117,6 +202,10 @@ pub enum Step {
     /// A copy of this binary under the engine directory, so hooks and the scheduler survive a
     /// rebuild or a `cargo clean` of wherever it was built.
     Binary,
+    /// The merge drivers on record start from git's own shell, in the environment the tick gives
+    /// git. Configured and installed is not runnable: the driver was once written by bare name,
+    /// and git could not find it from the tick's `PATH`.
+    MergeDriverRuns,
     /// The MCP server beside it, placed and signed the same way.
     ///
     /// It is installed rather than copied by hand for one measured reason: writing over a binary
@@ -160,6 +249,7 @@ impl Step {
             Self::DeletionsHeld => "no deletions waiting for a decision".to_owned(),
             Self::ScaffoldCommitted { .. } => "store scaffolding committed".to_owned(),
             Self::Binary => "engine binary in place".to_owned(),
+            Self::MergeDriverRuns => "merge drivers start from git's shell".to_owned(),
             Self::McpBinary => "MCP server binary in place".to_owned(),
             Self::BinarySigned { identity } => format!("engine binary signed by {identity}"),
             Self::ProjectLink { enc, name } => format!("link {enc} -> projects/{name}"),
@@ -223,18 +313,7 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
     let store = layout.store();
     let mut actions = Vec::new();
 
-    for (key, value, _why) in GIT_SETTINGS {
-        actions.push(Action {
-            step: Step::GitSetting { key, value },
-            state: git_setting_state(&store, key, value),
-        });
-    }
-    for (key, value) in MERGE_DRIVERS {
-        actions.push(Action {
-            step: Step::GitSetting { key, value },
-            state: git_setting_state(&store, key, value),
-        });
-    }
+    push_git_settings(layout, &store, &mut actions);
     actions.push(Action {
         step: Step::Gitattributes,
         state: file_state(&store.join(".gitattributes"), GITATTRIBUTES),
@@ -282,6 +361,11 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
             ),
         });
     }
+    // After the binary and its signature: the proof is about the file that will actually run.
+    actions.push(Action {
+        step: Step::MergeDriverRuns,
+        state: merge_driver_runs_state(layout),
+    });
     actions.push(Action {
         step: Step::PromptCacheEnv,
         state: prompt_cache_env_state(layout),
@@ -565,6 +649,9 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
         // plan never reports this step as missing — only satisfied or in conflict. The same goes
         // for a held deletion: releasing it is a decision, not a repair.
         Step::PromptCacheEnv | Step::DeletionsHeld => Ok(()),
+        // Missing only while something it proves is about to be put in place by an earlier step of
+        // this same run. By now it has been, and the proof is the run itself.
+        Step::MergeDriverRuns => probe_merge_drivers(layout),
         Step::Schedule => install_schedule(layout),
         Step::Binary => install_binary(layout),
         Step::McpBinary => match mcp_source() {
@@ -687,7 +774,7 @@ pub const SCHEDULE_LABEL: &str = "dev.vibememory.tick";
 /// test, a dry run in a scratch directory — keeps its agent beside itself and never touches
 /// launchd. The real one is the engine under the home directory, and nothing else.
 fn real_launch_agents_dir(layout: &Layout) -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let home = home_dir()?;
     (layout.engine_dir == home.join(".vibememory"))
         .then(|| home.join("Library").join("LaunchAgents"))
 }
@@ -728,7 +815,12 @@ pub const MCP_BINARY: &str = "vibememory-mcp";
 /// Where a binary of this engine lives once installed.
 #[must_use]
 pub fn installed_named(layout: &Layout, name: &str) -> PathBuf {
-    layout.engine_dir.join("bin").join(name)
+    // `.exe` on Windows: without it `CreateProcess` looks for `vibememory.exe`, finds nothing, and
+    // every hook fails. Nothing on macOS.
+    layout
+        .engine_dir
+        .join("bin")
+        .join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
 }
 
 /// The note beside the installed binary saying which build it was copied from.
@@ -825,6 +917,28 @@ fn install_binary(layout: &Layout) -> Result<(), String> {
     }
 }
 
+/// Adds the git settings of the store: the fixed ones, then the merge drivers, whose lines name
+/// this machine's binary.
+fn push_git_settings(layout: &Layout, store: &Path, actions: &mut Vec<Action>) {
+    for (key, value, _why) in GIT_SETTINGS {
+        actions.push(Action {
+            step: Step::GitSetting {
+                key,
+                value: (*value).to_owned(),
+            },
+            state: git_setting_state(store, key, value),
+        });
+    }
+    for (key, driver) in MERGE_DRIVERS {
+        let value = merge_driver_command(layout, driver);
+        let state = merge_driver_state(store, key, driver, &value);
+        actions.push(Action {
+            step: Step::GitSetting { key, value },
+            state,
+        });
+    }
+}
+
 /// Adds the MCP server step, and only when this machine has anything to do about it.
 ///
 /// A machine that never built the server does not need it, and a step it can do nothing about
@@ -847,7 +961,7 @@ fn push_mcp_step(layout: &Layout, actions: &mut Vec<Action>) {
 /// below rather than attempted.
 fn mcp_source() -> Option<PathBuf> {
     let running = std::env::current_exe().ok()?;
-    let candidate = running.with_file_name(MCP_BINARY);
+    let candidate = running.with_file_name(format!("{MCP_BINARY}{}", std::env::consts::EXE_SUFFIX));
     candidate.is_file().then_some(candidate)
 }
 
@@ -976,12 +1090,201 @@ const HOOK_EVENTS: &[(&str, &str)] = &[
 
 /// The command line of one hook: this binary, the subcommand, and the engine directory so a
 /// redirected engine keeps working under the CLI, which does not pass the variable through.
-fn hook_command(layout: &Layout, subcommand: &str) -> String {
+///
+/// Both paths are shell words, see [`shell_word`]: the line is run by `sh` on macOS and by Git
+/// Bash on Windows, and an unquoted path breaks on a space everywhere and on every backslash
+/// under Git Bash.
+#[must_use]
+pub fn hook_command(layout: &Layout, subcommand: &str) -> String {
     format!(
-        "VIBEMEMORY_DIR={} {} hook {subcommand}",
-        layout.engine_dir.display(),
-        installed_binary(layout).display()
+        "{ENGINE_DIR_VAR}={} {} hook {subcommand}",
+        shell_word(&layout.engine_dir),
+        shell_word(&installed_binary(layout)),
     )
+}
+
+/// The command git runs for one merge driver on this machine.
+///
+/// By absolute path, never by name. Git hands the line to a shell whose `PATH` is whatever started
+/// git, and nothing puts the engine's `bin` there — not the tick under launchd ([`LAUNCHD_PATH`]),
+/// not a terminal. Measured 2026-09-11: the bare name gave `vibememory: command not found`, git
+/// fell back to a textual conflict, and nothing noticed, because the store had never needed a
+/// three-way merge — 1299 commits, not one merge. The engine directory travels with it for the
+/// reason it travels with the hooks: the quarantine and the merge log belong to the engine that
+/// installed the driver.
+#[must_use]
+pub fn merge_driver_command(layout: &Layout, driver: &str) -> String {
+    format!(
+        "{ENGINE_DIR_VAR}={} {}{}",
+        shell_word(&layout.engine_dir),
+        shell_word(&installed_binary(layout)),
+        driver_arguments(driver),
+    )
+}
+
+/// What follows the program in a merge driver line: `%O %A %B %P` is git's own vocabulary — base,
+/// ours, theirs, and the path inside the repository. The same tail marks a line as the engine's,
+/// whatever binary and engine directory an earlier install put in front of it.
+fn driver_arguments(driver: &str) -> String {
+    format!(" merge-driver {driver} %O %A %B %P")
+}
+
+/// Every git setting the store carries on this machine, in the order `install` checks them.
+///
+/// Public so a test can configure a repository exactly as `install` does. The drivers used to be
+/// registered in the tests by a string of their own, and that is how the one `install` wrote went
+/// on being unrunnable with every test green.
+#[must_use]
+pub fn git_settings(layout: &Layout) -> Vec<(&'static str, String)> {
+    GIT_SETTINGS
+        .iter()
+        .map(|(key, value, _why)| (*key, (*value).to_owned()))
+        .chain(
+            MERGE_DRIVERS
+                .iter()
+                .map(|(key, driver)| (*key, merge_driver_command(layout, driver))),
+        )
+        .collect()
+}
+
+/// A path as one word for the POSIX shell that runs hooks and merge drivers: `sh` on macOS, Git
+/// Bash on Windows.
+#[must_use]
+pub fn shell_word(path: &Path) -> String {
+    shell_word_for(
+        &path.to_string_lossy(),
+        crate::hook::session_start::host_syntax(),
+    )
+}
+
+/// [`shell_word`] for a given syntax, so the Windows form is checked on any machine.
+///
+/// Single quotes, because nothing is special inside them: a space in a user name is ordinary on
+/// Windows and splits an unquoted word everywhere, and an embedded quote is closed, escaped and
+/// reopened. Forward slashes for Windows, because Git Bash reads a backslash as an escape — an
+/// unquoted `D:\Work` reaches the program as `D:Work` — while every Windows API takes `/`.
+#[must_use]
+pub fn shell_word_for(path: &str, syntax: PathSyntax) -> String {
+    let path = match syntax {
+        PathSyntax::Windows => path.replace('\\', "/"),
+        PathSyntax::Posix => path.to_owned(),
+    };
+    format!("'{}'", path.replace('\'', r"'\''"))
+}
+
+/// Whether a merge driver line is one this engine wrote, by an earlier install or by this one.
+fn is_engine_driver(line: &str, driver: &str) -> bool {
+    line.ends_with(&driver_arguments(driver))
+}
+
+/// A merge driver setting: satisfied when it is this machine's current line; missing when absent
+/// or left by an earlier install, which is replaced as an earlier install's hooks are; in conflict
+/// only when it is somebody else's driver.
+fn merge_driver_state(store: &Path, key: &str, driver: &str, wanted: &str) -> State {
+    match git_setting_state(store, key, wanted) {
+        State::Conflict { found } if is_engine_driver(&found, driver) => State::Missing,
+        other => other,
+    }
+}
+
+/// What proves a merge driver line starts: the same line with the merge arguments replaced by
+/// `--version`. `None` for a line the engine did not write — there is nothing of ours to run.
+#[must_use]
+pub fn driver_probe(line: &str, driver: &str) -> Option<String> {
+    line.strip_suffix(&driver_arguments(driver))
+        .map(|program| format!("{program} --version"))
+}
+
+/// How long git, its shell and the binary together may take to print a version.
+const DRIVER_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// The git alias the probe runs through.
+const PROBE_ALIAS: &str = "vibememory-probe";
+
+/// Whether the merge drivers start from git's own shell.
+///
+/// Missing while `install` is about to write them or the binary they name: the proof then comes at
+/// the end of that same run, see [`probe_merge_drivers`]. Otherwise the drivers on record are run,
+/// which is the only answer worth having — the driver used to be written by bare name, was
+/// configured, installed and green in every test, and could not be started by git at all.
+fn merge_driver_runs_state(layout: &Layout) -> State {
+    let store = layout.store();
+    if !store.join(".git").exists() || !installed_binary(layout).exists() {
+        return State::Missing;
+    }
+    for (key, driver) in MERGE_DRIVERS {
+        match merge_driver_state(&store, key, driver, &merge_driver_command(layout, driver)) {
+            State::Satisfied => {}
+            // Somebody else's driver: the setting reports that conflict itself, and there is no
+            // command of the engine here to prove.
+            other => return other,
+        }
+    }
+    match probe_merge_drivers(layout) {
+        Ok(()) => State::Satisfied,
+        Err(found) => State::Conflict { found },
+    }
+}
+
+/// Whether the binary installed as the engine is a copy of the program running now, when the
+/// program running now is not the engine — the test harness, which `install` copies into the
+/// engine's place in the suite. Asking it for `--version` proves nothing about the engine; the
+/// check after a copy is skipped there for the same reason (see `install_binary`).
+///
+/// Decided by the note that records where the installed binary came from, not by the name of the
+/// running program alone: the probe's own gate places a stand-in by hand, and that one has to run.
+/// On a real machine the names agree and nothing is hashed.
+fn installed_is_a_copy_of_a_harness(layout: &Layout) -> bool {
+    let Ok(running) = std::env::current_exe() else {
+        return false;
+    };
+    if running.file_name() == installed_binary(layout).file_name() {
+        return false;
+    }
+    let Ok(noted) = std::fs::read_to_string(source_note(layout)) else {
+        return false;
+    };
+    std::fs::read(&running).is_ok_and(|bytes| noted.trim() == crate::sha256::hex(&bytes))
+}
+
+/// Runs every merge driver line `install` writes the way git will run it, and says what the shell
+/// said when one does not start.
+///
+/// Through a git alias rather than `sh -c`, so that the shell is git's own on every platform — Git
+/// Bash's `sh` on Windows. On macOS in the tick's world: launchd gives it [`LAUNCHD_PATH`] and a
+/// home, nothing else. On Windows the scheduled task runs with the user's own environment, and
+/// that is what is kept.
+fn probe_merge_drivers(layout: &Layout) -> Result<(), String> {
+    if installed_is_a_copy_of_a_harness(layout) {
+        return Ok(());
+    }
+    let store = layout.store();
+    for (_, driver) in MERGE_DRIVERS {
+        let line = merge_driver_command(layout, driver);
+        let probe = driver_probe(&line, driver)
+            .ok_or_else(|| format!("not a merge driver line of the engine: {line}"))?;
+        let mut command = std::process::Command::new("git");
+        command
+            .arg("-c")
+            .arg(format!("alias.{PROBE_ALIAS}=!{probe}"))
+            .arg(PROBE_ALIAS)
+            .current_dir(&store)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        if cfg!(target_os = "macos") {
+            command.env_clear().env("PATH", LAUNCHD_PATH);
+            if let Some(home) = home_dir() {
+                command.env("HOME", home);
+            }
+        }
+        match crate::git::run_capturing(command, DRIVER_PROBE_TIMEOUT)? {
+            Ok(version) if version.starts_with(&format!("{ENGINE_BINARY} ")) => {}
+            Ok(other) => return Err(format!("{line}: answered {other:?} instead of a version")),
+            Err(said) => return Err(format!("{line}: {said}")),
+        }
+    }
+    Ok(())
 }
 
 /// Whether `settings.json` carries every hook of the engine.
@@ -1201,15 +1504,11 @@ pub fn write_hooks(layout: &Layout) -> Result<(), String> {
     std::fs::rename(&temporary, &path).map_err(|error| error.to_string())
 }
 
-/// The prefix every hook command of the engine carries: the engine directory, exported for the
-/// subprocess because the CLI does not pass the variable through.
-const ENGINE_HOOK_PREFIX: &str = "VIBEMEMORY_DIR=";
-
 /// Whether a hook command is one of ours. Decided by its shape, not by the binary's file name:
 /// the binary is `vibememory` in an installation and something else under `cargo test`, and a
 /// rule that only recognised the former would leave the latter's hooks in the store.
 fn is_engine_hook(command: &str) -> bool {
-    command.starts_with(ENGINE_HOOK_PREFIX)
+    command.starts_with(&format!("{ENGINE_DIR_VAR}="))
         && HOOK_EVENTS
             .iter()
             .any(|(_, subcommand)| command.ends_with(&format!(" hook {subcommand}")))

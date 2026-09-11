@@ -145,12 +145,14 @@ https://code.claude.com/docs/en/claude-directory.
   (bash on POSIX, PowerShell on Windows without Git Bash)»; поле `shell`: `'bash'` — ваш `$SHELL`,
   `'powershell'` — pwsh, по умолчанию bash. Без Git Bash: «Git Bash not found; BashTool will be unavailable»; путь задаётся
   `CLAUDE_CODE_GIT_BASH_PATH` (есть в 2.1.232 и 2.1.255).
-- Под Git Bash `HOME=%USERPROFILE%`, поэтому одна команда `"$HOME/ClaudeSync/bin/claudesync" …` в
-  общем `settings.json` работает на обеих ОС (macOS — `sh -c`). Это расчёт дизайна, вживую на
-  Windows не проверялся.
+- Под Git Bash `HOME=%USERPROFILE%`. Ранний дизайн рассчитывал на одну команду
+  `"$HOME/…/bin/claudesync" …` в общем `settings.json` для обеих ОС. Движок так не делает: хуки
+  живут только в локальном `settings.json` машины (в общую копию не попадают), путь в команде —
+  абсолютный, в одинарных кавычках, на Windows с прямыми слешами (2026-09-11,
+  [design/windowsReadiness.md](../design/windowsReadiness.md)).
 - Не проверено на Windows: хуки Desktop-CLI через Git Bash; `node`/`python` в PATH внутри Git Bash;
-  путь `$CLAUDE_CONFIG_DIR/sync/hook.sh` с обратными слешами под `sh -c`; переиспользование pid
-  (`kill -0`/`tasklist` дают ложное «жив» или «мёртв»).
+  строка хука с Windows-путём вживую под Git Bash; переиспользование pid (`kill -0`/`tasklist`
+  дают ложное «жив» или «мёртв»).
 
 ## `CLAUDE_CODE_SKIP_PROMPT_HISTORY` — машинные прогоны без следов
 
