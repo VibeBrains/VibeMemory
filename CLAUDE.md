@@ -41,7 +41,10 @@ Rust workspace: `crates/vibememory-core` (стор, имена, слияние �
 
 ## Проверка перед завершением задачи
 
-`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`. В `cargo test`
+`cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` и та же сборка под
+Windows: `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings`
+(цель ставится один раз — `rustup target add x86_64-pc-windows-msvc`; линкер не нужен, C-зависимостей
+нет). Без неё правка под `cfg` ломает Windows молча, и узнают об этом на GPD. В `cargo test`
 входят гейты: документации (ссылки, индекс knowledge, дерево мануалов, camelCase, формат
 завершённых пунктов roadmap), приватности фикстур и property-тесты законов слияния — руками эти
 правила больше не проверяются. Драйверы

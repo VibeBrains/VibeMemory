@@ -725,7 +725,7 @@ fn reconcile_links(
         if let Some(parent) = link.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        symlink_dir(&target, &link)?;
+        crate::dir_link::create(&target, &link)?;
         links_file::record(
             store,
             machine_id,
@@ -741,17 +741,6 @@ fn reconcile_links(
         outcome.linked.push(record.enc);
     }
     Ok(outcome)
-}
-
-fn symlink_dir(target: &Path, link: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(target, link).map_err(|error| error.to_string())
-    }
-    #[cfg(windows)]
-    {
-        std::os::windows::fs::symlink_dir(target, link).map_err(|error| error.to_string())
-    }
 }
 
 /// One round of Desktop's cards: publish, bring in, repair, fold. In that order — see each step.

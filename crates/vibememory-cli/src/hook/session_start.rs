@@ -198,7 +198,7 @@ pub fn perform(layout: &Layout, decision: &Decision) -> Result<(), String> {
     {
         std::fs::remove_dir_all(&link).map_err(|error| error.to_string())?;
     }
-    symlink_dir(&target, &link)
+    crate::dir_link::create(&target, &link)
 }
 
 /// Writes `.keep` so that git carries the directory and the CLI's sweeper leaves it alone.
@@ -212,17 +212,6 @@ fn keep_marker(dir: &Path) -> Result<(), String> {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
         Err(error) => Err(error.to_string()),
-    }
-}
-
-fn symlink_dir(target: &Path, link: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(target, link).map_err(|error| error.to_string())
-    }
-    #[cfg(windows)]
-    {
-        std::os::windows::fs::symlink_dir(target, link).map_err(|error| error.to_string())
     }
 }
 

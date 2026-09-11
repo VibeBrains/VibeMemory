@@ -18,6 +18,7 @@
 pub mod clock;
 pub mod config;
 pub mod desktop_store;
+pub mod dir_link;
 pub mod forget;
 pub mod git;
 pub mod guard;

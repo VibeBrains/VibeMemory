@@ -1,5 +1,9 @@
 //! `switch`: link surgery on a miniature of the old layout, recorded so it can be undone.
-
+//!
+//! Unix only, and truthfully so: `switch` migrates the old macOS scheme, whose `CLAUDE.md` and
+//! `settings.json` were file symlinks into the synced folder. Windows never had those — a file
+//! symlink there needs privileges — and its migration belongs to the bootstrap.
+#![cfg(unix)]
 // The test builds links and directories, so the purity gate is lifted here.
 #![allow(
     clippy::panic,

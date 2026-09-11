@@ -99,3 +99,9 @@ pub fn git_as_the_tick(dir: &Path, home: &Path, args: &[&str]) -> std::process::
         .output()
         .unwrap_or_else(|e| panic!("run git {args:?} as the tick: {e}"))
 }
+
+/// A directory link made the way the engine makes one: a symlink on unix, a junction on Windows.
+pub fn link_dir(target: &Path, link: &Path) {
+    vibememory_cli::dir_link::create(target, link)
+        .unwrap_or_else(|e| panic!("link {} -> {}: {e}", link.display(), target.display()));
+}

@@ -716,6 +716,18 @@
   `.vibememory` в текущем каталоге), кавычки и прямые слеши в команде хука, `.exe` у бинаря.
   Десять подделок. [knowledge](knowledge/design/driverNeverRan.md),
   [готовность](knowledge/design/windowsReadiness.md).
+- [x] **Ссылки каталогов на Windows — junction, тесты под Windows собираются** — ✅ (2026-09-11,
+  next) код создания ссылки жил в **пяти** копиях (`install`, `switch`, `relink`, тик,
+  `SessionStart`), и все делали на Windows `symlink_dir`, которому нужен администратор или
+  Developer Mode, — вопреки записанному ограничению. Теперь один модуль `dir_link`: symlink на unix,
+  junction через крейт `junction` на Windows; удаление — `remove_dir`, потому что `remove_file`
+  junction не удаляет; откат `switch` возвращает файловую ссылку `symlink_file`. Что std считает
+  junction ссылкой (бит name-surrogate), что `read_link` его читает, а `remove_dir_all` в него не
+  заходит, — прочитано в исходнике std 1.97.1: все шесть проверок «ссылка или каталог» верны без
+  правок, и импорт «настоящего каталога» с `remove_dir_all` на конце junction не возьмёт. 14 прямых
+  unix-вызовов в пяти тестовых файлах идут через помощник, `switch_layout.rs` честно только unix.
+  Сборка под `x86_64-pc-windows-msvc` вошла в проверки `CLAUDE.md`. Две подделки на `dir_link`;
+  ветка Windows проверена только компиляцией. [knowledge](knowledge/design/windowsReadiness.md).
 - [ ] `CLAUDE_CONFIG_DIR=%USERPROFILE%\.claude` (setx + Desktop Settings), `.claude.json`
   переезжает локально, `.credentials.json` не переносится (relogin), junction Desktop-стора
   снимается, реальный каталог в userData действующей установки (MSIX / Squirrel).

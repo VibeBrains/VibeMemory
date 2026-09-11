@@ -592,8 +592,7 @@ fn links_made_by_switch_are_recorded_so_the_other_machine_learns_them() {
     )
     .expect("transcript");
     fs::create_dir_all(config_dir.join("projects")).expect("dirs");
-    std::os::unix::fs::symlink(&project, config_dir.join("projects").join("-work-Project"))
-        .expect("link");
+    support::link_dir(&project, &config_dir.join("projects").join("-work-Project"));
 
     let naming = vibememory_core::naming::NamingConfig::default();
     let machine = Machine {
@@ -647,7 +646,7 @@ fn a_link_is_recorded_only_with_the_working_directory_that_encodes_to_it() {
     }
     fs::create_dir_all(config_dir.join("projects")).expect("dirs");
     for enc in ["-work-Project", "-work-Project-server"] {
-        std::os::unix::fs::symlink(&project, config_dir.join("projects").join(enc)).expect("link");
+        support::link_dir(&project, &config_dir.join("projects").join(enc));
     }
 
     let naming = vibememory_core::naming::NamingConfig::default();
@@ -718,11 +717,10 @@ fn a_tick_repairs_a_desktop_card_this_machine_can_prove() {
     )
     .expect("transcript");
     fs::create_dir_all(config_dir.join("projects")).expect("dirs");
-    std::os::unix::fs::symlink(
-        pair.mac.join("projects/VibeIDE"),
-        config_dir.join("projects").join(enc),
-    )
-    .expect("link");
+    support::link_dir(
+        &pair.mac.join("projects/VibeIDE"),
+        &config_dir.join("projects").join(enc),
+    );
 
     // What makes the path proven is a link record confirmed by a session that actually ran here;
     // a link the reconciler merely predicted is not proof, and the repair refuses it.
@@ -822,11 +820,10 @@ fn a_card_of_an_old_session_is_repaired_through_the_link_that_session_proved() {
         .expect("transcript");
     }
     fs::create_dir_all(config_dir.join("projects")).expect("dirs");
-    std::os::unix::fs::symlink(
-        pair.mac.join("projects/VibeIDE"),
-        config_dir.join("projects").join(enc),
-    )
-    .expect("link");
+    support::link_dir(
+        &pair.mac.join("projects/VibeIDE"),
+        &config_dir.join("projects").join(enc),
+    );
     vibememory_cli::links_file::record(
         &pair.mac,
         "mac-test",

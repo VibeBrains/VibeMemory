@@ -710,7 +710,7 @@ fn reconcile_managed(layout: &Layout, store: &Path, name: &str) -> Result<(), St
     state.write(&layout.engine_dir)
 }
 
-/// Creates a symlink, making sure its target exists first: a link to nothing is a link the CLI
+/// Creates a directory link, making sure its target exists first: a link to nothing is a link the CLI
 /// will replace with a real directory.
 fn make_link(target: &Path, link: &Path) -> Result<(), String> {
     std::fs::create_dir_all(target).map_err(|e| e.to_string())?;
@@ -718,14 +718,7 @@ fn make_link(target: &Path, link: &Path) -> Result<(), String> {
     if let Some(parent) = link.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(target, link).map_err(|e| e.to_string())
-    }
-    #[cfg(windows)]
-    {
-        std::os::windows::fs::symlink_dir(target, link).map_err(|e| e.to_string())
-    }
+    crate::dir_link::create(target, link)
 }
 
 /// Sets one git setting of the store, initialising the repository when it is not there yet.

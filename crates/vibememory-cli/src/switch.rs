@@ -426,7 +426,7 @@ pub fn rollback(engine_dir: &Path) -> Result<Vec<Change>, String> {
             } => relink(link, old_target)?,
             Change::Materialized { path, old_target } => {
                 std::fs::remove_file(path).map_err(|error| error.to_string())?;
-                symlink(old_target, path)?;
+                file_link(old_target, path)?;
             }
             Change::DesktopStore { path, moved_to, .. } => {
                 // The real directory may hold cards written since; they are kept beside the
@@ -467,21 +467,25 @@ fn canonical(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Replaces a symlink with one pointing at `target`. The window between the two calls is why
-/// `switch` refuses to touch a link under a live session.
+/// Replaces a directory link with one pointing at `target`. The window between the two calls is
+/// why `switch` refuses to touch a link under a live session.
 fn relink(link: &Path, target: &Path) -> Result<(), String> {
-    std::fs::remove_file(link).map_err(|error| format!("{}: {error}", link.display()))?;
-    symlink(target, link)
+    crate::dir_link::remove(link)?;
+    crate::dir_link::create(target, link)
 }
 
-fn symlink(target: &Path, link: &Path) -> Result<(), String> {
+/// Puts back a *file* link that a switch replaced with a copy. Only the old macOS scheme had those
+/// — `CLAUDE.md` and `settings.json` linked into the synced folder — so on Windows this is never
+/// reached, and a file symlink there would need privileges anyway. Not a directory link: a
+/// junction to a file does not exist.
+fn file_link(target: &Path, link: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(target, link).map_err(|error| error.to_string())
     }
     #[cfg(windows)]
     {
-        std::os::windows::fs::symlink_dir(target, link).map_err(|error| error.to_string())
+        std::os::windows::fs::symlink_file(target, link).map_err(|error| error.to_string())
     }
 }
 

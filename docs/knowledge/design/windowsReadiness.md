@@ -11,7 +11,9 @@
 (`rustup target add x86_64-pc-windows-msvc`), линкер не нужен.
 
 - Продуктовый код (lib и bin всех трёх крейтов) собирается и проходит `clippy -D warnings`.
-- Тесты не собирались: 7 прямых вызовов `std::os::unix::fs::symlink` в трёх файлах.
+- Тесты не собирались: 14 прямых вызовов `std::os::unix::fs::symlink` в пяти файлах. Компилятор
+  показывает их по очереди — после починки первых трёх файлов всплыли ещё два, — поэтому искать
+  надо поиском по тексту, а не по ошибкам сборки.
 - `clippy.toml` даёт под Windows-целью три предупреждения конфигурации: пути `std::os::unix::…` из
   списка гейта чистоты там не существуют. Windows-пути туда добавлять нельзя — они дали бы такие же
   предупреждения в основном гейте на Mac. Оставлено как есть.
@@ -25,15 +27,41 @@
 | Имя бинаря | `bin/vibememory` без `.exe`, а `CreateProcess` без расширения ищет `vibememory.exe` | `EXE_SUFFIX` |
 | Драйвер слияния | голое имя; это дефект и на Mac — [driverNeverRan.md](driverNeverRan.md) | абсолютный путь в кавычках |
 
+## Найдено и исправлено, часть 2: ссылки каталогов
+
+| Находка | Было | Стало |
+|---|---|---|
+| Создание | `symlink_dir` в **пяти** копиях — `install`, `switch`, `relink`, тик, `SessionStart`; на Windows ему нужен администратор или Developer Mode, а записанное ограничение требует junction | один модуль `dir_link`: symlink на unix, junction на Windows через крейт `junction` 2.0.0 (зависимость только под `cfg(windows)`, на Mac не компилируется вовсе) |
+| Удаление | `remove_file` — junction на Windows так не удаляется | `dir_link::remove`: `remove_dir`, то есть `RemoveDirectoryW`, который убирает junction и не трогает цель |
+| Откат `switch` | возвращал файловую ссылку `CLAUDE.md` той же функцией, что каталоги, — на Windows это был бы `symlink_dir` на файл | отдельная `file_link` (`symlink_file`); на Windows не достигается — там не было файловых ссылок |
+| Тесты | 14 прямых unix-вызовов | помощник `support::link_dir` (через `dir_link`); `switch_layout.rs` целиком только unix и честно: `switch` мигрирует старую macOS-схему |
+
+## Как std видит junction — прочитано в исходнике, а не запущено
+
+`library/std/src/sys/fs/windows.rs` в 1.97.1, `rust-src`:
+
+- `FileType::new`: `is_symlink = FILE_ATTRIBUTE_REPARSE_POINT && (тег & 0x20000000)` — бит
+  name-surrogate. У junction тег `IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003`, бит есть, значит
+  `is_symlink()` — да, `is_dir()` — нет.
+- `readlink` разбирает и `IO_REPARSE_TAG_SYMLINK`, и `IO_REPARSE_TAG_MOUNT_POINT`.
+- `rmdir` — это `RemoveDirectoryW`.
+- `remove_dir_all` открывает путь с `FILE_FLAG_OPEN_REPARSE_POINT` — внутрь ссылки не заходит.
+
+Следствие: все шесть проверок «ссылка или настоящий каталог» в движке верны для junction без
+правок, и импорт «настоящего каталога», который кончается `remove_dir_all`, junction не возьмёт.
+Это важнее, чем выглядит: ошибись std здесь — и импорт стёр бы содержимое стора сквозь ссылку.
+Поэтому прочитано в коде, а не взято из памяти.
+
 ## Что осталось
 
-- Ссылки каталогов: код делает `symlink_dir`, которому нужны администратор или Developer Mode.
-  Записанное ограничение требует junction, а `std::os::windows::fs::junction_point` в 1.97.1
-  нестабилен (замер: `E0658`).
 - Путь стора Desktop захардкожен под macOS.
 - Расписание — только launchd.
 - Проверки Git Bash в `doctor` нет.
 
-На Mac ничем не проверяется: junction под живым CLI; какой из двух путей Desktop стоит на GPD;
+Сборка под Windows теперь в проверках проекта (`CLAUDE.md`): `cargo clippy --workspace
+--all-targets --target x86_64-pc-windows-msvc -- -D warnings`.
+
+На Mac ничем не проверяется: ветка Windows у `dir_link` (только компиляция); junction под живым
+CLI; какой из двух путей Desktop стоит на GPD;
 консольное окно от задачи Планировщика; строка хука с Windows-путём вживую под Git Bash; resume в
 обе стороны.

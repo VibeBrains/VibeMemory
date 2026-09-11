@@ -108,10 +108,8 @@ pub fn relink(
     })?;
     // Replaced, not edited: a symlink has no atomic re-aim, and the window between removing and
     // creating is why this is refused under a live session in the first place.
-    std::fs::remove_file(&link).map_err(|error| Refusal::NotApplicable {
-        found: error.to_string(),
-    })?;
-    symlink_dir(&target, &link).map_err(|found| Refusal::NotApplicable { found })?;
+    crate::dir_link::remove(&link).map_err(|found| Refusal::NotApplicable { found })?;
+    crate::dir_link::create(&target, &link).map_err(|found| Refusal::NotApplicable { found })?;
     Ok(target)
 }
 
@@ -165,7 +163,7 @@ pub fn import_real_directory(
     std::fs::remove_dir_all(&real).map_err(|error| Refusal::NotApplicable {
         found: error.to_string(),
     })?;
-    symlink_dir(&target, &real).map_err(|found| Refusal::NotApplicable { found })?;
+    crate::dir_link::create(&target, &real).map_err(|found| Refusal::NotApplicable { found })?;
     Ok(imported)
 }
 
@@ -217,17 +215,6 @@ fn copy_into(
         }
     }
     Ok(())
-}
-
-fn symlink_dir(target: &Path, link: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(target, link).map_err(|error| error.to_string())
-    }
-    #[cfg(windows)]
-    {
-        std::os::windows::fs::symlink_dir(target, link).map_err(|error| error.to_string())
-    }
 }
 
 /// The sessions live anywhere, as a set of ids — for callers that only need to know "is it busy".

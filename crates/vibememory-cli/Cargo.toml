@@ -21,3 +21,8 @@ vibememory-core = { path = "../vibememory-core" }
 
 [lints]
 workspace = true
+
+# Directory links on Windows are junctions: a symlink there needs an administrator or Developer
+# Mode, and the standard library's own `junction_point` is still unstable (1.97.1).
+[target.'cfg(windows)'.dependencies]
+junction.workspace = true

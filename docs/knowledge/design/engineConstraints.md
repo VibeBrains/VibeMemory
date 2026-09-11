@@ -310,6 +310,8 @@ git-transport («ClaudeSync», рабочее имя движка, ставше�
 - **Обязан** делать ссылки каталогов junction (`mklink /J`, без привилегий), а `CLAUDE.md`/`settings.json`
   — копиями с 3-way по last-synced-хешам. Почему: файловые symlink требуют Developer Mode или
   администратора; атомарная запись CLI может подменить симлинк обычным файлом (#78162 открыт).
+  Исполнено 2026-09-11 модулем `dir_link` через крейт `junction` — не `mklink /J`, чтобы не зависеть
+  от разбора аргументов `cmd` ([windowsReadiness.md](windowsReadiness.md)).
 - **Обязан** писать хуки одной shell-form строкой под Git Bash (`$HOME` = `%USERPROFILE%`). Почему: git
   нужен транспорту, а shell-form хуки на Windows по умолчанию идут через Git Bash — «Git Bash on Windows,
   or PowerShell when Git Bash isn't installed» (доки hooks; строки 2.1.255 упоминают Git Bash). Утверждение

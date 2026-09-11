@@ -19,8 +19,8 @@ use std::path::Path;
 use support::TempDir;
 use vibememory_cli::config::Config;
 use vibememory_cli::install::{
-    Action, GITATTRIBUTES, Layout, State, Step, apply, driver_probe, git_settings, hook_command,
-    installed_binary, launch_agent, merge_driver_command, plan, schedule_path, shell_word_for,
+    Action, GITATTRIBUTES, Layout, State, Step, apply, driver_probe, merge_driver_command, plan,
+    shell_word_for,
 };
 use vibememory_core::naming::PathSyntax;
 
@@ -133,7 +133,7 @@ fn a_link_that_points_elsewhere_is_reported_and_left_alone() {
     let elsewhere = temp.dir("elsewhere");
     let link = layout.config_dir.join("projects").join("-tmp-project");
     fs::create_dir_all(link.parent().expect("parent")).expect("create projects");
-    std::os::unix::fs::symlink(&elsewhere, &link).expect("symlink");
+    support::link_dir(&elsewhere, &link);
 
     let actions = plan(&layout, &config(), &links);
     let state = state_of(
@@ -278,6 +278,8 @@ fn git_config(store: &Path, key: &str) -> String {
 #[cfg(target_os = "macos")]
 #[test]
 fn the_scheduled_tick_is_written_and_names_this_engine_directory() {
+    use vibememory_cli::install::{launch_agent, schedule_path};
+
     let temp = TempDir::new("install-schedule");
     let layout = layout(&temp);
     let _ = apply(&layout, &plan(&layout, &config(), &[]), false);
@@ -351,6 +353,9 @@ fn the_store_never_carries_this_machines_hook_commands() {
     assert!(pending.is_empty(), "{pending:?}");
 }
 
+// A *file* link into a synced folder is the old macOS scheme; on Windows a file symlink needs
+// privileges and that scheme never existed.
+#[cfg(unix)]
 #[test]
 fn hooks_are_refused_while_settings_is_a_link_into_a_synced_folder() {
     let temp = TempDir::new("install-hooks-link");
@@ -820,6 +825,7 @@ fn shell_words_survive_spaces_quotes_and_windows_separators() {
 #[cfg(unix)]
 fn install_script(layout: &Layout, script: &str) {
     use std::os::unix::fs::PermissionsExt as _;
+    use vibememory_cli::install::installed_binary;
     let binary = installed_binary(layout);
     fs::create_dir_all(binary.parent().expect("bin")).expect("bin");
     fs::write(&binary, script).expect("write the stand-in");
@@ -829,6 +835,8 @@ fn install_script(layout: &Layout, script: &str) {
 #[cfg(unix)]
 #[test]
 fn hook_and_driver_lines_reach_the_binary_with_every_argument_intact() {
+    use vibememory_cli::install::hook_command;
+
     let temp = TempDir::new("install-shell-words");
     // A space and a quote: the two things an unquoted word does not survive.
     let engine = temp.dir("an engine's dir");
@@ -939,6 +947,8 @@ fn a_driver_an_earlier_install_wrote_is_replaced_and_a_foreign_one_is_not() {
 /// with `script` standing in for the engine.
 #[cfg(unix)]
 fn probe_with(label: &str, script: &str) -> State {
+    use vibememory_cli::install::git_settings;
+
     let temp = TempDir::new(label);
     let layout = layout(&temp);
     let store = layout.store();

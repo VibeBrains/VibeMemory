@@ -111,7 +111,7 @@ fn a_link_pointing_elsewhere_is_never_re_aimed() {
     let layout = layout(&temp);
     let elsewhere = temp.dir("elsewhere");
     fs::create_dir_all(link_path(&layout).parent().expect("parent")).expect("projects");
-    std::os::unix::fs::symlink(&elsewhere, link_path(&layout)).expect("symlink");
+    support::link_dir(&elsewhere, &link_path(&layout));
 
     let decision = decide(&layout, &enc(), Some(&name()), None);
     let Decision::Disagreement { found, .. } = &decision else {

@@ -45,7 +45,7 @@ fn make_link(config_dir: &Path, target: &Path) {
     let link = config_dir.join("projects").join(ENC);
     fs::create_dir_all(link.parent().expect("parent")).expect("dirs");
     fs::create_dir_all(target).expect("target");
-    std::os::unix::fs::symlink(target, &link).expect("symlink");
+    support::link_dir(target, &link);
 }
 
 #[test]
