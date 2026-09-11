@@ -189,10 +189,13 @@ pub enum Step {
     },
     /// `~/.claude/skills` → `<store>/config/skills`.
     SkillsLink,
-    /// The scheduled tick: a `LaunchAgent` on macOS.
+    /// The scheduled tick: a `LaunchAgent` on macOS, a Task Scheduler task on Windows.
     Schedule,
     /// The engine's hooks in `settings.json`.
     Hooks,
+    /// Git Bash, on Windows: Claude Code runs every shell-form hook with it and, without it, sends
+    /// them to PowerShell — where the engine's hook lines, POSIX shell, cannot run.
+    GitBash,
     /// No deletions held back by the tick's cap and waiting for a person.
     DeletionsHeld,
     /// No flag in the `env` of `settings.json` that switches the prompt cache off or shortens it.
@@ -245,6 +248,7 @@ impl Step {
             Self::SkillsLink => "skills link".to_owned(),
             Self::Schedule => "scheduled tick".to_owned(),
             Self::Hooks => "hooks in settings.json".to_owned(),
+            Self::GitBash => "Git Bash for the hooks".to_owned(),
             Self::PromptCacheEnv => "prompt cache not switched off in settings.json".to_owned(),
             Self::DeletionsHeld => "no deletions waiting for a decision".to_owned(),
             Self::ScaffoldCommitted { .. } => "store scaffolding committed".to_owned(),
@@ -374,6 +378,12 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
         step: Step::DeletionsHeld,
         state: deletions_held_state(layout),
     });
+    if cfg!(windows) {
+        actions.push(Action {
+            step: Step::GitBash,
+            state: git_bash_state(),
+        });
+    }
     actions.push(Action {
         step: Step::Hooks,
         state: hooks_state(layout),
@@ -385,13 +395,7 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
         },
         state: scaffolding_state(&store, &config.machine_id),
     });
-    // The scheduled tick exists only where there is a scheduler this build knows about.
-    if cfg!(target_os = "macos") {
-        actions.push(Action {
-            step: Step::Schedule,
-            state: file_state(&schedule_path(layout), &launch_agent(layout)),
-        });
-    }
+    push_schedule_step(layout, &mut actions);
     for (enc, name) in links {
         let state = link_state(
             &layout.config_dir.join("projects").join(enc),
@@ -647,8 +651,9 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
         Step::ManagedCopy { name } => reconcile_managed(layout, &store, name),
         // Nothing to apply: a flag that switches the cache off is the owner's to remove, and the
         // plan never reports this step as missing — only satisfied or in conflict. The same goes
-        // for a held deletion: releasing it is a decision, not a repair.
-        Step::PromptCacheEnv | Step::DeletionsHeld => Ok(()),
+        // for a held deletion: releasing it is a decision, not a repair. And Git for Windows is
+        // the owner's to install.
+        Step::PromptCacheEnv | Step::DeletionsHeld | Step::GitBash => Ok(()),
         // Missing only while something it proves is about to be put in place by an earlier step of
         // this same run. By now it has been, and the proof is the run itself.
         Step::MergeDriverRuns => probe_merge_drivers(layout),
@@ -746,10 +751,15 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<(), String> {
     }
 }
 
-/// Where the `LaunchAgent` of this machine lives. Under the engine directory when that has been
-/// redirected, so a test never writes into the real `~/Library/LaunchAgents`.
+/// Where the scheduler's description of the tick lives. On macOS the `LaunchAgent` — under the
+/// engine directory when that has been redirected, so a test never writes into the real
+/// `~/Library/LaunchAgents`. On Windows the task file `install` hands the Task Scheduler, which
+/// keeps its own copy once registered; this one is what `doctor` compares.
 #[must_use]
 pub fn schedule_path(layout: &Layout) -> PathBuf {
+    if cfg!(windows) {
+        return layout.engine_dir.join(SCHEDULED_TASK_FILE);
+    }
     match real_launch_agents_dir(layout) {
         // `with_extension` would eat the `.tick`: the label's own dots are part of its name.
         Some(dir) => dir.join(format!("{SCHEDULE_LABEL}.plist")),
@@ -768,13 +778,26 @@ pub const SCHEDULE_LABEL: &str = "dev.vibememory.tick";
 /// launchd. The real one is the engine under the home directory, and nothing else.
 fn real_launch_agents_dir(layout: &Layout) -> Option<PathBuf> {
     let home = home_dir()?;
-    (layout.engine_dir == home.join(".vibememory"))
-        .then(|| home.join("Library").join("LaunchAgents"))
+    is_real_engine(layout).then(|| home.join("Library").join("LaunchAgents"))
 }
 
-/// Writes the agent and, for the real engine, hands it to launchd.
+/// Whether this is the machine's own engine, the one under the home directory — not a test, not a
+/// dry run in a scratch directory. Only that one is handed to the system's scheduler.
+fn is_real_engine(layout: &Layout) -> bool {
+    home_dir().is_some_and(|home| layout.engine_dir == home.join(".vibememory"))
+}
+
+/// Writes the scheduler's description of the tick and, for the real engine, hands it over: the
+/// `LaunchAgent` to launchd on macOS, the task to the Task Scheduler on Windows.
 fn install_schedule(layout: &Layout) -> Result<(), String> {
     let path = schedule_path(layout);
+    if cfg!(windows) {
+        write_new(&path, &utf16_with_bom(&scheduled_task(layout)))?;
+        if is_real_engine(layout) {
+            register_scheduled_task(&path)?;
+        }
+        return Ok(());
+    }
     write_new(&path, launch_agent(layout).as_bytes())?;
     if real_launch_agents_dir(layout).is_none() {
         return Ok(());
@@ -932,6 +955,25 @@ fn push_git_settings(layout: &Layout, store: &Path, actions: &mut Vec<Action>) {
     }
 }
 
+/// Adds the scheduled tick where there is a scheduler this build knows about: launchd's agent on
+/// macOS, the Task Scheduler's task on Windows — each compared as the bytes `install` writes.
+fn push_schedule_step(layout: &Layout, actions: &mut Vec<Action>) {
+    let state = if cfg!(target_os = "macos") {
+        file_state(&schedule_path(layout), &launch_agent(layout))
+    } else if cfg!(windows) {
+        bytes_state(
+            &schedule_path(layout),
+            &utf16_with_bom(&scheduled_task(layout)),
+        )
+    } else {
+        return;
+    };
+    actions.push(Action {
+        step: Step::Schedule,
+        state,
+    });
+}
+
 /// Adds the MCP server step, and only when this machine has anything to do about it.
 ///
 /// A machine that never built the server does not need it, and a step it can do nothing about
@@ -1067,10 +1109,206 @@ pub fn launch_agent(layout: &Layout) -> String {
          \t<key>EnvironmentVariables</key>\n\
          \t<dict><key>VIBEMEMORY_DIR</key><string>{engine}</string></dict>\n\
          \t<key>RunAtLoad</key><true/>\n\
-         \t<key>StartInterval</key><integer>120</integer>\n\
+         \t<key>StartInterval</key><integer>{TICK_INTERVAL_SECONDS}</integer>\n\
          </dict>\n\
          </plist>\n"
     )
+}
+
+/// How often the tick runs, for both schedulers: launchd's `StartInterval`, the Task Scheduler's
+/// repetition interval.
+const TICK_INTERVAL_SECONDS: u32 = 120;
+
+/// The name the Task Scheduler knows the tick by, in a folder of its own.
+pub const SCHEDULED_TASK_NAME: &str = "VibeMemory\\tick";
+
+/// The task file `install` writes under the engine directory and hands the Task Scheduler.
+const SCHEDULED_TASK_FILE: &str = "tick-task.xml";
+
+/// The Task Scheduler task: after logon every two minutes, and at every unlock.
+///
+/// The triggers are the ones `docs/spec/architecture.md` §5 named for Windows. `InteractiveToken`
+/// runs it in the owner's session and with the owner's environment — git needs the ssh key and the
+/// `PATH` of that session. No second copy while one runs: the tick has its own lock, and a stack of
+/// waiting ticks after a sleep is exactly what launchd is told to avoid on macOS.
+#[must_use]
+pub fn scheduled_task(layout: &Layout) -> String {
+    let interval = format!(
+        "        <Interval>PT{}M</Interval>",
+        TICK_INTERVAL_SECONDS / 60
+    );
+    let command = format!(
+        "      <Command>{}</Command>",
+        xml_text(&installed_binary(layout).to_string_lossy())
+    );
+    let lines: &[&str] = &[
+        r#"<?xml version="1.0" encoding="UTF-16"?>"#,
+        r#"<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">"#,
+        "  <RegistrationInfo>",
+        "    <Description>VibeMemory: keeps this machine's store in step with the others.</Description>",
+        "  </RegistrationInfo>",
+        "  <Triggers>",
+        "    <LogonTrigger>",
+        "      <Enabled>true</Enabled>",
+        "      <Repetition>",
+        interval.as_str(),
+        "        <StopAtDurationEnd>false</StopAtDurationEnd>",
+        "      </Repetition>",
+        "    </LogonTrigger>",
+        "    <SessionStateChangeTrigger>",
+        "      <Enabled>true</Enabled>",
+        "      <StateChange>SessionUnlock</StateChange>",
+        "    </SessionStateChangeTrigger>",
+        "  </Triggers>",
+        "  <Principals>",
+        r#"    <Principal id="Author">"#,
+        "      <LogonType>InteractiveToken</LogonType>",
+        "      <RunLevel>LeastPrivilege</RunLevel>",
+        "    </Principal>",
+        "  </Principals>",
+        "  <Settings>",
+        "    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
+        "    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>",
+        "    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>",
+        "    <StartWhenAvailable>true</StartWhenAvailable>",
+        "    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>",
+        "  </Settings>",
+        r#"  <Actions Context="Author">"#,
+        "    <Exec>",
+        command.as_str(),
+        "      <Arguments>tick</Arguments>",
+        "    </Exec>",
+        "  </Actions>",
+        "</Task>",
+    ];
+    let mut text = lines.join("\n");
+    text.push('\n');
+    text
+}
+
+/// Text as XML element content: a user or folder name may hold `&`, and a bare one makes the task
+/// file unreadable to the Task Scheduler.
+fn xml_text(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Text the way the Task Scheduler writes its own files: UTF-16LE behind a byte-order mark. The
+/// declaration says UTF-16, and a file that says one encoding and is another gets refused.
+#[must_use]
+pub fn utf16_with_bom(text: &str) -> Vec<u8> {
+    let mut bytes = vec![0xFF, 0xFE];
+    for unit in text.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    bytes
+}
+
+/// Hands the task file to the Task Scheduler. `/F` replaces a task of the same name: the file is
+/// what `install` owns, and the registered copy follows it. Unlike launchd's "already loaded", a
+/// refusal here is a real one and is reported.
+fn register_scheduled_task(xml: &Path) -> Result<(), String> {
+    let output = std::process::Command::new("schtasks")
+        .args(["/Create", "/TN", SCHEDULED_TASK_NAME, "/XML"])
+        .arg(xml)
+        .arg("/F")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|error| format!("schtasks could not be run: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "schtasks refused: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+/// A file that must hold exactly these bytes — for the task file, which is not UTF-8.
+fn bytes_state(path: &Path, expected: &[u8]) -> State {
+    match std::fs::read(path) {
+        Ok(found) if found == expected => State::Satisfied,
+        Ok(_) => State::Conflict {
+            found: format!("{} holds something else", path.display()),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => State::Missing,
+        Err(error) => State::Unknown {
+            reason: error.to_string(),
+        },
+    }
+}
+
+/// The variable Claude Code reads for the location of Git Bash.
+const GIT_BASH_VARIABLE: &str = "CLAUDE_CODE_GIT_BASH_PATH";
+
+/// File names Claude Code accepts in [`GIT_BASH_VARIABLE`].
+const GIT_BASH_NAMES: &[&str] = &["bash.exe", "sh.exe", "bash", "sh"];
+
+/// The two standard installs of Git for Windows, in the order Claude Code tries them.
+const GIT_BASH_STANDARD: &[&str] = &[
+    r"C:\Program Files\Git\bin\bash.exe",
+    r"C:\Program Files (x86)\Git\bin\bash.exe",
+];
+
+/// Where Claude Code finds Git Bash on Windows, step for step as its own lookup does it — read out
+/// of the CLI 2.1.232 rather than guessed: [`GIT_BASH_VARIABLE`] when it names a bash or sh that
+/// exists; then the two standard installs of Git for Windows; then `bash.exe` in the `bin` two
+/// levels above the `git` on `PATH`. `None` is what Claude Code calls "Git Bash not found": its
+/// shell-form hooks then go to `PowerShell`.
+#[must_use]
+pub fn git_bash(
+    override_path: Option<&str>,
+    git_on_path: Option<&Path>,
+    exists: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    if let Some(given) = override_path {
+        let name = given
+            .rsplit(['\\', '/'])
+            .next()
+            .unwrap_or(given)
+            .to_ascii_lowercase();
+        if GIT_BASH_NAMES.contains(&name.as_str()) && exists(Path::new(given)) {
+            return Some(PathBuf::from(given));
+        }
+    }
+    if let Some(standard) = GIT_BASH_STANDARD
+        .iter()
+        .map(PathBuf::from)
+        .find(|candidate| exists(candidate))
+    {
+        return Some(standard);
+    }
+    let beside = git_on_path?
+        .parent()?
+        .parent()?
+        .join("bin")
+        .join("bash.exe");
+    exists(&beside).then_some(beside)
+}
+
+/// Git Bash on this machine, as Claude Code will look for it.
+fn git_bash_state() -> State {
+    let given = std::env::var(GIT_BASH_VARIABLE).ok();
+    let git = on_path("git");
+    match git_bash(given.as_deref(), git.as_deref(), Path::is_file) {
+        Some(_) => State::Satisfied,
+        None => State::Conflict {
+            found: format!(
+                "no Git Bash: Claude Code would run the hooks in PowerShell, where they cannot \
+                 run — install Git for Windows or set {GIT_BASH_VARIABLE}"
+            ),
+        },
+    }
+}
+
+/// The first executable called `name` on `PATH`.
+fn on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX)))
+        .find(|candidate| candidate.is_file())
 }
 
 /// The events the engine listens to, with the subcommand each runs.

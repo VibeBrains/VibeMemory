@@ -427,3 +427,45 @@ fn a_copy_whose_original_is_gone_is_the_card_itself() {
         folded.set_aside
     );
 }
+
+#[test]
+fn the_windows_card_store_is_where_the_installer_that_is_there_keeps_it() {
+    use std::path::{Path, PathBuf};
+    use vibememory_cli::desktop_store::{choose_store, windows_stores};
+    let [msix, squirrel] = windows_stores(Path::new("/local"), Path::new("/roaming"));
+    assert!(
+        msix.starts_with("/local")
+            && msix.ends_with(
+                "Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/claude-code-sessions"
+            ),
+        "{}",
+        msix.display()
+    );
+    assert!(
+        squirrel.starts_with("/roaming") && squirrel.ends_with("Claude/claude-code-sessions"),
+        "{}",
+        squirrel.display()
+    );
+
+    let pick = |present: &[&PathBuf]| {
+        let present: Vec<PathBuf> = present.iter().map(|path| (*path).clone()).collect();
+        choose_store([msix.clone(), squirrel.clone()], |path| {
+            present.iter().any(|p| p == path)
+        })
+    };
+    assert_eq!(
+        pick(&[&msix, &squirrel]),
+        msix,
+        "MSIX first: every current installer"
+    );
+    assert_eq!(
+        pick(&[&squirrel]),
+        squirrel,
+        "the older install, where it is the only one"
+    );
+    assert_eq!(
+        pick(&[]),
+        msix,
+        "neither: the MSIX path, which then is not a directory"
+    );
+}

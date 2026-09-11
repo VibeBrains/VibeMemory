@@ -25,13 +25,64 @@ const CARD_SUFFIX: &str = ".json";
 /// Where cards live inside the outbox.
 pub const OUTBOX_DIR: &str = "desktop";
 
-/// Where Desktop keeps its cards on macOS, under the user's home.
+/// The directory of cards inside Desktop's data directory, on every platform.
+const CARDS_DIR: &str = "claude-code-sessions";
+
+/// The package family of Desktop's MSIX install — the Store, `WinGet`, and since April 2026 the
+/// download from claude.ai as well.
+const MSIX_PACKAGE: &str = "Claude_pzs8sxrjxfjjc";
+
+/// Where Desktop keeps its cards when the config does not say.
+///
+/// macOS: under Application Support. Windows has two installs with two places, recorded in
+/// `docs/knowledge/research/researchReport.md` — see [`windows_stores`] and [`choose_store`].
+///
+/// Nothing may ever be linked there on Windows: MSIX virtualizes writes under `AppData`, and a
+/// reparse point inside that tree breaks Desktop's atomic card writes — sessions stop saving and
+/// vanish from the sidebar. Cards are copied in and out, as they are on macOS.
 #[must_use]
 pub fn default_store(home: &Path) -> PathBuf {
-    home.join("Library")
-        .join("Application Support")
-        .join("Claude")
-        .join("claude-code-sessions")
+    if cfg!(windows) {
+        let local = std::env::var_os("LOCALAPPDATA")
+            .map_or_else(|| home.join("AppData").join("Local"), PathBuf::from);
+        let roaming = std::env::var_os("APPDATA")
+            .map_or_else(|| home.join("AppData").join("Roaming"), PathBuf::from);
+        choose_store(windows_stores(&local, &roaming), Path::is_dir)
+    } else {
+        home.join("Library")
+            .join("Application Support")
+            .join("Claude")
+            .join(CARDS_DIR)
+    }
+}
+
+/// The two places Desktop keeps its cards on Windows, MSIX first: the package's own
+/// `LocalCache\Roaming\Claude`, then the Squirrel install's `%APPDATA%\Claude`.
+#[must_use]
+pub fn windows_stores(local_app_data: &Path, app_data: &Path) -> [PathBuf; 2] {
+    [
+        local_app_data
+            .join("Packages")
+            .join(MSIX_PACKAGE)
+            .join("LocalCache")
+            .join("Roaming")
+            .join("Claude")
+            .join(CARDS_DIR),
+        app_data.join("Claude").join(CARDS_DIR),
+    ]
+}
+
+/// Of the two Windows places, the one Desktop is using: the MSIX one when it exists — every
+/// current installer is MSIX — else the Squirrel one when that exists, else the MSIX one, which
+/// then simply is not a directory, and Desktop counts as absent.
+#[must_use]
+pub fn choose_store(stores: [PathBuf; 2], is_dir: impl Fn(&Path) -> bool) -> PathBuf {
+    let [msix, squirrel] = stores;
+    if !is_dir(&msix) && is_dir(&squirrel) {
+        squirrel
+    } else {
+        msix
+    }
 }
 
 /// What one round of card replication did, and what it refused to do.

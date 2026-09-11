@@ -728,11 +728,21 @@
   unix-вызовов в пяти тестовых файлах идут через помощник, `switch_layout.rs` честно только unix.
   Сборка под `x86_64-pc-windows-msvc` вошла в проверки `CLAUDE.md`. Две подделки на `dir_link`;
   ветка Windows проверена только компиляцией. [knowledge](knowledge/design/windowsReadiness.md).
+- [x] **Desktop, Git Bash и Планировщик на Windows** — ✅ (2026-09-11, next) путь стора карточек
+  Desktop больше не только macOS: на Windows — MSIX `…\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude`
+  или Squirrel `%APPDATA%\Claude`, выигрывает существующее, MSIX первым. Шаг `doctor` «Git Bash»
+  повторяет поиск самого CLI 2.1.232, прочитанный из бинаря, — ограничение проекта его требовало,
+  а кода не было. Расписание на Windows — задание Планировщика (вход, разблокировка, каждые 2 минуты,
+  сессия владельца, без второго экземпляра), файл в UTF-16 с BOM, `schtasks /Create /XML … /F`;
+  интервал теперь одна константа на оба планировщика. Всё, что строит строки и выбирает пути, —
+  чистые функции с гейтами; десять подделок. Исполнение — только на GPD, и там же главный открытый
+  вопрос: не будет ли задание открывать консольное окно каждые две минуты.
+  [knowledge](knowledge/design/windowsReadiness.md).
 - [ ] `CLAUDE_CONFIG_DIR=%USERPROFILE%\.claude` (setx + Desktop Settings), `.claude.json`
   переезжает локально, `.credentials.json` не переносится (relogin), junction Desktop-стора
   снимается, реальный каталог в userData действующей установки (MSIX / Squirrel).
-- [ ] `bootstrap.ps1`: clone, `config.json`, junction `projects/D--…`, Task Scheduler, хуки через
-  Git Bash, `procStart` против pid reuse.
+- [ ] `bootstrap.ps1`: предпосылки (Git for Windows), clone, `config.json`, `vibememory install` —
+  junction, задание Планировщика и хуки ставит уже сам `install`; `procStart` против pid reuse.
 - [ ] Проверка: resume Mac-сессии на GPD и обратно, список Desktop на обеих.
 - [x] **CRLF: где он оказывается и что ломал** — ✅ (2026-09-10, next) пункт был сформулирован
   неверно («на Mac не проверяется»): Windows — не механизм, механизм — конвертация концов строк

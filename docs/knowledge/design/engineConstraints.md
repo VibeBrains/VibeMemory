@@ -316,7 +316,8 @@ git-transport («ClaudeSync», рабочее имя движка, ставше�
   нужен транспорту, а shell-form хуки на Windows по умолчанию идут через Git Bash — «Git Bash on Windows,
   or PowerShell when Git Bash isn't installed» (доки hooks; строки 2.1.255 упоминают Git Bash). Утверждение
   git-дизайна «Claude Code на Windows требует Git for Windows» доками не подтверждено: без Git Bash хуки
-  уходят в PowerShell, а Bash-тул не регистрируется — движок обязан проверять наличие Git Bash в doctor.
+  уходят в PowerShell, а Bash-тул не регистрируется — движок обязан проверять наличие Git Bash в doctor (исполнено 2026-09-11: шаг повторяет поиск
+  самого CLI 2.1.232, см. [windowsReadiness.md](windowsReadiness.md)).
   Пути в строке — одинарные кавычки POSIX, на Windows с прямыми слешами: без кавычек путь ломается на
   пробеле везде, а Git Bash читает обратный слеш как экранирование (закрыто гейтом на Mac, 2026-09-11,
   [windowsReadiness.md](windowsReadiness.md)). Не проверено: node/python в PATH внутри Git Bash,

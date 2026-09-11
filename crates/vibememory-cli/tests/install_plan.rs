@@ -19,8 +19,8 @@ use std::path::Path;
 use support::TempDir;
 use vibememory_cli::config::Config;
 use vibememory_cli::install::{
-    Action, GITATTRIBUTES, Layout, State, Step, apply, driver_probe, merge_driver_command, plan,
-    shell_word_for,
+    Action, GITATTRIBUTES, Layout, State, Step, apply, driver_probe, git_bash,
+    merge_driver_command, plan, scheduled_task, shell_word_for, utf16_with_bom,
 };
 use vibememory_core::naming::PathSyntax;
 
@@ -980,4 +980,87 @@ fn a_driver_that_does_not_start_is_not_reported_as_running() {
         matches!(&broken, State::Conflict { found } if found.contains("no such thing here")),
         "what the shell said has to reach doctor: {broken:?}"
     );
+}
+
+#[test]
+fn git_bash_is_found_the_way_claude_code_finds_it() {
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+    let found = |existing: &[&str], given: Option<&str>, git: Option<&str>| {
+        let existing: BTreeSet<PathBuf> = existing.iter().map(PathBuf::from).collect();
+        git_bash(given, git.map(Path::new), |path| existing.contains(path))
+    };
+    let standard = r"C:\Program Files\Git\bin\bash.exe";
+    let x86 = r"C:\Program Files (x86)\Git\bin\bash.exe";
+
+    // The variable wins when it names a bash or sh that is there.
+    assert_eq!(
+        found(
+            &[r"D:\Tools\bash.exe", standard],
+            Some(r"D:\Tools\bash.exe"),
+            None
+        ),
+        Some(PathBuf::from(r"D:\Tools\bash.exe"))
+    );
+    // Anything else in it is ignored, as Claude Code ignores it, and the search goes on.
+    assert_eq!(
+        found(
+            &[r"D:\Tools\zsh.exe", standard],
+            Some(r"D:\Tools\zsh.exe"),
+            None
+        ),
+        Some(PathBuf::from(standard))
+    );
+    assert_eq!(
+        found(&[standard], Some(r"D:\Tools\bash.exe"), None),
+        Some(PathBuf::from(standard)),
+        "a variable naming nothing falls through"
+    );
+    // The two standard installs, in Claude Code's order.
+    assert_eq!(
+        found(&[standard, x86], None, None),
+        Some(PathBuf::from(standard))
+    );
+    assert_eq!(found(&[x86], None, None), Some(PathBuf::from(x86)));
+    // Then `bin\bash.exe` two levels above the `git` on `PATH`.
+    assert_eq!(
+        found(
+            &["/tools/Git/bin/bash.exe"],
+            None,
+            Some("/tools/Git/cmd/git.exe")
+        ),
+        Some(PathBuf::from("/tools/Git/bin/bash.exe"))
+    );
+    assert_eq!(found(&[], None, Some("/tools/Git/cmd/git.exe")), None);
+}
+
+#[test]
+fn the_scheduled_task_runs_the_tick_after_logon_every_two_minutes_and_at_unlock() {
+    let temp = TempDir::new("install-task");
+    // `&` in a folder name: bare, it makes the task file unreadable to the Task Scheduler.
+    let layout = Layout {
+        config_dir: temp.dir("claude"),
+        engine_dir: temp.dir("R&D engine"),
+    };
+    let task = scheduled_task(&layout);
+    for part in [
+        "<Interval>PT2M</Interval>",
+        "<StateChange>SessionUnlock</StateChange>",
+        "<LogonTrigger>",
+        "<LogonType>InteractiveToken</LogonType>",
+        "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
+        "<Arguments>tick</Arguments>",
+        "R&amp;D engine",
+    ] {
+        assert!(task.contains(part), "{part} is missing:\n{task}");
+    }
+    assert!(!task.contains("R&D"), "a bare ampersand:\n{task}");
+
+    let bytes = utf16_with_bom(&task);
+    assert_eq!(&bytes[..2], &[0xFF, 0xFE], "UTF-16LE says so up front");
+    let units: Vec<u16> = bytes[2..]
+        .chunks(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect();
+    assert_eq!(String::from_utf16(&units).expect("utf-16"), task);
 }
