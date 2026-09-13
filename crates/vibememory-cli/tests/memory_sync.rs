@@ -179,6 +179,90 @@ fn an_edit_made_after_the_projection_becomes_a_new_version() {
     );
 }
 
+/// The version a projected document says it came from.
+fn projected_version(memory: &Path, name: &str) -> String {
+    fs::read_to_string(memory.join(name))
+        .expect("read projection")
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("version: ").map(str::to_owned))
+        .expect("a projection names its version")
+}
+
+/// Appends a delete as another machine's journal would bring it in.
+fn arrive_delete(journal: &Path, id: &str, parent: &str) {
+    let mut bytes = fs::read(journal).expect("read journal");
+    bytes.extend_from_slice(
+        format!(
+            "{{\"uuid\":\"elsewhere-delete\",\"parent\":\"{parent}\",\"action\":\"delete\",\
+             \"id\":\"{id}\",\"agent\":\"mcp\",\"updatedAt\":\"2026-09-05T11:30:00Z\"}}\n"
+        )
+        .as_bytes(),
+    );
+    fs::write(journal, bytes).expect("write journal");
+}
+
+#[test]
+fn a_delete_from_another_machine_removes_the_projection_instead_of_being_undone() {
+    let temp = TempDir::new("memory-forgotten");
+    let (memory, journal) = paths(&temp);
+    fs::write(
+        memory.join("store-naming.md"),
+        document("store-naming", "First.", None),
+    )
+    .expect("write");
+    sync(&memory, &journal, STAMP, AGENT).expect("first");
+    let version = projected_version(&memory, "store-naming.md");
+    arrive_delete(&journal, "store-naming", &version);
+    let journal_with_delete = fs::read(&journal).expect("read journal");
+
+    let synced = sync(&memory, &journal, "2026-09-05T12:00:00Z", AGENT).expect("second");
+    assert_eq!(synced.imported, 0, "the file left behind is not an edit");
+    assert_eq!(synced.removed, vec!["store-naming.md".to_owned()]);
+    assert!(!memory.join("store-naming.md").exists());
+    assert!(!read_index(&memory).contains("store-naming"));
+    assert_eq!(
+        fs::read(&journal).expect("read journal"),
+        journal_with_delete,
+        "resurrecting the record would append an upsert here"
+    );
+
+    let again = sync(&memory, &journal, "2026-09-05T12:30:00Z", AGENT).expect("third");
+    assert_eq!(again.imported, 0);
+    assert!(again.removed.is_empty(), "{:?}", again.removed);
+}
+
+#[test]
+fn an_edit_that_outlived_a_delete_keeps_the_record() {
+    let temp = TempDir::new("memory-forgotten-edit");
+    let (memory, journal) = paths(&temp);
+    fs::write(
+        memory.join("store-naming.md"),
+        document("store-naming", "First.", None),
+    )
+    .expect("write");
+    sync(&memory, &journal, STAMP, AGENT).expect("first");
+    let version = projected_version(&memory, "store-naming.md");
+    let projected = fs::read_to_string(memory.join("store-naming.md")).expect("read");
+    fs::write(
+        memory.join("store-naming.md"),
+        projected.replace("First.", "Still wanted."),
+    )
+    .expect("edit");
+    arrive_delete(&journal, "store-naming", &version);
+
+    let synced = sync(&memory, &journal, "2026-09-05T12:00:00Z", AGENT).expect("second");
+    assert_eq!(
+        synced.imported, 1,
+        "somebody wrote it after the delete saw it"
+    );
+    assert!(synced.removed.is_empty(), "{:?}", synced.removed);
+    assert!(
+        fs::read_to_string(memory.join("store-naming.md"))
+            .expect("the record stays")
+            .contains("Still wanted.")
+    );
+}
+
 #[test]
 fn a_document_that_cannot_be_read_is_reported_and_left_alone() {
     let temp = TempDir::new("memory-broken");

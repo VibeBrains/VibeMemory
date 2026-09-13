@@ -279,6 +279,9 @@ pub struct Import {
     pub events: Vec<Event>,
     /// Documents that could not be read; their files stay untouched.
     pub rejected: Vec<(String, MemoryError)>,
+    /// Projections of forgotten records, unchanged since the version the delete saw. They are
+    /// what the delete asked to remove: the caller deletes the files, and no event is written.
+    pub stale: Vec<String>,
 }
 
 /// Reads the edits made to the projection back into events.
@@ -287,6 +290,11 @@ pub struct Import {
 /// from — so an edit made from an old projection is recognised as concurrent instead of
 /// overwriting newer work. A file that disappeared is *not* a deletion: forgetting is an explicit
 /// act, and a projection can go missing for a dozen innocent reasons.
+///
+/// The other way round, a file that is still there after its record was forgotten elsewhere is
+/// *not* an edit either: the delete arrived with the journal, the file stayed behind. Only when
+/// the file differs from the version the delete saw did somebody write it, and then it is an edit
+/// concurrent with the delete, which keeps the record.
 #[must_use]
 pub fn import(
     documents: &[(String, Vec<u8>)],
@@ -307,6 +315,15 @@ pub fn import(
             }
         };
         let known = memory.records.get(&document.record.id);
+        if known.is_none()
+            && let Some(forgotten) = memory.forgotten.get(&document.record.id)
+            && let Some((version, seen)) = &forgotten.seen
+            && document.version.as_deref() == Some(version.as_str())
+            && unchanged(seen, &document.record)
+        {
+            import.stale.push(path.clone());
+            continue;
+        }
         if known.is_some_and(|entry| unchanged(&entry.record, &document.record)) {
             continue;
         }

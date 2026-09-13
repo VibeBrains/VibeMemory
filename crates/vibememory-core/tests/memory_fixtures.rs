@@ -87,6 +87,9 @@ struct ExpectedImport {
     documents: Vec<ExpectedFile>,
     events: Vec<ExpectedEvent>,
     rejected: Vec<ExpectedRejection>,
+    /// Projections the caller has to remove, because their record was forgotten.
+    #[serde(default)]
+    stale: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -139,8 +142,11 @@ fn check_import(
             .map(|file| (file.name.clone(), file.text.clone().into_bytes()))
             .collect()
     };
-    let Import { events, rejected } =
-        markdown::import(&documents, memory, &expected.stamp, &expected.agent);
+    let Import {
+        events,
+        rejected,
+        stale,
+    } = markdown::import(&documents, memory, &expected.stamp, &expected.agent);
 
     if events.len() != expected.events.len() {
         failures.push(format!(
@@ -218,6 +224,12 @@ fn check_import(
     if codes != wanted {
         failures.push(format!("{label}: rejected {codes:?}, expected {wanted:?}"));
     }
+    if stale != expected.stale {
+        failures.push(format!(
+            "{label}: stale {stale:?}, expected {:?}",
+            expected.stale
+        ));
+    }
 }
 
 /// What the journal folded into, compared with what the case says it should be.
@@ -254,7 +266,7 @@ fn check_state(label: &str, memory: &Memory, expect: &Expect, failures: &mut Vec
 
     let forgotten: Vec<String> = memory
         .forgotten
-        .iter()
+        .keys()
         .map(|id| id.as_str().to_owned())
         .collect();
     if forgotten != expect.forgotten {

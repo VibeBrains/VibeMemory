@@ -75,6 +75,8 @@ pub struct Synced {
     pub imported: usize,
     /// Projection files written because their content changed.
     pub written: Vec<String>,
+    /// Projection files removed because their record was forgotten and nobody had edited them.
+    pub removed: Vec<String>,
     /// Documents that could not be read, with the reason; their files were left alone.
     pub rejected: Vec<(String, String)>,
     /// Records two machines wrote without seeing each other. The projection shows both; the
@@ -122,6 +124,16 @@ pub fn sync(
             && record.project.is_empty()
         {
             record.project.clone_from(&project);
+        }
+    }
+    // A forgotten record's projection, untouched since the version the delete saw, is what the
+    // delete asked to remove. Left in place, the next run would read it as a new record.
+    for name in import.stale {
+        let path = memory_dir.join(&name);
+        match std::fs::remove_file(&path) {
+            Ok(()) => synced.removed.push(name),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("{}: {error}", path.display())),
         }
     }
     for (name, error) in import.rejected {

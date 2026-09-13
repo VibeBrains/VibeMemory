@@ -680,7 +680,7 @@ fn project_memory(store: &Path, machine_id: &str, stamp: &str) -> Result<Vec<Str
         }
         let memory_dir = project.path().join("memory");
         let synced = crate::memory::sync(&memory_dir, &journal, stamp, machine_id)?;
-        if !synced.written.is_empty() || synced.imported > 0 {
+        if !synced.written.is_empty() || !synced.removed.is_empty() || synced.imported > 0 {
             projected.push(project.file_name().to_string_lossy().into_owned());
         }
     }

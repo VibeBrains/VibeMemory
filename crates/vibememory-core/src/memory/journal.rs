@@ -90,10 +90,18 @@ pub struct UnreadableLine {
 pub struct Memory {
     /// The live records, by identity.
     pub records: BTreeMap<RecordId, Entry>,
-    /// Records whose last word was "forget it".
-    pub forgotten: BTreeSet<RecordId>,
+    /// Records whose last word was "forget it", with the version the delete saw.
+    pub forgotten: BTreeMap<RecordId, Forgotten>,
     /// Lines that could not be read.
     pub unreadable: Vec<UnreadableLine>,
+}
+
+/// What a delete asked to forget.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Forgotten {
+    /// The version the delete named as its parent, when the journal still holds it. A projection
+    /// written from exactly this version is what the delete meant to remove, not a new edit.
+    pub seen: Option<(String, Record)>,
 }
 
 /// A record as it stands, and the versions that disagree with it.
@@ -181,18 +189,26 @@ pub fn fold(events: &[Event], unreadable: Vec<UnreadableLine>) -> Memory {
             .collect();
 
         let mut versions = Vec::new();
-        let mut deleted = false;
+        let mut deleted: Option<&Event> = None;
         for leaf in leaves {
             match &leaf.action {
                 Action::Upsert { record } => versions.push((leaf.uuid.clone(), record.clone())),
-                Action::Delete { .. } => deleted = true,
+                Action::Delete { .. } => deleted = Some(leaf),
             }
         }
         match versions.split_first() {
             // Someone asked to forget it and nobody wrote it afterwards.
             None => {
-                if deleted {
-                    memory.forgotten.insert(id.clone());
+                if let Some(delete) = deleted {
+                    let seen = delete.parent.as_deref().and_then(|parent| {
+                        group.iter().find_map(|event| match &event.action {
+                            Action::Upsert { record } if event.uuid == parent => {
+                                Some((event.uuid.clone(), record.clone()))
+                            }
+                            _ => None,
+                        })
+                    });
+                    memory.forgotten.insert(id.clone(), Forgotten { seen });
                 }
             }
             Some(((version, record), rivals)) => {

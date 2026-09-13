@@ -357,6 +357,73 @@
       }
     },
     {
+      "id": "importForgottenProjectionIsNotAnEdit",
+      "provenance": "observed",
+      "note": "The delete arrived from another machine with the journal, and the projection of the version it saw stayed on disk. Reading that file back as a new record resurrected the forgotten memory on 2026-09-13; the file is to be removed instead, and nothing is written.",
+      "journal": [
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
+        "{\"uuid\": \"d1\", \"parent\": \"e1\", \"action\": \"delete\", \"id\": \"store-naming\", \"agent\": \"claude-code\", \"updatedAt\": \"2026-09-03T10:10:00Z\"}"
+      ],
+      "expect": {
+        "records": [],
+        "forgotten": [
+          "store-naming"
+        ],
+        "unreadable": 0,
+        "import": {
+          "stamp": "2026-09-03T12:00:00Z",
+          "agent": "claude-code",
+          "documents": [
+            {
+              "name": "store-naming.md",
+              "text": "---\nname: store-naming\ndescription: one line about store naming\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:00:00Z\n  version: e1\n---\n\nThe name follows the git common dir.\n"
+            }
+          ],
+          "events": [],
+          "rejected": [],
+          "stale": [
+            "store-naming.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "importEditOfForgottenRecordIsConcurrent",
+      "provenance": "computed",
+      "note": "The file was edited after the version the delete saw: somebody still wanted the record, so the edit is written with that version as parent and outlives the delete, exactly as an edit arriving through the journal would.",
+      "journal": [
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
+        "{\"uuid\": \"d1\", \"parent\": \"e1\", \"action\": \"delete\", \"id\": \"store-naming\", \"agent\": \"claude-code\", \"updatedAt\": \"2026-09-03T10:10:00Z\"}"
+      ],
+      "expect": {
+        "records": [],
+        "forgotten": [
+          "store-naming"
+        ],
+        "unreadable": 0,
+        "import": {
+          "stamp": "2026-09-03T12:00:00Z",
+          "agent": "claude-code",
+          "documents": [
+            {
+              "name": "store-naming.md",
+              "text": "---\nname: store-naming\ndescription: one line about store naming\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:00:00Z\n  version: e1\n---\n\nThe name follows the git common dir, and it was edited after the delete.\n"
+            }
+          ],
+          "events": [
+            {
+              "uuid": "2026-09-03T12:00:00Z-store-naming",
+              "parent": "e1",
+              "id": "store-naming",
+              "bodyContains": "edited after the delete",
+              "createdAt": "2026-09-03T10:00:00Z"
+            }
+          ],
+          "rejected": []
+        }
+      }
+    },
+    {
       "id": "importRejectsDocumentWithoutFrontmatter",
       "provenance": "computed",
       "note": "A file in the memory directory that is not a projected record is reported and left where it is.",
