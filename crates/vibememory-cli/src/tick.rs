@@ -539,6 +539,11 @@ fn tombstoned_paths(store: &Path) -> Vec<String> {
 /// somebody tidying a directory. Pushing that deletion would spread it to every machine, and the
 /// records would be gone for good — so the only deletion the engine honours is the one that came
 /// through `forget`.
+///
+/// Memory projections (`projects/<name>/memory/…`) are not put back. They are derived from the
+/// journal beside them: a live record's file is rewritten by the projection anyway, and a file
+/// the projection removed belongs to a record the journal forgot. Putting that one back undid the
+/// delete on every tick — found 2026-09-13, when a delete from the host never left the Mac.
 fn restore_deleted_transcripts(store: &Path) -> Result<Vec<String>, String> {
     let listed = git::run_with_timeout(
         git::command(store, &["ls-files", "--deleted", "--", "projects"]),
@@ -550,7 +555,7 @@ fn restore_deleted_transcripts(store: &Path) -> Result<Vec<String>, String> {
     let missing: Vec<String> = text
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty())
+        .filter(|line| !line.is_empty() && !is_memory_projection(line))
         .map(str::to_owned)
         .collect();
     if missing.is_empty() {
@@ -563,6 +568,15 @@ fn restore_deleted_transcripts(store: &Path) -> Result<Vec<String>, String> {
         )?;
     }
     Ok(missing)
+}
+
+/// Whether a store path lies inside a project's memory projection directory.
+fn is_memory_projection(path: &str) -> bool {
+    let mut segments = path.split('/');
+    segments.next() == Some("projects")
+        && segments.next().is_some()
+        && segments.next() == Some("memory")
+        && segments.next().is_some()
 }
 
 /// Pushes, when there is anything to push and somewhere to push it: `Ok(true)` pushed,

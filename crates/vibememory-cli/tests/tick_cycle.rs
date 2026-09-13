@@ -353,6 +353,61 @@ fn memory_that_arrived_from_elsewhere_becomes_readable_files() {
 }
 
 #[test]
+fn a_memory_delete_from_elsewhere_removes_the_file_everywhere_and_stays_removed() {
+    let temp = TempDir::new("tick-memory-delete");
+    let pair = two_machines(&temp);
+    let journal = "projects/Project/memory.jsonl";
+    let upsert = "{\"uuid\":\"v1\",\"action\":\"upsert\",\"record\":{\"id\":\"store-naming\",\
+\"kind\":\"project\",\"project\":\"Project\",\"description\":\"where the name comes from\",\
+\"body\":\"The name follows the git common dir.\",\"links\":[],\"agent\":\"gpd\",\
+\"createdAt\":\"2026-09-05T09:00:00Z\",\"updatedAt\":\"2026-09-05T09:00:00Z\"}}\n";
+    write_commit(&pair.other, journal, upsert, "their memory");
+    git(&pair.other, &["push", "--quiet", "origin", "main"]);
+    tick(&pair.mac, &temp);
+    let file = "projects/Project/memory/store-naming.md";
+    assert!(
+        pair.mac.join(file).exists(),
+        "the record is projected first"
+    );
+    git(&pair.mac, &["push", "--quiet", "origin", "main"]);
+
+    // The other machine forgets it, the way the host's server does: one journal event, no files.
+    git(
+        &pair.other,
+        &["pull", "--quiet", "--no-rebase", "origin", "main"],
+    );
+    let delete = "{\"uuid\":\"d1\",\"parent\":\"v1\",\"action\":\"delete\",\"id\":\"store-naming\",\
+\"agent\":\"gpd\",\"updatedAt\":\"2026-09-05T09:30:00Z\"}\n";
+    let mut both = fs::read_to_string(pair.other.join(journal)).expect("journal");
+    both.push_str(delete);
+    write_commit(&pair.other, journal, &both, "their delete");
+    git(&pair.other, &["push", "--quiet", "origin", "main"]);
+
+    let ticked = tick(&pair.mac, &temp);
+    assert!(ticked.restored.is_empty(), "{:?}", ticked.restored);
+    assert!(!pair.mac.join(file).exists(), "the delete removes the file");
+    assert_eq!(
+        fs::read_to_string(pair.mac.join(journal)).expect("journal"),
+        both,
+        "nothing may be written over the delete"
+    );
+
+    let again = tick(&pair.mac, &temp);
+    assert!(again.restored.is_empty(), "{:?}", again.restored);
+    assert!(!pair.mac.join(file).exists(), "and it stays removed");
+
+    git(&pair.mac, &["push", "--quiet", "origin", "main"]);
+    git(
+        &pair.other,
+        &["pull", "--quiet", "--no-rebase", "origin", "main"],
+    );
+    assert!(
+        !pair.other.join(file).exists(),
+        "the removal is committed, so the other machine loses the file too"
+    );
+}
+
+#[test]
 fn a_session_that_ended_without_a_hook_stops_blocking_everything() {
     let temp = TempDir::new("tick-stale");
     let pair = two_machines(&temp);
