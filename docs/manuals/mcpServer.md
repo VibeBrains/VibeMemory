@@ -88,16 +88,29 @@ VibeIDEA своего клиента для внешних MCP-серверов 
 (эмуляции amd64 в Docker может не быть):
 
 ```bash
-docker run --rm --platform linux/arm64 -v "$PWD":/src -v /tmp/vm-linux:/build \
+docker run --rm --platform linux/arm64 -v "$PWD":/src -v "$PWD/target/linux":/build \
   -e CARGO_TARGET_DIR=/build -e CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
   -w /src rust:1.97-bookworm sh -c 'apt-get update -qq && apt-get install -y -qq gcc-x86-64-linux-gnu libc6-dev-amd64-cross \
   && rustup target add x86_64-unknown-linux-gnu && cargo build --release -p vibememory-mcp --target x86_64-unknown-linux-gnu'
-./infra/hostMcp.sh --binary /tmp/vm-linux/x86_64-unknown-linux-gnu/release/vibememory-mcp
+./infra/hostMcp.sh --binary target/linux/x86_64-unknown-linux-gnu/release/vibememory-mcp
 ```
 
 Скрипт кладёт бинарь в `~/vibememory/bin/`, один раз создаёт токен `~/vibememory/mcp-token`
 (права `600`, в вывод не печатается), ставит systemd-сервис на `127.0.0.1:8787` и Caddy с
 сертификатом для `vibememory.ru`. Снаружи отдаётся только `/mcp`.
+
+Каталог сборки — внутри репозитория, а не в `/tmp`: Docker на Mac монтирует `/tmp` своей
+виртуальной машины, сборка проходит, а бинаря на диске Mac нет.
+
+Если на хосте стоит fail2ban, скрипт ставит джейл `vibememory-mcp`:
+десять отказов по токену за десять минут — бан адреса на портах 80 и 443.
+Адрес берётся из строки журнала сервера, куда он попадает из `X-Forwarded-For`, записанного
+Caddy. ssh этот бан не закрывает: неверный токен ничего не говорит о входе по ключу.
+Разблокировать себя, если после смены токена клиент успел набрать десять отказов:
+
+```bash
+ssh vibememory 'sudo fail2ban-client set vibememory-mcp unbanip <адрес>'
+```
 
 ### По ssh — без открытых портов
 
