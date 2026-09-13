@@ -230,6 +230,21 @@ pub fn encode(response: &HttpResponse) -> Vec<u8> {
     bytes
 }
 
+/// Who asked, for the journal line fail2ban reads. Behind the proxy every connection comes from
+/// `127.0.0.1`, so the address is the last one the proxy appended to `X-Forwarded-For`: the
+/// entries before it were written by the client and prove nothing. Without the header — a
+/// connection straight to the port — the peer itself.
+#[must_use]
+pub fn client_address(request: Option<&HttpRequest>, peer: &str) -> String {
+    request
+        .and_then(|request| request.header("x-forwarded-for"))
+        .and_then(|forwarded| forwarded.rsplit(',').next())
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+        .unwrap_or(peer)
+        .to_owned()
+}
+
 /// Serves one connection: read the request within the timeout, answer, close.
 fn serve_connection(mut stream: TcpStream, token: &str, memories: &dyn Memories) {
     let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
@@ -242,13 +257,23 @@ fn serve_connection(mut stream: TcpStream, token: &str, memories: &dyn Memories)
         }
         match parse(&buffer) {
             Ok(None) => {}
-            Ok(Some(request)) => break answer(&request, token, memories),
-            Err(refused) => break refused,
+            Ok(Some(request)) => {
+                let response = answer(&request, token, memories);
+                break (response, Some(request));
+            }
+            Err(refused) => break (refused, None),
         }
     };
+    let (response, request) = response;
     if response.status == 401 {
         // Where fail2ban or a person can see it. Never the token that was presented.
-        eprintln!("vibememory-mcp: refused a request without the right token");
+        let peer = stream
+            .peer_addr()
+            .map_or_else(|_| "unknown".to_owned(), |address| address.ip().to_string());
+        eprintln!(
+            "vibememory-mcp: refused a request without the right token from {}",
+            client_address(request.as_ref(), &peer)
+        );
     }
     let _ = stream.write_all(&encode(&response));
 }

@@ -13,7 +13,7 @@ use std::io::{Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 
 use serde_json::Value;
-use vibememory_mcp::http::{HttpRequest, MAX_BODY, answer, parse, serve};
+use vibememory_mcp::http::{self, HttpRequest, MAX_BODY, answer, parse, serve};
 use vibememory_mcp::memories::FakeMemories;
 
 const TOKEN: &str = "test-token-0123456789abcdef";
@@ -161,5 +161,25 @@ fn a_real_socket_gets_a_real_answer() {
             .is_some_and(|tools| Some(tools.len())
                 == vibememory_mcp::tools::catalogue().as_array().map(Vec::len)),
         "{json}"
+    );
+}
+
+#[test]
+fn a_refusal_names_the_address_the_proxy_saw_and_not_the_one_the_client_claims() {
+    let behind_proxy = post("{}", &[("x-forwarded-for", "6.6.6.6, 203.0.113.7")]);
+    assert_eq!(
+        http::client_address(Some(&behind_proxy), "127.0.0.1"),
+        "203.0.113.7"
+    );
+    let direct = post("{}", &[]);
+    assert_eq!(
+        http::client_address(Some(&direct), "198.51.100.2"),
+        "198.51.100.2"
+    );
+    assert_eq!(http::client_address(None, "198.51.100.2"), "198.51.100.2");
+    let empty = post("{}", &[("x-forwarded-for", " ")]);
+    assert_eq!(
+        http::client_address(Some(&empty), "198.51.100.2"),
+        "198.51.100.2"
     );
 }
