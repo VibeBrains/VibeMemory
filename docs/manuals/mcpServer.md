@@ -67,6 +67,70 @@ VibeIDEA своего клиента для внешних MCP-серверов 
 проекта не даёт — тогда запись требует `project` явно. Иначе клиент, запускающий серверы где
 попало, плодил бы мусорные проекты.
 
+## Память с хоста — для машины без своего стора
+
+На хосте стора нет рабочей копии, только голый репозиторий. Сервер читает память прямо из
+`main` и пишет событие коммитом поверх `main`; машины получают его обычным fetch.
+
+### Поставить на хост
+
+Бинарь нужен под x86_64 Linux. На Mac с Apple Silicon — кросс-сборкой в родном arm64-контейнере
+(эмуляции amd64 в Docker может не быть):
+
+```bash
+docker run --rm --platform linux/arm64 -v "$PWD":/src -v /tmp/vm-linux:/build \
+  -e CARGO_TARGET_DIR=/build -e CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
+  -w /src rust:1.97-bookworm sh -c 'apt-get update -qq && apt-get install -y -qq gcc-x86-64-linux-gnu libc6-dev-amd64-cross \
+  && rustup target add x86_64-unknown-linux-gnu && cargo build --release -p vibememory-mcp --target x86_64-unknown-linux-gnu'
+./infra/hostMcp.sh --binary /tmp/vm-linux/x86_64-unknown-linux-gnu/release/vibememory-mcp
+```
+
+Скрипт кладёт бинарь в `~/vibememory/bin/`, один раз создаёт токен `~/vibememory/mcp-token`
+(права `600`, в вывод не печатается), ставит systemd-сервис на `127.0.0.1:8787` и Caddy с
+сертификатом для `vibememory.ru`. Снаружи отдаётся только `/mcp`.
+
+### По ssh — без открытых портов
+
+Любой клиент, умеющий stdio-серверы, на машине с ключом к хосту:
+
+```json
+{
+  "mcpServers": {
+    "vibememory": {
+      "command": "ssh",
+      "args": ["-o", "BatchMode=yes", "vibememory",
+               "vibememory/bin/vibememory-mcp", "--git-store", "vibememory/store.git",
+               "--machine", "host", "--agent", "<кто вы>"]
+    }
+  }
+}
+```
+
+### По HTTPS — когда ssh нет
+
+```
+POST https://vibememory.ru/mcp
+Authorization: Bearer <токен из ~/vibememory/mcp-token на хосте>
+VibeMemory-Agent: <кто вы>
+Content-Type: application/json
+```
+
+Одно JSON-RPC сообщение на запрос, ответ — JSON; уведомление получает `202` без тела. `GET` и
+`DELETE` — `405`: потоков и сессий нет. Запрос с заголовком `Origin` (страница из браузера) —
+`403`. Claude Code:
+
+```bash
+claude mcp add -s user --transport http vibememory-host https://vibememory.ru/mcp \
+  --header "Authorization: Bearer $(ssh vibememory cat vibememory/mcp-token)" \
+  --header "VibeMemory-Agent: <кто вы>"
+```
+
+**Токен не показывайте в сессии агента**: транскрипт уезжает в стор, а с ним в зеркало. Берите его
+командой, как выше, а не копированием в чат.
+
+**Проект у сервера на хосте не определяется**: каталога клиента он не видит, поэтому
+`memory_save`, `memory_update` и `memory_delete` требуют `project`.
+
 ## Любой другой клиент MCP
 
 Транспорт — stdio, поэтому конфигурация везде одинакова по смыслу:
