@@ -1192,3 +1192,43 @@ fn both_reasons_for_ignoring_name_themselves() {
     );
     assert_ne!(pattern, shared, "two reasons, two sentences");
 }
+
+#[test]
+fn a_push_the_remote_refuses_is_a_failure_not_silence() {
+    // On 2026-09-12 the host's disk filled up and refused every push for a day, while the tick
+    // reported no failures and 291 commits stayed on one machine.
+    let temp = TempDir::new("tick-push-refused");
+    let pair = two_machines(&temp);
+    let hook = temp
+        .path()
+        .join("remote.git")
+        .join("hooks")
+        .join("pre-receive");
+    fs::write(
+        &hook,
+        "#!/bin/sh\necho 'No space left on device' >&2\nexit 1\n",
+    )
+    .expect("hook");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    write_commit(
+        &pair.mac,
+        "projects/Project/later.jsonl",
+        "{\"uuid\":\"later\"}\n",
+        "later",
+    );
+
+    let ticked = tick(&pair.mac, &temp);
+    assert!(!ticked.pushed, "nothing reached the remote");
+    assert!(
+        ticked
+            .problems
+            .iter()
+            .any(|problem| problem.contains("No space left on device")),
+        "what the remote said has to reach the report: {:?}",
+        ticked.problems
+    );
+}

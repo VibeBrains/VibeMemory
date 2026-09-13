@@ -110,8 +110,15 @@ fn report(strict: bool, json: bool) -> ExitCode {
     let actions = plan(&layout, &config, &[]);
     // The mirror lives on the host and is asked over the network, so only `doctor` pays for it.
     let mirror = strict.then(|| probe_mirror(&config));
+    // The host's disk, asked in the same round: a full host refuses every push while each machine
+    // goes on working, and nothing else would say so.
+    let disk = if strict {
+        vibememory_cli::mirror::probe_disk(config.remote.as_deref(), ask_host)
+    } else {
+        None
+    };
     if json {
-        return report_json(&config, &actions, mirror.as_ref(), strict);
+        return report_json(&config, &actions, mirror.as_ref(), disk.as_ref(), strict);
     }
     let mut wrong = 0;
     for action in &actions {
@@ -152,6 +159,16 @@ fn report(strict: bool, json: bool) -> ExitCode {
         if mirror.is_fault() {
             wrong += 1;
         }
+    }
+    match &disk {
+        Some(Ok(disk)) => {
+            println!("{}", disk.describe());
+            if disk.is_low() {
+                wrong += 1;
+            }
+        }
+        Some(Err(reason)) => println!("disk     host unknown \u{2014} {reason}"),
+        None => {}
     }
     if strict && wrong > 0 {
         eprintln!("{wrong} of {} steps are not in place", actions.len());
@@ -1263,6 +1280,14 @@ fn mirror_watch(layout: &Layout, config: &Config) -> Option<String> {
         // The tick has no session to talk to; the note waits for one, next to the merge notes.
         let _ = vibememory_cli::merge_report::add_pending(&layout.engine_dir, &note);
     }
+    // The host's disk, on the same daily clock: a day's warning is what a filling disk allows.
+    if answered
+        && let Some(Ok(disk)) =
+            vibememory_cli::mirror::probe_disk(config.remote.as_deref(), ask_host)
+        && let Some(note) = vibememory_cli::mirror::disk_note(&disk)
+    {
+        let _ = vibememory_cli::merge_report::add_pending(&layout.engine_dir, &note);
+    }
     Some(mirror.summary())
 }
 
@@ -1307,6 +1332,7 @@ fn report_json(
     config: &Config,
     actions: &[vibememory_cli::install::Action],
     mirror: Option<&vibememory_cli::mirror::Mirror>,
+    disk: Option<&Result<vibememory_cli::mirror::Disk, String>>,
     strict: bool,
 ) -> ExitCode {
     use vibememory_cli::mirror::Mirror;
@@ -1345,13 +1371,24 @@ fn report_json(
             }
         },
     );
-    let failed = wrong > 0 || mirror.is_some_and(Mirror::is_fault);
+    let disk_value = match disk {
+        None => serde_json::json!({ "state": "notChecked" }),
+        Some(Ok(disk)) => serde_json::json!({
+            "state": if disk.is_low() { "low" } else { "ok" },
+            "availableKib": disk.available_kib,
+            "totalKib": disk.total_kib,
+        }),
+        Some(Err(reason)) => serde_json::json!({ "state": "unknown", "reason": reason }),
+    };
+    let disk_low = matches!(disk, Some(Ok(disk)) if disk.is_low());
+    let failed = wrong > 0 || mirror.is_some_and(Mirror::is_fault) || disk_low;
     let report = serde_json::json!({
         "machineId": config.machine_id,
         "remote": config.remote,
         "steps": steps,
         "stepsWrong": wrong,
         "mirror": mirror_value,
+        "hostDisk": disk_value,
         "ok": !failed,
     });
     match serde_json::to_string_pretty(&report) {

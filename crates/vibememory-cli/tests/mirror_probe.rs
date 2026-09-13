@@ -4,7 +4,8 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
 use vibememory_cli::mirror::{
-    Mirror, hook_script, host_of, read_hook_answer, repo_name, url_in_hook, verdict,
+    Disk, Mirror, disk_note, disk_script, hook_script, host_of, probe_disk, read_disk,
+    read_hook_answer, repo_name, url_in_hook, verdict,
 };
 
 #[test]
@@ -288,4 +289,78 @@ fn the_store_path_is_written_the_way_the_hosts_shell_reads_it() {
     assert_eq!(shell_path("/srv/store.git"), "/srv/store.git");
 
     assert!(!hook_script("~/store.git", "main").contains("$HOME/~/"));
+}
+
+#[test]
+fn the_hosts_disk_is_read_from_its_own_df_line() {
+    // Recorded on the store's host 2026-09-13, after the swap file made room for a repack.
+    let disk = read_disk("/dev/vda1           10278236      7520772  2636248         75% /\n")
+        .expect("a df -Pk line");
+    assert_eq!(
+        disk,
+        Disk {
+            available_kib: 2_636_248,
+            total_kib: 10_278_236
+        }
+    );
+    assert!(!disk.is_low(), "{}", disk.summary());
+    assert_eq!(disk.summary(), "2.5 GiB free of 9.8 GiB");
+    assert!(disk_note(&disk).is_none());
+
+    // The same disk as it stood on 2026-09-12: full, and every push refused.
+    let full = read_disk("/dev/vda1           10278236      10278236        0        100% /")
+        .expect("line");
+    assert!(full.is_low());
+    assert!(disk_note(&full).is_some_and(|note| note.contains("running out of disk")));
+
+    assert!(read_disk("df: no such file").is_none());
+    assert!(read_disk("").is_none());
+}
+
+#[test]
+fn low_is_under_a_gibibyte_or_under_a_tenth_whichever_comes_first() {
+    let gib = 1024 * 1024;
+    let low = |available_kib: u64, total_kib: u64| {
+        Disk {
+            available_kib,
+            total_kib,
+        }
+        .is_low()
+    };
+    assert!(
+        low(gib - 1, 2 * gib),
+        "under a gibibyte, whatever share of the disk it is"
+    );
+    assert!(
+        !low(gib, 10 * gib),
+        "exactly a gibibyte and a tenth is not low"
+    );
+    assert!(
+        low(9 * gib, 100 * gib),
+        "nine percent of a large disk is low"
+    );
+    assert!(!low(10 * gib, 100 * gib));
+}
+
+#[test]
+fn the_disk_is_asked_about_where_the_store_is() {
+    assert!(disk_script("vibememory/store.git").starts_with("df -Pk $HOME/vibememory/store.git"));
+    let mut asked = Vec::new();
+    let answer = probe_disk(Some("vibememory:vibememory/store.git"), |host, script| {
+        asked.push((host.to_owned(), script.to_owned()));
+        Ok("/dev/vda1 100 50 50 50% /".to_owned())
+    });
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].0, "vibememory");
+    assert!(matches!(
+        answer,
+        Some(Ok(Disk {
+            available_kib: 50,
+            ..
+        }))
+    ));
+    assert!(
+        probe_disk(Some("/Volumes/backup/store.git"), |_, _| Ok(String::new())).is_none(),
+        "no host to ask"
+    );
 }

@@ -251,7 +251,14 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
     }
 
     if allowed {
-        result.pushed = push(store);
+        // A refused push is a failure of the store cycle like any other. It used to be a bare
+        // `false`, indistinguishable from "nothing to send": on 2026-09-12 the host's disk filled
+        // up, every push was refused for a day, and the tick went on reporting no failures while
+        // 291 commits stayed on this machine only.
+        match push(store) {
+            Ok(pushed) => result.pushed = pushed,
+            Err(problem) => result.problems.push(problem),
+        }
     }
 
     // A run counts as failed when something went wrong with the store itself; a held deletion is
@@ -558,10 +565,15 @@ fn restore_deleted_transcripts(store: &Path) -> Result<Vec<String>, String> {
     Ok(missing)
 }
 
-/// Pushes, when there is anything to push and somewhere to push it.
-fn push(store: &Path) -> bool {
+/// Pushes, when there is anything to push and somewhere to push it: `Ok(true)` pushed,
+/// `Ok(false)` nothing to send.
+///
+/// # Errors
+///
+/// What the remote said when it refused, or why git could not be run.
+fn push(store: &Path) -> Result<bool, String> {
     if !has_remote(store) {
-        return false;
+        return Ok(false);
     }
     // Nothing of ours to send is the common case; saying "pushed" then would make the log useless
     // for telling a working machine from a stuck one.
@@ -576,15 +588,17 @@ fn push(store: &Path) -> bool {
     .and_then(|text| text.trim().parse::<u64>().ok())
     .unwrap_or(0);
     if ahead == 0 {
-        return false;
+        return Ok(false);
     }
-    matches!(
-        git::run_with_timeout(
-            git::command(store, &["push", "--quiet", REMOTE, BRANCH]),
-            TIMEOUT,
-        ),
-        Ok(Some(_))
-    )
+    match git::run_capturing(
+        git::command(store, &["push", "--quiet", REMOTE, BRANCH]),
+        TIMEOUT,
+    )? {
+        Ok(_) => Ok(true),
+        Err(said) => Err(format!(
+            "push to {REMOTE} refused with {ahead} commit(s) waiting: {said}"
+        )),
+    }
 }
 
 /// Whether the store has a remote configured at all.

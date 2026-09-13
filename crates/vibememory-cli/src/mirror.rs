@@ -317,3 +317,97 @@ pub fn session_note(mirror: &Mirror) -> Option<String> {
         )
     })
 }
+
+/// The column the disk line is printed in, beside the mirror's.
+const DISK_COLUMN: &str = "disk     ";
+
+/// Below this much free space on the store's host, a session is told and `doctor` fails.
+pub const LOW_DISK_KIB: u64 = 1024 * 1024;
+
+/// …or below this share of the whole disk, whichever comes first.
+pub const LOW_DISK_PERCENT: u64 = 10;
+
+/// Free space on the disk that holds the store, as the host's `df` reports it.
+///
+/// Asked because a full host refuses every push while each machine goes on working: on 2026-09-12
+/// the 10 GiB disk filled up and nothing said so for a day.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Disk {
+    /// Free, in KiB.
+    pub available_kib: u64,
+    /// The whole disk, in KiB.
+    pub total_kib: u64,
+}
+
+impl Disk {
+    /// Whether this is worth waking someone for.
+    #[must_use]
+    pub const fn is_low(&self) -> bool {
+        self.available_kib < LOW_DISK_KIB
+            || self.available_kib.saturating_mul(100)
+                < self.total_kib.saturating_mul(LOW_DISK_PERCENT)
+    }
+
+    /// `2.5 GiB free of 9.8 GiB`.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        format!(
+            "{} free of {}",
+            gib(self.available_kib),
+            gib(self.total_kib)
+        )
+    }
+
+    /// One line for `doctor`, in the column shape of the other lines.
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let low = if self.is_low() { " \u{2014} LOW" } else { "" };
+        format!("{DISK_COLUMN}host {}{low}", self.summary())
+    }
+}
+
+/// KiB as GiB with one decimal, without a float.
+fn gib(kib: u64) -> String {
+    let tenths = kib.saturating_mul(10) / (1024 * 1024);
+    format!("{}.{} GiB", tenths / 10, tenths % 10)
+}
+
+/// What is asked of the host: the `df` line of the disk that holds the store.
+#[must_use]
+pub fn disk_script(path: &str) -> String {
+    format!("df -Pk {} | tail -1", shell_path(path))
+}
+
+/// Reads the `df -Pk` line: filesystem, size, used, available, capacity, mount point.
+#[must_use]
+pub fn read_disk(output: &str) -> Option<Disk> {
+    let line = output.lines().rev().find(|line| !line.trim().is_empty())?;
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    Some(Disk {
+        total_kib: fields.get(1)?.parse().ok()?,
+        available_kib: fields.get(3)?.parse().ok()?,
+    })
+}
+
+/// Asks the host about its disk; `None` when there is no host to ask.
+pub fn probe_disk<F>(remote: Option<&str>, mut run: F) -> Option<Result<Disk, String>>
+where
+    F: FnMut(&str, &str) -> Result<String, String>,
+{
+    let host = remote.and_then(host_of)?;
+    Some(run(host.ssh, &disk_script(host.path)).and_then(|text| {
+        read_disk(&text).ok_or_else(|| format!("unreadable df answer: {}", text.trim()))
+    }))
+}
+
+/// What a session is told when the host is filling up — before pushes start failing, not after.
+#[must_use]
+pub fn disk_note(disk: &Disk) -> Option<String> {
+    disk.is_low().then(|| {
+        format!(
+            "VibeMemory: the store's host is running out of disk \u{2014} {}. Pushes stop when it \
+             fills up: repack the store there or give the host more space.",
+            disk.summary()
+        )
+    })
+}

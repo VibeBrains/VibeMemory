@@ -90,30 +90,35 @@ fi
 git -C "$HOME/$repoPath" config core.autocrlf false
 git -C "$HOME/$repoPath" config core.filemode false
 git -C "$HOME/$repoPath" config gc.auto 0
+# Incoming pushes stay packs. With git's default of 100 a push of fewer objects is unpacked into
+# loose files, and every version of a growing transcript then lands whole, without deltas: on
+# 2026-09-12 that was 1.6 GiB of loose objects in a day, and the 10 GiB disk filled up.
+git -C "$HOME/$repoPath" config transfer.unpackLimit 1
 git -C "$HOME/$repoPath" symbolic-ref HEAD "refs/heads/$branch"
 echo "3/5 HEAD указывает на $branch"
-echo "2/5 Настройки repo проставлены (autocrlf=false, filemode=false, gc.auto=0)"
+echo "2/5 Настройки repo проставлены (autocrlf=false, filemode=false, gc.auto=0, unpackLimit=1)"
 
 # The store holds transcripts of every session: prompts, code, file contents. On a box with one
 # account world-readable changes nothing today, but the day a second account appears it changes
 # everything — and nobody re-checks permissions on that day.
 chmod 700 "$HOME/$repoPath" "$(dirname "$HOME/$repoPath")"
 
-# Weekly repacking. `gc.auto=0` above keeps garbage collection out of the push path — a tick
-# must not wait for a repack — but a repository that is never packed grows without bound, and
-# this disk is 10 GiB. Once a week, at night, out of anyone's way.
+# Nightly repacking. `gc.auto=0` above keeps garbage collection out of the push path — a tick
+# must not wait for a repack — but a repository that is not packed grows without bound, and this
+# disk is 10 GiB. It was weekly until 2026-09-13: the store took on 1.5 GiB a day and the Sunday
+# run died for want of the space it was meant to free. Every night now, out of anyone's way.
 # `set -e` kills the script on the first non-zero status, and both `crontab -l` (no crontab yet)
 # and `grep -q` (no match) return one legitimately. Hence `|| true` and an explicit `if`.
-# `git gc --quiet` and nothing else: `--auto=0` is not a thing — `--auto` takes no value, and the
-# weekly job would have failed silently every Sunday.
+# `git gc --quiet` and nothing else: `--auto` takes no value.
 if command -v crontab >/dev/null 2>&1; then
-  line="17 4 * * 0 git -C $HOME/$repoPath gc --quiet >/dev/null 2>&1"
+  line="17 4 * * * git -C $HOME/$repoPath gc --quiet >/dev/null 2>&1"
   current="$(crontab -l 2>/dev/null || true)"
-  if printf '%s\n' "$current" | grep -Fq "$repoPath gc"; then
-    echo "4/5 Еженедельная упаковка уже в cron"
+  if printf '%s\n' "$current" | grep -Fxq "$line"; then
+    echo "4/5 Ночная упаковка уже в cron"
   else
-    printf '%s\n%s\n' "$current" "$line" | grep -v '^$' | crontab -
-    echo "4/5 Еженедельная упаковка добавлена в cron (вс 04:17)"
+    # A weekly line from an earlier bootstrap is replaced, not left beside the nightly one.
+    printf '%s\n%s\n' "$(printf '%s\n' "$current" | grep -Fv "$repoPath gc" || true)" "$line" | grep -v '^$' | crontab -
+    echo "4/5 Ночная упаковка поставлена в cron (04:17)"
   fi
 else
   echo "4/5 crontab не найден — упаковку придётся запускать вручную: git -C ~/$repoPath gc"
