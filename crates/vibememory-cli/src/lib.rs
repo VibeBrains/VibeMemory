@@ -33,6 +33,7 @@ pub mod migrate;
 pub mod mirror;
 pub mod outbox;
 pub mod process;
+pub mod project;
 pub mod relink;
 pub mod sha256;
 pub mod store;

@@ -311,6 +311,37 @@ impl Memories for FakeMemories {
     }
 }
 
+/// The store project of `cwd`, by the engine's own naming rules; `None` outside any project the
+/// store already holds.
+///
+/// # Errors
+///
+/// An unreadable config, or what the naming rules refused.
+pub fn project_here(engine_dir: &Path, cwd: &Path) -> Result<Option<String>, String> {
+    let text = std::fs::read_to_string(engine_dir.join("config.json"))
+        .map_err(|error| format!("config.json: {error}"))?;
+    let config =
+        vibememory_cli::config::Config::parse(&text, vibememory_core::naming::PathSyntax::Posix)
+            .map_err(|error| format!("config.json: {error}"))?;
+    let syntax = vibememory_cli::hook::session_start::host_syntax();
+    let canonical = vibememory_core::naming::canonical_cwd(&cwd.to_string_lossy(), syntax);
+    match vibememory_cli::project::resolve(&engine_dir.join("store"), &config.naming, &canonical) {
+        Ok(vibememory_core::naming::Resolution::Named { name, .. }) => {
+            // Only a project the store already holds. A client may start its servers in any
+            // directory — measured: `/tmp` resolves to a project called `tmp` — and a default that
+            // creates projects would scatter memory into places nobody syncs on purpose.
+            let known = engine_dir
+                .join("store")
+                .join("projects")
+                .join(name.as_str())
+                .is_dir();
+            Ok(known.then(|| name.as_str().to_owned()))
+        }
+        Ok(vibememory_core::naming::Resolution::Ignored { .. }) => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 /// The store of this machine, from the engine's own configuration.
 ///
 /// # Errors

@@ -31,11 +31,41 @@ vibememory install
 ## Claude Code
 
 ```bash
-claude mcp add vibememory ~/.vibememory/bin/vibememory-mcp -- --agent claude-code
+claude mcp add -s user vibememory ~/.vibememory/bin/vibememory-mcp -- --agent claude-code
 ```
+
+**`-s user` обязателен.** Без него Claude Code регистрирует сервер только для каталога, в котором
+запущена команда, и в остальных проектах памяти нет — в том числе у агента, которого запускает IDE.
 
 Проверить: `claude mcp list` покажет `vibememory`, а в сессии станут доступны инструменты
 `memory_search`, `memory_get`, `memory_save`, `memory_update`, `memory_delete`.
+
+## VibeIDE
+
+Агент VibeIDE берёт серверы из `~/.vibeide/mcp.json` (сборка для разработки — `~/.vibeide-dev/`):
+
+```json
+{
+  "mcpServers": {
+    "vibememory": {
+      "command": "/Users/<вы>/.vibememory/bin/vibememory-mcp",
+      "args": ["--agent", "vibeide"]
+    }
+  }
+}
+```
+
+VibeIDEA своего клиента для внешних MCP-серверов пока не имеет — это задача её репозитория.
+
+## Проект по рабочему каталогу
+
+Сервер смотрит, в каком каталоге его запустили, и называет проект стора по тем же правилам, что
+хук `SessionStart`. Проект объявляется агенту в ответе на `initialize` (поле `instructions`).
+`memory_save`, `memory_update` и `memory_delete` без `project` пишут в него.
+
+Только проект, который в сторе **уже есть**. Каталог, для которого проекта нет (`/tmp`, домашний),
+проекта не даёт — тогда запись требует `project` явно. Иначе клиент, запускающий серверы где
+попало, плодил бы мусорные проекты.
 
 ## Любой другой клиент MCP
 
@@ -62,9 +92,9 @@ claude mcp add vibememory ~/.vibememory/bin/vibememory-mcp -- --agent claude-cod
 |---|---|---|
 | `memory_search` | — | Ищет по словам в заголовке, описании, теле и идентификаторе. Фильтры: `project`, `kind`, `status`. Без `project` ищет по всем проектам. Всегда возвращает `status`. |
 | `memory_get` | `id` | Полный текст записи, её ссылки и **версия** — она нужна для `memory_update`. |
-| `memory_save` | `project`, `id`, `kind`, `title`, `description`, `body` | Новая запись. Отказывает, если идентификатор занят. |
-| `memory_update` | `project`, `id` | Меняет только переданные поля; остальные остаются. Пишет новую версию с родителем — той, которую вы видели. |
-| `memory_delete` | `project`, `id` | Просит забыть. Версии остаются в журнале, запись перестаёт показываться. |
+| `memory_save` | `id`, `kind`, `description`, `body`; `project` — если сервер не в проекте | Новая запись. Отказывает, если идентификатор занят. |
+| `memory_update` | `id`; `project` — если сервер не в проекте | Меняет только переданные поля; остальные остаются. Пишет новую версию с родителем — той, которую вы видели. |
+| `memory_delete` | `id`; `project` — если сервер не в проекте | Просит забыть. Версии остаются в журнале, запись перестаёт показываться. |
 | `history_search` | `query` | Ищет по словам в прошлых сессиях. Возвращает проект, сессию, время и выдержку — не транскрипты целиком. Новые первыми. Фильтры: `project`, `limit` (20 по умолчанию, 100 максимум). |
 
 `kind` — одно из `user`, `feedback`, `project`, `reference`. `status` — `active` или `stale`.

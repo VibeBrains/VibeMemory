@@ -54,13 +54,13 @@ pub fn catalogue() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "project": { "type": "string" },
+                    "project": { "type": "string", "description": "Project of the store. Omit to use the one this server was started in." },
                     "id": { "type": "string", "description": "Short kebab-case slug; also the file name of its projection." },
                     "kind": { "type": "string", "enum": ["user", "feedback", "project", "reference"] },
                     "description": { "type": "string", "description": "One line: what is inside, so a reader can tell whether it is relevant." },
                     "body": { "type": "string", "description": "The memory itself, markdown. Link others with [[their-id]]." }
                 },
-                "required": ["project", "id", "kind", "description", "body"]
+                "required": ["id", "kind", "description", "body"]
             }
         },
         {
@@ -71,13 +71,13 @@ pub fn catalogue() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "project": { "type": "string" },
+                    "project": { "type": "string", "description": "Project of the store. Omit to use the one this server was started in." },
                     "id": { "type": "string" },
                     "description": { "type": "string" },
                     "body": { "type": "string" },
                     "status": { "type": "string", "enum": ["active", "stale"] }
                 },
-                "required": ["project", "id"]
+                "required": ["id"]
             }
         },
         {
@@ -104,10 +104,10 @@ pub fn catalogue() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "project": { "type": "string" },
+                    "project": { "type": "string", "description": "Project of the store. Omit to use the one this server was started in." },
                     "id": { "type": "string" }
                 },
-                "required": ["project", "id"]
+                "required": ["id"]
             }
         }
     ])
@@ -118,13 +118,18 @@ pub fn catalogue() -> Value {
 /// # Errors
 ///
 /// A sentence the agent can act on. An unknown tool is an error, never a guess at what was meant.
-pub fn call(name: &str, arguments: &Value, agent: &str, memories: &dyn Memories) -> ToolResult {
+pub fn call(
+    name: &str,
+    arguments: &Value,
+    caller: &Caller<'_>,
+    memories: &dyn Memories,
+) -> ToolResult {
     match name {
         "memory_search" => search(arguments, memories),
         "memory_get" => get(arguments, memories),
-        "memory_save" => save(arguments, agent, memories),
-        "memory_update" => update(arguments, agent, memories),
-        "memory_delete" => delete(arguments, agent, memories),
+        "memory_save" => save(arguments, caller, memories),
+        "memory_update" => update(arguments, caller, memories),
+        "memory_delete" => delete(arguments, caller, memories),
         "history_search" => history_search(arguments, memories),
         other => Err(format!("unknown tool: {other}")),
     }
@@ -143,6 +148,29 @@ fn optional(arguments: &Value, field: &str) -> Option<String> {
         .get(field)
         .and_then(Value::as_str)
         .map(str::to_owned)
+}
+
+/// Who calls and from where, fixed for the life of the server.
+#[derive(Debug, Clone, Copy)]
+pub struct Caller<'a> {
+    /// Written into every record the call creates: memory is shared between agents, so it has to
+    /// say who wrote it.
+    pub agent: &'a str,
+    /// The store project of the directory the client started the server in, when it is one. A
+    /// write that names no project goes there: an agent in an IDE knows its folder, not the name
+    /// the store gave it.
+    pub project: Option<&'a str>,
+}
+
+/// The project a write goes to: the one it named, else the one the server was started in.
+fn project_of(arguments: &Value, caller: &Caller<'_>) -> Result<String, String> {
+    optional(arguments, "project")
+        .or_else(|| caller.project.map(str::to_owned))
+        .ok_or_else(|| {
+            "project is required: this server was started outside any project of the store, so \
+             name the one to write to"
+                .to_owned()
+        })
 }
 
 /// Which projects a call looks at: the one it named, or all of them.
@@ -229,8 +257,9 @@ fn get(arguments: &Value, memories: &dyn Memories) -> ToolResult {
     Err(format!("no memory with id {}", id.as_str()))
 }
 
-fn save(arguments: &Value, agent: &str, memories: &dyn Memories) -> ToolResult {
-    let project = text(arguments, "project")?;
+fn save(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolResult {
+    let agent = caller.agent;
+    let project = project_of(arguments, caller)?;
     let id = RecordId::parse(&text(arguments, "id")?).map_err(|error| error.to_string())?;
     if memories.load(&project)?.records.contains_key(&id) {
         return Err(format!(
@@ -265,8 +294,9 @@ fn save(arguments: &Value, agent: &str, memories: &dyn Memories) -> ToolResult {
     Ok(json!({ "saved": id.as_str(), "version": event.uuid }))
 }
 
-fn update(arguments: &Value, agent: &str, memories: &dyn Memories) -> ToolResult {
-    let project = text(arguments, "project")?;
+fn update(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolResult {
+    let agent = caller.agent;
+    let project = project_of(arguments, caller)?;
     let id = RecordId::parse(&text(arguments, "id")?).map_err(|error| error.to_string())?;
     let memory = memories.load(&project)?;
     let entry = memory
@@ -300,8 +330,9 @@ fn update(arguments: &Value, agent: &str, memories: &dyn Memories) -> ToolResult
     Ok(json!({ "updated": id.as_str(), "version": event.uuid, "parent": entry.version }))
 }
 
-fn delete(arguments: &Value, agent: &str, memories: &dyn Memories) -> ToolResult {
-    let project = text(arguments, "project")?;
+fn delete(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolResult {
+    let agent = caller.agent;
+    let project = project_of(arguments, caller)?;
     let id = RecordId::parse(&text(arguments, "id")?).map_err(|error| error.to_string())?;
     let memory = memories.load(&project)?;
     let entry = memory

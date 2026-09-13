@@ -25,10 +25,8 @@ use vibememory_cli::memory::{
     COWORK_MEMORY_VAR, JOURNAL_FILE, MemoryLocation, Quarantined, REMOTE_MEMORY_VAR, memory_dir,
     settings_memory_dir, sync,
 };
-use vibememory_cli::store::existing;
 use vibememory_core::naming::{
-    EncSlug, IgnoreReason, NamingInput, PathSyntax, Resolution, canonical_cwd,
-    enc_from_transcript_path, resolve_store_name,
+    EncSlug, IgnoreReason, PathSyntax, Resolution, canonical_cwd, enc_from_transcript_path,
 };
 
 fn main() -> ExitCode {
@@ -193,13 +191,6 @@ fn install(dry_run: bool) -> ExitCode {
     }
 }
 
-/// How long the hook waits for git before deciding without it. The CLI gives a `SessionStart`
-/// hook ten seconds; spending most of that on one command would risk the session.
-const GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
-
-/// Set by the CLI when every working directory of a run shares one project directory.
-const PROJECT_DIR_NAME_VAR: &str = "CLAUDE_CODE_PROJECT_DIR_NAME";
-
 /// `SessionStart`: put the link in place before the CLI creates a real directory.
 ///
 /// Always exits 0. A hook that fails takes the session with it, and no synchronisation is worth
@@ -232,17 +223,8 @@ fn session_start_hook() -> ExitCode {
         }
     };
     let cwd = canonical_cwd(&input.cwd, syntax);
-    let names = existing(&layout.store(), GIT_TIMEOUT);
-    // The CLI shares one project directory between every working directory of a run when this is
-    // set, so the core has to see it: without it the engine would name a store per directory and
-    // link them all to the same place.
-    let project_dir_name = std::env::var(PROJECT_DIR_NAME_VAR).ok();
-    let naming = NamingInput {
-        cwd: &cwd,
-        syntax,
-        project_dir_name: project_dir_name.as_deref(),
-    };
-    let resolution = resolve_store_name(&naming, || probe_git(&cwd), &config.naming, &names.names);
+    // The rule the memory server names its project by, too: see `project::resolve`.
+    let resolution = vibememory_cli::project::resolve(&layout.store(), &config.naming, &cwd);
 
     let decision = match resolution {
         Ok(Resolution::Named { name, .. }) => {
@@ -312,11 +294,6 @@ fn session_start_hook() -> ExitCode {
     } else {
         say(&notes.join(" "))
     }
-}
-
-/// Runs git for the naming rules, in the canonical working directory.
-fn probe_git(cwd: &str) -> vibememory_core::naming::GitProbe {
-    vibememory_cli::git::probe(std::path::Path::new(cwd), GIT_TIMEOUT)
 }
 
 /// Says one sentence to the session and exits 0, which is the only exit code a hook may use.

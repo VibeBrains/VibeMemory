@@ -13,8 +13,9 @@
 use std::io::{BufRead as _, Write as _};
 use std::process::ExitCode;
 
-use vibememory_mcp::memories::{Memories, from_engine};
+use vibememory_mcp::memories::{Memories, from_engine, project_here};
 use vibememory_mcp::protocol;
+use vibememory_mcp::tools::Caller;
 
 /// Who the records say wrote them, when the client does not introduce itself.
 const DEFAULT_AGENT: &str = "mcp";
@@ -52,11 +53,28 @@ fn main() -> ExitCode {
         .nth(1)
         .unwrap_or_else(|| DEFAULT_AGENT.to_owned());
 
-    serve(&memories, &agent)
+    // The project of the directory the client started us in. Measured 2026-09-13: Claude Code
+    // starts its stdio servers in the session's project directory. Not finding one is not a
+    // failure — searches still work, and a write then has to name its project.
+    let project = match std::env::current_dir()
+        .map_err(|error| error.to_string())
+        .and_then(|cwd| project_here(&engine_dir, &cwd))
+    {
+        Ok(project) => project,
+        Err(problem) => {
+            eprintln!("vibememory-mcp: no project for this directory: {problem}");
+            None
+        }
+    };
+    let caller = Caller {
+        agent: &agent,
+        project: project.as_deref(),
+    };
+    serve(&memories, &caller)
 }
 
 /// Reads requests until stdin closes.
-fn serve(memories: &dyn Memories, agent: &str) -> ExitCode {
+fn serve(memories: &dyn Memories, caller: &Caller<'_>) -> ExitCode {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     for line in stdin.lock().lines() {
@@ -71,7 +89,7 @@ fn serve(memories: &dyn Memories, agent: &str) -> ExitCode {
             continue;
         }
         let response = match protocol::parse(&line) {
-            Ok(request) => protocol::handle(&request, agent, memories),
+            Ok(request) => protocol::handle(&request, caller, memories),
             Err(detail) => Some(protocol::malformed(&detail)),
         };
         let Some(response) = response else {

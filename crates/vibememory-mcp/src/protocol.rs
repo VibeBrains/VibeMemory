@@ -59,23 +59,39 @@ impl Response {
 
 /// Answers one request, or returns `None` when there is nothing to answer.
 ///
-/// `agent` is the name written into every record this call creates — memory is shared between
+/// `caller.agent` is the name written into every record this call creates — memory is shared between
 /// agents, so it has to say who wrote it, and "claude-code" for everyone would make that question
 /// unanswerable.
 #[must_use]
-pub fn handle(request: &Request, agent: &str, memories: &dyn Memories) -> Option<Response> {
+pub fn handle(
+    request: &Request,
+    caller: &crate::tools::Caller<'_>,
+    memories: &dyn Memories,
+) -> Option<Response> {
     // A notification carries no id and gets no answer — replying to one is a protocol error, and
     // `notifications/initialized` is sent by every client right after the handshake.
     let id = request.id.clone()?;
     Some(match request.method.as_str() {
-        "initialize" => Response::ok(
-            id,
-            json!({
+        "initialize" => {
+            let mut result = json!({
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": { "tools": {} },
                 "serverInfo": { "name": "vibememory", "version": env!("CARGO_PKG_VERSION") },
-            }),
-        ),
+            });
+            // The agent learns the name the store gave its folder: without it a model asked to
+            // look up this project's memory has no way to know what to pass as `project`.
+            if let (Some(project), Some(fields)) = (caller.project, result.as_object_mut()) {
+                fields.insert(
+                    "instructions".to_owned(),
+                    json!(format!(
+                        "Started in the store project {project}: memory_save, memory_update and \
+                     memory_delete use it when `project` is omitted, and memory_search and \
+                     history_search take it as `project` to stay inside this project."
+                    )),
+                );
+            }
+            Response::ok(id, result)
+        }
         "tools/list" => Response::ok(id, json!({ "tools": crate::tools::catalogue() })),
         "tools/call" => {
             let name = request
@@ -88,7 +104,7 @@ pub fn handle(request: &Request, agent: &str, memories: &dyn Memories) -> Option
                 .get("arguments")
                 .cloned()
                 .unwrap_or(json!({}));
-            match crate::tools::call(name, &arguments, agent, memories) {
+            match crate::tools::call(name, &arguments, caller, memories) {
                 // A tool that refused is not a protocol failure: the agent asked something
                 // sensible and the answer is "no, because…". Reporting it as a JSON-RPC error
                 // would hide the reason from the model, which is the one that has to act on it.

@@ -14,10 +14,15 @@
 use serde_json::{Value, json};
 use vibememory_mcp::memories::{FakeMemories, Memories};
 use vibememory_mcp::protocol::{self, PROTOCOL_VERSION};
-use vibememory_mcp::tools;
+use vibememory_mcp::tools::{self, Caller};
 
 const STAMP: &str = "2026-09-09T12:00:00Z";
 const AGENT: &str = "codex";
+/// A server started outside any project of the store.
+const CALLER: Caller<'static> = Caller {
+    agent: AGENT,
+    project: None,
+};
 
 fn memories() -> FakeMemories {
     FakeMemories::new(STAMP)
@@ -25,7 +30,7 @@ fn memories() -> FakeMemories {
 
 /// Calls a tool and unwraps the structured half of the answer.
 fn call(name: &str, arguments: &Value, fake: &FakeMemories) -> Result<Value, String> {
-    tools::call(name, arguments, AGENT, fake)
+    tools::call(name, arguments, &CALLER, fake)
 }
 
 fn save_one(fake: &FakeMemories, id: &str, body: &str) -> Value {
@@ -46,14 +51,14 @@ fn the_handshake_and_the_catalogue_are_what_a_client_expects() {
     let fake = memories();
     let request =
         protocol::parse(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#).expect("parse");
-    let answer = protocol::handle(&request, AGENT, &fake).expect("an id means an answer");
+    let answer = protocol::handle(&request, &CALLER, &fake).expect("an id means an answer");
     let value = serde_json::to_value(answer).expect("encode");
     assert_eq!(value["result"]["protocolVersion"], PROTOCOL_VERSION);
     assert_eq!(value["result"]["serverInfo"]["name"], "vibememory");
 
     let request =
         protocol::parse(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#).expect("parse");
-    let answer = protocol::handle(&request, AGENT, &fake).expect("answer");
+    let answer = protocol::handle(&request, &CALLER, &fake).expect("answer");
     let value = serde_json::to_value(answer).expect("encode");
     let names: Vec<&str> = value["result"]["tools"]
         .as_array()
@@ -80,7 +85,7 @@ fn a_notification_is_answered_by_saying_nothing() {
     // Every client sends this right after the handshake. Answering it is a protocol error.
     let request = protocol::parse(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
         .expect("parse");
-    assert!(protocol::handle(&request, AGENT, &fake).is_none());
+    assert!(protocol::handle(&request, &CALLER, &fake).is_none());
 }
 
 #[test]
@@ -89,7 +94,7 @@ fn an_unknown_method_is_a_protocol_error_but_a_refused_tool_is_not() {
 
     let request =
         protocol::parse(r#"{"jsonrpc":"2.0","id":3,"method":"resources/list"}"#).expect("parse");
-    let value = serde_json::to_value(protocol::handle(&request, AGENT, &fake).expect("answer"))
+    let value = serde_json::to_value(protocol::handle(&request, &CALLER, &fake).expect("answer"))
         .expect("encode");
     assert_eq!(value["error"]["code"], -32601, "{value}");
 
@@ -99,7 +104,7 @@ fn an_unknown_method_is_a_protocol_error_but_a_refused_tool_is_not() {
         r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"memory_get","arguments":{"id":"missing-thing"}}}"#,
     )
     .expect("parse");
-    let value = serde_json::to_value(protocol::handle(&request, AGENT, &fake).expect("answer"))
+    let value = serde_json::to_value(protocol::handle(&request, &CALLER, &fake).expect("answer"))
         .expect("encode");
     assert!(value["error"].is_null(), "{value}");
     assert_eq!(value["result"]["isError"], true);
@@ -534,4 +539,77 @@ fn an_excerpt_shows_the_moment_without_handing_over_the_conversation() {
         excerpt.ends_with('…'),
         "and it says that it was cut: {excerpt}"
     );
+}
+
+#[test]
+fn a_write_without_a_project_goes_to_the_project_the_server_was_started_in() {
+    let fake = memories();
+    let here = Caller {
+        agent: AGENT,
+        project: Some("VibeIDE"),
+    };
+    let fact = |id: &str| json!({ "id": id, "kind": "project", "description": "d", "body": "b" });
+    tools::call("memory_save", &fact("from-the-ide"), &here, &fake)
+        .expect("an agent in an IDE knows its folder, not the store's name for it");
+    assert!(
+        call(
+            "memory_get",
+            &json!({ "project": "VibeIDE", "id": "from-the-ide" }),
+            &fake
+        )
+        .is_ok(),
+        "the write landed in the project of the directory"
+    );
+
+    let mut named = fact("named");
+    named["project"] = json!("VibeIDEA");
+    tools::call("memory_save", &named, &here, &fake).expect("save");
+    assert!(
+        call(
+            "memory_get",
+            &json!({ "project": "VibeIDEA", "id": "named" }),
+            &fake
+        )
+        .is_ok(),
+        "a project the call names wins over the directory"
+    );
+    assert!(
+        call(
+            "memory_get",
+            &json!({ "project": "VibeIDE", "id": "named" }),
+            &fake
+        )
+        .is_err(),
+        "and the directory's project does not get a copy"
+    );
+
+    let refused = tools::call("memory_save", &fact("nowhere"), &CALLER, &fake);
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|problem| problem.contains("project")),
+        "outside any project a write has to say where: {refused:?}"
+    );
+}
+
+#[test]
+fn the_handshake_tells_the_agent_which_project_it_is_in() {
+    let request =
+        protocol::parse(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#).expect("parse");
+    let fake = memories();
+    let here = Caller {
+        agent: AGENT,
+        project: Some("VibeIDE"),
+    };
+    let told = serde_json::to_value(protocol::handle(&request, &here, &fake).expect("answer"))
+        .expect("json");
+    assert!(
+        told["result"]["instructions"]
+            .as_str()
+            .is_some_and(|text| text.contains("VibeIDE")),
+        "{told}"
+    );
+    let silent = serde_json::to_value(protocol::handle(&request, &CALLER, &fake).expect("answer"))
+        .expect("json");
+    assert!(silent["result"].get("instructions").is_none(), "{silent}");
 }
