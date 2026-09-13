@@ -198,12 +198,20 @@ impl Memories for StoreMemories {
         // collapsed by the merge — the worst failure this system has, because nothing reports it.
         // Caught by the gate on the first run, on the test double before the real one.
         let nth = self.written.fetch_add(1, Ordering::Relaxed);
-        format!("{}-{}-{nth}-{id}", self.machine_id, self.now())
+        version_name(&self.machine_id, &self.now(), nth, id)
     }
 
     fn now(&self) -> String {
         vibememory_cli::clock::now()
     }
+}
+
+/// The uuid of a new event: machine, time, a counter for writes inside the same second, record.
+/// One rule for every store the server writes to — see [`StoreMemories::new_version`] for why each
+/// part is there.
+#[must_use]
+pub fn version_name(machine_id: &str, now: &str, nth: u64, id: &str) -> String {
+    format!("{machine_id}-{now}-{nth}-{id}")
 }
 
 /// One transcript of the fake: session id, modified time, raw lines.

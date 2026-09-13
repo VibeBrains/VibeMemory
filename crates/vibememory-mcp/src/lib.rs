@@ -16,6 +16,8 @@
     clippy::disallowed_macros
 )]
 
+pub mod git_memories;
+pub mod http;
 pub mod memories;
 pub mod protocol;
 pub mod tools;
