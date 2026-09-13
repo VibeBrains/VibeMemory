@@ -12,7 +12,7 @@
 )]
 
 use serde_json::{Value, json};
-use vibememory_mcp::memories::{FakeMemories, Memories};
+use vibememory_mcp::memories::{DirectoryProject, FakeMemories, Memories};
 use vibememory_mcp::protocol::{self, PROTOCOL_VERSION};
 use vibememory_mcp::tools::{self, Caller};
 
@@ -73,8 +73,9 @@ fn the_handshake_and_the_catalogue_are_what_a_client_expects() {
             "memory_get",
             "memory_save",
             "memory_update",
+            "memory_delete",
             "history_search",
-            "memory_delete"
+            "project_resolve"
         ]
     );
 }
@@ -612,4 +613,68 @@ fn the_handshake_tells_the_agent_which_project_it_is_in() {
     let silent = serde_json::to_value(protocol::handle(&request, &CALLER, &fake).expect("answer"))
         .expect("json");
     assert!(silent["result"].get("instructions").is_none(), "{silent}");
+}
+
+#[test]
+fn a_folder_is_named_by_the_rules_and_a_missing_project_says_why() {
+    let fake = memories();
+    for (directory, answer) in [
+        (
+            "/work/Held",
+            DirectoryProject::Held {
+                name: "Held".to_owned(),
+                rule: "repo".to_owned(),
+            },
+        ),
+        (
+            "/work/new",
+            DirectoryProject::Unheld {
+                name: "new".to_owned(),
+            },
+        ),
+        (
+            "/home",
+            DirectoryProject::Ignored {
+                reason: "ignoreCwd: /home".to_owned(),
+            },
+        ),
+    ] {
+        fake.directories
+            .borrow_mut()
+            .insert(directory.to_owned(), answer);
+    }
+
+    let held = call(
+        "project_resolve",
+        &json!({ "directory": "/work/Held" }),
+        &fake,
+    )
+    .expect("held");
+    assert_eq!(held["project"], "Held");
+    assert_eq!(held["rule"], "repo");
+
+    let unheld = call(
+        "project_resolve",
+        &json!({ "directory": "/work/new" }),
+        &fake,
+    )
+    .expect("unheld");
+    assert!(
+        unheld["project"].is_null(),
+        "no project is offered to write into"
+    );
+    assert_eq!(unheld["wouldBe"], "new");
+
+    let ignored =
+        call("project_resolve", &json!({ "directory": "/home" }), &fake).expect("ignored");
+    assert!(ignored["project"].is_null());
+    assert!(
+        ignored["why"]
+            .as_str()
+            .expect("why")
+            .contains("ignoreCwd: /home")
+    );
+
+    let refused = call("project_resolve", &json!({}), &fake).expect_err("directory is required");
+    assert!(refused.contains("directory"));
 }

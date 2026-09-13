@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use vibememory_core::memory::journal::{self, Event, Memory, fold};
 
-use crate::memories::{Memories, TranscriptRef, version_name};
+use crate::memories::{DirectoryProject, Memories, TranscriptRef, version_name};
 
 /// The branch the store keeps its history on.
 const BRANCH: &str = vibememory_cli::tick::BRANCH;
@@ -303,5 +303,12 @@ impl Memories for GitMemories {
 
     fn now(&self) -> String {
         vibememory_cli::clock::now()
+    }
+
+    fn project_of_directory(&self, directory: &str) -> Result<DirectoryProject, String> {
+        Err(format!(
+            "the store's host cannot see the client's disk, so it cannot name the project of \
+             {directory}; pass project explicitly"
+        ))
     }
 }

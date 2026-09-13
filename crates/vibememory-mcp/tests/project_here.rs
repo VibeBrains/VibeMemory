@@ -12,7 +12,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use vibememory_mcp::memories::project_here;
+use vibememory_mcp::memories::{
+    DirectoryProject, Memories, StoreMemories, directory_project, project_here,
+};
 
 /// A directory of this test run, removed at the end.
 struct Temp(PathBuf);
@@ -46,5 +48,20 @@ fn only_a_project_the_store_already_holds_becomes_the_default() {
     // A client may start its servers anywhere; a default that creates projects would scatter
     // memory into stores nobody meant to sync.
     assert_eq!(project_here(&engine, &stray).expect("resolve"), None);
+
+    // The tool says why: the rules name it, the store does not hold it.
+    assert_eq!(
+        directory_project(&engine, &stray).expect("resolve"),
+        DirectoryProject::Unheld {
+            name: "scratch".to_owned()
+        }
+    );
+    // Through the store, as a shared server answers an agent that names its own folder.
+    let store = StoreMemories::new(engine.join("store"), "mac-test".to_owned());
+    assert!(matches!(
+        store.project_of_directory(&known.to_string_lossy()),
+        Ok(DirectoryProject::Held { ref name, .. }) if name == "Known"
+    ));
+    assert!(store.project_of_directory("relative/dir").is_err());
     drop(temp);
 }

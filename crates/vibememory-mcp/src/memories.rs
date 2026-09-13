@@ -56,6 +56,37 @@ pub trait Memories {
 
     /// The clock, so the tools do not have one.
     fn now(&self) -> String;
+
+    /// The store project a directory of the client belongs to, by the engine's own naming rules.
+    /// A server shared by several windows has no single directory of its own, so the agent asks
+    /// about the folder it works in instead of guessing a name from it.
+    ///
+    /// # Errors
+    ///
+    /// What stopped the rules from answering, or a store that cannot see the client's disk.
+    fn project_of_directory(&self, directory: &str) -> Result<DirectoryProject, String>;
+}
+
+/// What the naming rules say about one directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectoryProject {
+    /// The store holds this project: writes may name it.
+    Held {
+        /// The store project.
+        name: String,
+        /// Which rule chose the name, as the engine's stable code.
+        rule: String,
+    },
+    /// The rules give a name, but the store has no such project, and a write must not create one.
+    Unheld {
+        /// The name the rules would give.
+        name: String,
+    },
+    /// The owner told the engine to leave this directory alone.
+    Ignored {
+        /// The rule that said so, in its own words.
+        reason: String,
+    },
 }
 
 /// One session of a project, without its content.
@@ -204,6 +235,20 @@ impl Memories for StoreMemories {
     fn now(&self) -> String {
         vibememory_cli::clock::now()
     }
+
+    fn project_of_directory(&self, directory: &str) -> Result<DirectoryProject, String> {
+        let path = Path::new(directory);
+        // A relative path would be read against the server's own directory, which is exactly the
+        // one that says nothing about the client's folder.
+        if !path.is_absolute() {
+            return Err(format!("directory must be an absolute path: {directory}"));
+        }
+        let engine_dir = self
+            .store
+            .parent()
+            .ok_or_else(|| "the store has no engine directory above it".to_owned())?;
+        directory_project(engine_dir, path)
+    }
 }
 
 /// The uuid of a new event: machine, time, a counter for writes inside the same second, record.
@@ -231,6 +276,8 @@ pub struct FakeMemories {
     /// How many transcripts were actually read. The cap on results is cheap to check; the cap on
     /// *reading* is the one that matters on a 1.7 GiB corpus, and it is invisible without this.
     pub reads: AtomicU64,
+    /// What [`Memories::project_of_directory`] answers, by directory.
+    pub directories: std::cell::RefCell<BTreeMap<String, DirectoryProject>>,
 }
 
 impl FakeMemories {
@@ -243,6 +290,7 @@ impl FakeMemories {
             written: AtomicU64::new(0),
             history: std::cell::RefCell::new(BTreeMap::new()),
             reads: AtomicU64::new(0),
+            directories: std::cell::RefCell::new(BTreeMap::new()),
         }
     }
 
@@ -317,6 +365,14 @@ impl Memories for FakeMemories {
     fn now(&self) -> String {
         self.stamp.clone()
     }
+
+    fn project_of_directory(&self, directory: &str) -> Result<DirectoryProject, String> {
+        self.directories
+            .borrow()
+            .get(directory)
+            .cloned()
+            .ok_or_else(|| format!("no answer seeded for {directory}"))
+    }
 }
 
 /// The store project of `cwd`, by the engine's own naming rules; `None` outside any project the
@@ -326,6 +382,21 @@ impl Memories for FakeMemories {
 ///
 /// An unreadable config, or what the naming rules refused.
 pub fn project_here(engine_dir: &Path, cwd: &Path) -> Result<Option<String>, String> {
+    Ok(match directory_project(engine_dir, cwd)? {
+        DirectoryProject::Held { name, .. } => Some(name),
+        // Only a project the store already holds. A client may start its servers in any
+        // directory — measured: `/tmp` resolves to a project called `tmp` — and a default that
+        // creates projects would scatter memory into places nobody syncs on purpose.
+        DirectoryProject::Unheld { .. } | DirectoryProject::Ignored { .. } => None,
+    })
+}
+
+/// Everything the naming rules say about `cwd`, including why there is no project.
+///
+/// # Errors
+///
+/// An unreadable config, or what the naming rules refused.
+pub fn directory_project(engine_dir: &Path, cwd: &Path) -> Result<DirectoryProject, String> {
     let text = std::fs::read_to_string(engine_dir.join("config.json"))
         .map_err(|error| format!("config.json: {error}"))?;
     let config =
@@ -334,18 +405,34 @@ pub fn project_here(engine_dir: &Path, cwd: &Path) -> Result<Option<String>, Str
     let syntax = vibememory_cli::hook::session_start::host_syntax();
     let canonical = vibememory_core::naming::canonical_cwd(&cwd.to_string_lossy(), syntax);
     match vibememory_cli::project::resolve(&engine_dir.join("store"), &config.naming, &canonical) {
-        Ok(vibememory_core::naming::Resolution::Named { name, .. }) => {
-            // Only a project the store already holds. A client may start its servers in any
-            // directory — measured: `/tmp` resolves to a project called `tmp` — and a default that
-            // creates projects would scatter memory into places nobody syncs on purpose.
-            let known = engine_dir
+        Ok(vibememory_core::naming::Resolution::Named { name, source }) => {
+            let held = engine_dir
                 .join("store")
                 .join("projects")
                 .join(name.as_str())
                 .is_dir();
-            Ok(known.then(|| name.as_str().to_owned()))
+            let name = name.as_str().to_owned();
+            Ok(if held {
+                DirectoryProject::Held {
+                    name,
+                    rule: source.code().to_owned(),
+                }
+            } else {
+                DirectoryProject::Unheld { name }
+            })
         }
-        Ok(vibememory_core::naming::Resolution::Ignored { .. }) => Ok(None),
+        Ok(vibememory_core::naming::Resolution::Ignored { reason }) => {
+            Ok(DirectoryProject::Ignored {
+                reason: match reason {
+                    vibememory_core::naming::IgnoreReason::Pattern(pattern) => {
+                        format!("ignoreCwd: {pattern}")
+                    }
+                    vibememory_core::naming::IgnoreReason::ProjectDirName(value) => {
+                        format!("CLAUDE_CODE_PROJECT_DIR_NAME: {value}")
+                    }
+                },
+            })
+        }
         Err(error) => Err(error.to_string()),
     }
 }

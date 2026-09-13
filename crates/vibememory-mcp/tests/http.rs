@@ -158,7 +158,8 @@ fn a_real_socket_gets_a_real_answer() {
     assert!(
         json["result"]["tools"]
             .as_array()
-            .is_some_and(|tools| tools.len() == 6),
+            .is_some_and(|tools| Some(tools.len())
+                == vibememory_mcp::tools::catalogue().as_array().map(Vec::len)),
         "{json}"
     );
 }

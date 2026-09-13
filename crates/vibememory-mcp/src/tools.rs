@@ -1,14 +1,15 @@
-//! The five things an agent can do to the memory, and nothing else.
+//! The seven things an agent can do to the memory, and nothing else.
 //!
 //! Every one of them is the journal's own vocabulary: read the folded state, or append one event.
 //! There is no update-in-place and no delete-the-line, because the journal has neither — that is
-//! what lets two machines merge it by union without losing a word.
+//! what lets two machines merge it by union without losing a word. The one tool outside that
+//! vocabulary, `project_resolve`, only reads the engine's naming rules and writes nothing.
 
 use serde_json::{Value, json};
 use vibememory_core::memory::journal::{Action, Event};
 use vibememory_core::memory::record::{Record, RecordId, RecordKind, RecordStatus};
 
-use crate::memories::Memories;
+use crate::memories::{DirectoryProject, Memories};
 
 /// What the tools answer with: text for the agent, or an error it can act on.
 pub type ToolResult = Result<Value, String>;
@@ -81,22 +82,6 @@ pub fn catalogue() -> Value {
             }
         },
         {
-            "name": "history_search",
-            "description": "Search past sessions by words said in them. Returns which session, \
-                            when, and a short excerpt — never whole transcripts. Newest first, \
-                            because that is the order a person asks about their own history in. \
-                            Narrow with `project` when you know it: the corpus is gigabytes.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "Words that must all appear in one message." },
-                    "project": { "type": "string", "description": "Limit to one project. Omit to search all of them." },
-                    "limit": { "type": "integer", "description": "How many matches to return; 20 by default, 100 at most." }
-                },
-                "required": ["query"]
-            }
-        },
-        {
             "name": "memory_delete",
             "description": "Forget a fact. The versions stay in the journal; the record stops \
                             being shown. Prefer marking it stale when it explains why something \
@@ -111,6 +96,53 @@ pub fn catalogue() -> Value {
             }
         }
     ])
+    .as_array_mut()
+    .map(|tools| {
+        tools.push(history_search_entry());
+        tools.push(project_resolve_entry());
+        Value::Array(std::mem::take(tools))
+    })
+    .unwrap_or_default()
+}
+
+/// Past sessions rather than remembered facts: a separate corpus, read the same way.
+fn history_search_entry() -> Value {
+    json!({
+        "name": "history_search",
+        "description": "Search past sessions by words said in them. Returns which session, \
+                        when, and a short excerpt — never whole transcripts. Newest first, \
+                        because that is the order a person asks about their own history in. \
+                        Narrow with `project` when you know it: the corpus is gigabytes.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Words that must all appear in one message." },
+                "project": { "type": "string", "description": "Limit to one project. Omit to search all of them." },
+                "limit": { "type": "integer", "description": "How many matches to return; 20 by default, 100 at most." }
+            },
+            "required": ["query"]
+        }
+    })
+}
+
+/// The one tool that is not about memory itself: it tells an agent which project its folder is,
+/// so a server shared by several windows can still be written to without a guess.
+fn project_resolve_entry() -> Value {
+    json!({
+        "name": "project_resolve",
+        "description": "Name the store project of a folder, by the same rules the engine \
+                        uses. Call it when the server does not know your project — one \
+                        server shared by several windows — and pass the answer as `project` \
+                        to writes. Never guess the name from the folder: a repository is \
+                        named by its git root, and the owner may rename or ignore folders.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "directory": { "type": "string", "description": "Absolute path of the folder you work in." }
+            },
+            "required": ["directory"]
+        }
+    })
 }
 
 /// Runs one tool by name.
@@ -131,6 +163,7 @@ pub fn call(
         "memory_update" => update(arguments, caller, memories),
         "memory_delete" => delete(arguments, caller, memories),
         "history_search" => history_search(arguments, memories),
+        "project_resolve" => project_resolve(arguments, memories),
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -176,6 +209,23 @@ fn project_of(arguments: &Value, caller: &Caller<'_>) -> Result<String, String> 
 /// Which projects a call looks at: the one it named, or all of them.
 fn scope(arguments: &Value, memories: &dyn Memories) -> Result<Vec<String>, String> {
     optional(arguments, "project").map_or_else(|| memories.projects(), |one| Ok(vec![one]))
+}
+
+fn project_resolve(arguments: &Value, memories: &dyn Memories) -> ToolResult {
+    let directory = text(arguments, "directory")?;
+    Ok(match memories.project_of_directory(&directory)? {
+        DirectoryProject::Held { name, rule } => json!({
+            "directory": directory, "project": name, "rule": rule
+        }),
+        DirectoryProject::Unheld { name } => json!({
+            "directory": directory, "project": null, "wouldBe": name,
+            "why": "the store holds no such project, and a write does not create one"
+        }),
+        DirectoryProject::Ignored { reason } => json!({
+            "directory": directory, "project": null,
+            "why": format!("the owner excluded this folder ({reason})")
+        }),
+    })
 }
 
 fn search(arguments: &Value, memories: &dyn Memories) -> ToolResult {
