@@ -5,7 +5,8 @@ docs/
 ├── roadmap.md              # план и хроника: один чекбокс — одна итерация
 ├── functional.md           # каталог возможностей продукта (что уже умеет)
 ├── spec/
-│   └── architecture.md     # целевая схема: стор, транспорт, хуки, тик, MCP, миграция
+│   ├── architecture.md     # целевая схема: стор, транспорт, хуки, тик, MCP, миграция
+│   └── stage6Plan.md       # план этапа 6 (SaaS для команд): проект, ждёт решений владельца
 ├── manuals/                # руководства «как сделать» по шагам
   - [mcpServer.md](manuals/mcpServer.md) — как подключить память VibeMemory к любому агенту по MCP
 │   ├── configSpec.md       # спека ~/.vibememory/config.json для модели (сейчас: nameOverrides, ignoreCwd)
