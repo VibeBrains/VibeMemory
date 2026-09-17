@@ -94,34 +94,90 @@ git -C "$HOME/$repoPath" config gc.auto 0
 # loose files, and every version of a growing transcript then lands whole, without deltas: on
 # 2026-09-12 that was 1.6 GiB of loose objects in a day, and the 10 GiB disk filled up.
 git -C "$HOME/$repoPath" config transfer.unpackLimit 1
+# No size threshold for delta search. `core.bigFileThreshold=8m` was set once "to save memory" and
+# turned delta compression off for exactly the files the store is made of: a push brings the big
+# versions of a transcript whole, and the host could never compress them. On 2026-09-17 238 such
+# objects held 2.41 GiB of a 2.79 GiB store — the Mac held the same history in 1.08 GiB — and the
+# nightly repack filled the disk a second time. Memory stays bounded by pack.windowMemory and
+# pack.threads below. `--unset-all` exits 5 when nothing is set, which is the normal case.
+git -C "$HOME/$repoPath" config --unset-all core.bigFileThreshold || true
+git -C "$HOME/$repoPath" config pack.threads 1
+git -C "$HOME/$repoPath" config pack.windowMemory 64m
 git -C "$HOME/$repoPath" symbolic-ref HEAD "refs/heads/$branch"
 echo "3/5 HEAD указывает на $branch"
-echo "2/5 Настройки repo проставлены (autocrlf=false, filemode=false, gc.auto=0, unpackLimit=1)"
+echo "2/5 Настройки repo проставлены (autocrlf=false, filemode=false, gc.auto=0, unpackLimit=1, без bigFileThreshold)"
 
 # The store holds transcripts of every session: prompts, code, file contents. On a box with one
 # account world-readable changes nothing today, but the day a second account appears it changes
 # everything — and nobody re-checks permissions on that day.
 chmod 700 "$HOME/$repoPath" "$(dirname "$HOME/$repoPath")"
 
-# Nightly repacking. `gc.auto=0` above keeps garbage collection out of the push path — a tick
-# must not wait for a repack — but a repository that is not packed grows without bound, and this
-# disk is 10 GiB. It was weekly until 2026-09-13: the store took on 1.5 GiB a day and the Sunday
-# run died for want of the space it was meant to free. Every night now, out of anyone's way.
+# Nightly repacking, incremental. `gc.auto=0` above keeps garbage collection out of the push path —
+# a tick must not wait for a repack — but every push lands as its own pack (`unpackLimit=1`), and
+# hundreds of small packs slow every read.
+#
+# Not `git gc`. It rewrites the whole store into one new pack, so it needs as much free space as
+# the store occupies: on 2026-09-16 it did that once, and on 2026-09-17 it died half-way at 2.23 GiB
+# with the disk full, and pushes stopped. `repack --geometric=2` merges the small packs and leaves
+# the big one alone while the small ones stay small.
+#
+# The script refuses to start without room for the worst case — every pack rewritten plus a
+# reserve — and says so in the journal: `journalctl -t vibememory-repack`. The old line sent its
+# output to /dev/null, which is how a failed repack stayed invisible for two nights.
+#
 # `set -e` kills the script on the first non-zero status, and both `crontab -l` (no crontab yet)
 # and `grep -q` (no match) return one legitimately. Hence `|| true` and an explicit `if`.
-# `git gc --quiet` and nothing else: `--auto` takes no value.
+repack="$(dirname "$HOME/$repoPath")/bin/storeRepack.sh"
+mkdir -p "$(dirname "$repack")"
+wantedRepack='#!/usr/bin/env bash
+# Nightly incremental repack of the store. Written by infra/hostBootstrap.sh.
+set -uo pipefail
+repo="${1:?repository path}"
+readonly RESERVE_BYTES=$((1024 * 1024 * 1024))
+readonly TAG=vibememory-repack
+say() { logger -t "$TAG" -- "$*"; }
+
+packs="$repo/objects/pack"
+[ -d "$packs" ] || { say "no pack directory in $repo"; exit 1; }
+# printf "%.0f", not print: awk prints large sums in exponent form, and under a Russian locale
+# with a decimal comma ("3,63136e+09"), which bash arithmetic rejects. Found on the first live run.
+packBytes=$(find "$packs" -maxdepth 1 -name "pack-*.pack" -printf "%s\n" | LC_ALL=C awk "{s+=\$1} END {printf \"%.0f\", s}")
+freeBytes=$(df -B1 --output=avail "$packs" | tail -1 | tr -d " ")
+needBytes=$((packBytes + RESERVE_BYTES))
+if [ "$freeBytes" -lt "$needBytes" ]; then
+  say "skipped: $freeBytes bytes free, $needBytes needed (packs $packBytes + reserve $RESERVE_BYTES)"
+  exit 1
+fi
+leftover=$(find "$packs" -maxdepth 1 -name "tmp_pack_*" | wc -l)
+[ "$leftover" -eq 0 ] || say "warning: $leftover tmp_pack file(s) left by an earlier run"
+if out=$(git -C "$repo" repack -d --geometric=2 --quiet 2>&1); then
+  say "done: $(git -C "$repo" count-objects -v | tr "\n" " ")"
+else
+  say "failed: $out"
+  exit 1
+fi
+'
+if [ -f "$repack" ] && [ "$(cat "$repack")" = "$wantedRepack" ]; then
+  echo "4/5 Скрипт упаковки уже стоит и совпадает"
+else
+  printf '%s' "$wantedRepack" > "$repack"
+  chmod 755 "$repack"
+  echo "4/5 Скрипт упаковки записан: $repack"
+fi
+
 if command -v crontab >/dev/null 2>&1; then
-  line="17 4 * * * git -C $HOME/$repoPath gc --quiet >/dev/null 2>&1"
+  line="17 4 * * * $repack $HOME/$repoPath"
   current="$(crontab -l 2>/dev/null || true)"
   if printf '%s\n' "$current" | grep -Fxq "$line"; then
     echo "4/5 Ночная упаковка уже в cron"
   else
-    # A weekly line from an earlier bootstrap is replaced, not left beside the nightly one.
-    printf '%s\n%s\n' "$(printf '%s\n' "$current" | grep -Fv "$repoPath gc" || true)" "$line" | grep -v '^$' | crontab -
-    echo "4/5 Ночная упаковка поставлена в cron (04:17)"
+    # Earlier lines are replaced, not left beside the new one: the weekly and nightly `gc` of
+    # previous bootstraps, and a repack line pointing elsewhere.
+    printf '%s\n%s\n' "$(printf '%s\n' "$current" | grep -Fv "$repoPath gc" | grep -Fv "storeRepack.sh" || true)" "$line" | grep -v '^$' | crontab -
+    echo "4/5 Ночная упаковка поставлена в cron (04:17, частичная, журнал: journalctl -t vibememory-repack)"
   fi
 else
-  echo "4/5 crontab не найден — упаковку придётся запускать вручную: git -C ~/$repoPath gc"
+  echo "4/5 crontab не найден — упаковку придётся запускать вручную: $repack ~/$repoPath"
 fi
 
 hook="$HOME/$repoPath/hooks/post-receive"
