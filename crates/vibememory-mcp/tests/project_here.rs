@@ -65,3 +65,37 @@ fn only_a_project_the_store_already_holds_becomes_the_default() {
     assert!(store.project_of_directory("relative/dir").is_err());
     drop(temp);
 }
+
+/// A folder reached through a symlink is the folder it points at.
+///
+/// The owner's projects live on another disk and are opened through a link in the home directory.
+/// Git answers about the real path while our own walk for `.git` follows the path as written, so
+/// every `project_resolve` from the IDE came back «repository layout mismatch» — and the agent, told
+/// that the project could not be named, asked the owner to type the path by hand (18.09.2026).
+#[test]
+#[cfg(unix)]
+fn a_directory_reached_through_a_symlink_names_the_project_it_points_at() {
+    let root = std::env::temp_dir().join(format!("vibememory-mcp-link-{}", std::process::id()));
+    let temp = Temp(root.clone());
+    let engine = root.join("engine");
+    fs::create_dir_all(engine.join("store").join("projects").join("Known")).expect("store");
+    fs::write(
+        engine.join("config.json"),
+        r#"{"machineId":"mac-test","remote":"ssh://git@host/store.git"}"#,
+    )
+    .expect("config");
+    let known = root.join("work").join("Known");
+    fs::create_dir_all(&known).expect("known");
+    let link = root.join("link-to-known");
+    std::os::unix::fs::symlink(&known, &link).expect("symlink");
+
+    let store = StoreMemories::new(engine.join("store"), "mac-test".to_owned());
+    assert!(
+        matches!(
+            store.project_of_directory(&link.to_string_lossy()),
+            Ok(DirectoryProject::Held { ref name, .. }) if name == "Known"
+        ),
+        "the link must resolve to the same project as the folder it points at"
+    );
+    drop(temp);
+}

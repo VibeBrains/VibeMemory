@@ -243,11 +243,22 @@ impl Memories for StoreMemories {
         if !path.is_absolute() {
             return Err(format!("directory must be an absolute path: {directory}"));
         }
+        // Symlinks are followed here, and only here. Git answers about the real path, our own walk
+        // for `.git` follows the path as written, and when the two differ the naming rules — quite
+        // rightly — refuse to name anything: «git resolved /Volumes/… but the nearest `.git` is
+        // /Users/…». That is not an exotic case. An IDE passes the folder as the person opened it,
+        // and a person whose projects live on another disk opens them through a link in the home
+        // directory; every call from VibeIDEA on such a machine failed, and the agent then asked
+        // the owner to type the path by hand (18.09.2026).
+        //
+        // The cwd the hook path uses comes from a shell, which resolved the link already — which is
+        // why this never showed up there.
+        let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let engine_dir = self
             .store
             .parent()
             .ok_or_else(|| "the store has no engine directory above it".to_owned())?;
-        directory_project(engine_dir, path)
+        directory_project(engine_dir, &real)
     }
 }
 
