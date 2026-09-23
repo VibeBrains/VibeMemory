@@ -173,6 +173,8 @@ else
   echo "3/9 Postgres $pgVersion: без изменений"
 fi
 sudo systemctl enable --quiet "postgresql@$pgVersion-main"
+# the umbrella unit too: the host's report asks `postgresql`, and an inactive umbrella reads as a fault
+sudo systemctl enable --now --quiet postgresql
 
 # 4. The .env: managed values rewritten each run, secrets generated once and kept, the owner's
 # own values (Resend, Telegram, the support link) never touched here.
@@ -192,11 +194,15 @@ if [ -n "$ownerEmail" ]; then env[OWNER_EMAIL]="$ownerEmail"; fi
 env[HOST_ENV]=prod
 env[NODE_ENV]=production
 env[PORT]="$cabinetPort"
+# loopback only: the cabinet is reached through Caddy, never directly
+env[SERVER_HOSTNAME]=127.0.0.1
 env[SERVER_URL]="https://$appDomain"
 env[CLIENT_URL]="https://$appDomain"
 env[SOURCE_VERSION]="$sourceVersion"
 env[LOG_MODE]=json
 env[LOG_LEVEL]=info
+# every query at info would fill the journal; their parameters are never logged in prod anyway
+env[LOG_FILTER]='*,-prisma'
 env[DATABASE_URL]="postgresql://vmcab:$dbPassword@localhost:5432/cabinet?schema=public"
 env[BETTER_AUTH_SECRET]="${env[BETTER_AUTH_SECRET]:-$(secret)}"
 env[OPENAPI_CREDENTIALS]="${env[OPENAPI_CREDENTIALS]:-owner:$(secret)}"
@@ -334,6 +340,16 @@ elif [ "$releaseChanged$envChanged$unitChanged" != 000 ] || ! systemctl is-activ
   echo "8/9 Служба vibememory-cabinet запущена, /api/health — 200"
 else
   echo "8/9 Служба vibememory-cabinet: без изменений ($(systemctl is-active vibememory-cabinet))"
+fi
+
+# The cabinet must listen on loopback alone: a port open to the world bypasses TLS, Caddy and the
+# X-Forwarded-For the jail trusts. Checked every run, because the default of the server is 0.0.0.0.
+if systemctl is-active --quiet vibememory-cabinet; then
+  listening=$(sudo ss -ltnH "sport = :$cabinetPort" | awk '{print $4}' | sort -u)
+  case "$listening" in
+    127.0.0.1:"$cabinetPort") ;;
+    *) echo "Ошибка: кабинет слушает не только loopback: $(printf '%s ' $listening)" >&2; exit 1 ;;
+  esac
 fi
 
 # 9. The journal's size and the cabinet's jail. The cabinet writes one line per refused password or
