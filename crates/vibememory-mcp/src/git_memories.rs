@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use vibememory_core::memory::journal::{self, Event, Memory, fold};
 
-use crate::memories::{DirectoryProject, Memories, TranscriptRef, version_name};
+use crate::memories::{DirectoryProject, Memories, TranscriptRef, next_write, version_name};
 
 /// The branch the store keeps its history on.
 const BRANCH: &str = vibememory_cli::tick::BRANCH;
@@ -22,14 +22,22 @@ const BRANCH: &str = vibememory_cli::tick::BRANCH;
 /// How many times a write is retried when a push moved `main` under it.
 const APPEND_ATTEMPTS: usize = 5;
 
-/// The store as a bare repository.
+/// The store as a bare repository, written to on behalf of one writer.
+///
+/// Cheap to make: the server makes one per request, because the writer is whoever the request's
+/// token or key says it is.
 pub struct GitMemories {
     repo: PathBuf,
-    machine_id: String,
-    /// Distinguishes versions written inside the same second, as for the working-copy store.
-    written: AtomicU64,
-    /// Names the temporary index of each write.
-    indexes: AtomicU64,
+    /// What versions and commits are signed with: a machine for the owner's own ssh session,
+    /// `host-<token id>` for a write over HTTPS.
+    writer: String,
+}
+
+/// Names the temporary index of each write. One per process: two requests of one server write at
+/// once, each with its own index file in the same repository.
+fn next_index() -> u64 {
+    static INDEXES: AtomicU64 = AtomicU64::new(0);
+    INDEXES.fetch_add(1, Ordering::Relaxed)
 }
 
 /// What one attempt to append found.
@@ -42,15 +50,10 @@ pub enum Appended {
 }
 
 impl GitMemories {
-    /// A bare repository, written to on behalf of `machine_id`.
+    /// A bare repository, written to on behalf of `writer`.
     #[must_use]
-    pub fn new(repo: PathBuf, machine_id: String) -> Self {
-        Self {
-            repo,
-            machine_id,
-            written: AtomicU64::new(0),
-            indexes: AtomicU64::new(0),
-        }
+    pub fn new(repo: PathBuf, writer: String) -> Self {
+        Self { repo, writer }
     }
 
     /// Runs git on the repository and returns its stdout as bytes. Output is read while git runs,
@@ -158,7 +161,7 @@ impl GitMemories {
         let index = self.repo.join(format!(
             "vibememory-mcp-index-{}-{}",
             std::process::id(),
-            self.indexes.fetch_add(1, Ordering::Relaxed)
+            next_index()
         ));
         let index_path = index.to_string_lossy().into_owned();
         let attempt = (|| -> Result<Appended, String> {
@@ -175,11 +178,11 @@ impl GitMemories {
                 &with_index,
             )?;
             let tree = self.text(&["write-tree"], &with_index)?;
-            let email = format!("vibememory-mcp@{}.invalid", self.machine_id);
+            let email = format!("vibememory-mcp@{}.invalid", self.writer);
             let identity = [
-                ("GIT_AUTHOR_NAME", self.machine_id.as_str()),
+                ("GIT_AUTHOR_NAME", self.writer.as_str()),
                 ("GIT_AUTHOR_EMAIL", email.as_str()),
-                ("GIT_COMMITTER_NAME", self.machine_id.as_str()),
+                ("GIT_COMMITTER_NAME", self.writer.as_str()),
                 ("GIT_COMMITTER_EMAIL", email.as_str()),
             ];
             let commit = self.text(&["commit-tree", &tree, "-p", old, "-m", message], &identity)?;
@@ -297,18 +300,14 @@ impl Memories for GitMemories {
     }
 
     fn new_version(&self, id: &str) -> String {
-        let nth = self.written.fetch_add(1, Ordering::Relaxed);
-        version_name(&self.machine_id, &self.now(), nth, id)
+        version_name(&self.writer, &self.now(), next_write(), id)
     }
 
     fn now(&self) -> String {
         vibememory_cli::clock::now()
     }
 
-    fn project_of_directory(&self, directory: &str) -> Result<DirectoryProject, String> {
-        Err(format!(
-            "the store's host cannot see the client's disk, so it cannot name the project of \
-             {directory}; pass project explicitly"
-        ))
+    fn project_of_directory(&self, _directory: &str) -> Result<DirectoryProject, String> {
+        Ok(DirectoryProject::NotVisible)
     }
 }

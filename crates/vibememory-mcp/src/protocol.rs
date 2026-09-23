@@ -55,6 +55,18 @@ impl Response {
             error: Some(json!({ "code": code, "message": message })),
         }
     }
+
+    /// Whether this answers with a refusal: a protocol error, or a tool that said no.
+    #[must_use]
+    pub fn is_refusal(&self) -> bool {
+        self.error.is_some()
+            || self
+                .result
+                .as_ref()
+                .and_then(|result| result.get("isError"))
+                .and_then(Value::as_bool)
+                == Some(true)
+    }
 }
 
 /// Answers one request, or returns `None` when there is nothing to answer.

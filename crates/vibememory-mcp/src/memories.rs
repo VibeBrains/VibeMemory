@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use vibememory_core::memory::journal::{self, Event, Memory, fold};
 
@@ -87,6 +88,57 @@ pub enum DirectoryProject {
         /// The rule that said so, in its own words.
         reason: String,
     },
+    /// The store is on another machine and cannot see the client's disk: the client picks one of
+    /// the projects it may use instead.
+    NotVisible,
+}
+
+/// A reference to memory is memory: a server shares one store between the requests it answers.
+impl<M: Memories + ?Sized> Memories for &M {
+    fn projects(&self) -> Result<Vec<String>, String> {
+        (**self).projects()
+    }
+
+    fn load(&self, project: &str) -> Result<Memory, String> {
+        (**self).load(project)
+    }
+
+    fn append(&self, project: &str, event: &Event) -> Result<(), String> {
+        (**self).append(project, event)
+    }
+
+    fn transcripts(&self, project: &str) -> Result<Vec<TranscriptRef>, String> {
+        (**self).transcripts(project)
+    }
+
+    fn read_transcript(&self, project: &str, session: &str) -> Result<Vec<u8>, String> {
+        (**self).read_transcript(project, session)
+    }
+
+    fn new_version(&self, id: &str) -> String {
+        (**self).new_version(id)
+    }
+
+    fn now(&self) -> String {
+        (**self).now()
+    }
+
+    fn project_of_directory(&self, directory: &str) -> Result<DirectoryProject, String> {
+        (**self).project_of_directory(directory)
+    }
+}
+
+/// The counter that tells apart versions written inside the same second.
+///
+/// One per process, starting at the process id shifted past any count a process reaches: two
+/// servers on one machine — two ssh sessions in the same second — and two stores written by one
+/// process must never produce the same uuid, because the union merge silently collapses events
+/// that share one.
+pub fn next_write() -> u64 {
+    static WRITTEN: OnceLock<AtomicU64> = OnceLock::new();
+    WRITTEN
+        .get_or_init(|| AtomicU64::new(u64::from(std::process::id()) << 32))
+        .fetch_add(1, Ordering::Relaxed)
 }
 
 /// One session of a project, without its content.
@@ -103,19 +155,13 @@ pub struct TranscriptRef {
 pub struct StoreMemories {
     store: PathBuf,
     machine_id: String,
-    /// Distinguishes versions written inside the same second. See [`Memories::new_version`].
-    written: AtomicU64,
 }
 
 impl StoreMemories {
     /// Points at a store directory on behalf of a machine.
     #[must_use]
     pub fn new(store: PathBuf, machine_id: String) -> Self {
-        Self {
-            store,
-            machine_id,
-            written: AtomicU64::new(0),
-        }
+        Self { store, machine_id }
     }
 
     fn journal_of(&self, project: &str) -> PathBuf {
@@ -228,8 +274,7 @@ impl Memories for StoreMemories {
         // same record twice inside one second, and two events sharing a uuid are silently
         // collapsed by the merge — the worst failure this system has, because nothing reports it.
         // Caught by the gate on the first run, on the test double before the real one.
-        let nth = self.written.fetch_add(1, Ordering::Relaxed);
-        version_name(&self.machine_id, &self.now(), nth, id)
+        version_name(&self.machine_id, &self.now(), next_write(), id)
     }
 
     fn now(&self) -> String {
@@ -273,22 +318,29 @@ pub fn version_name(machine_id: &str, now: &str, nth: u64, id: &str) -> String {
 /// One transcript of the fake: session id, modified time, raw lines.
 pub type FakeTranscript = (String, u64, String);
 
-/// A journal held in memory, for tests and for anyone embedding the server.
+/// A journal held in memory, for tests and for anyone embedding the server. Behind locks, because
+/// the HTTP server answers each connection on its own thread.
 #[derive(Debug, Default)]
 pub struct FakeMemories {
     /// Events by project, in the order they were appended.
-    pub events: std::cell::RefCell<BTreeMap<String, Vec<Event>>>,
+    pub events: Mutex<BTreeMap<String, Vec<Event>>>,
     /// What [`Memories::now`] answers.
     pub stamp: String,
     /// Same job as the real one's: a fixed clock makes collisions certain rather than likely.
     written: AtomicU64,
     /// Transcripts by project.
-    pub history: std::cell::RefCell<BTreeMap<String, Vec<FakeTranscript>>>,
+    pub history: Mutex<BTreeMap<String, Vec<FakeTranscript>>>,
     /// How many transcripts were actually read. The cap on results is cheap to check; the cap on
     /// *reading* is the one that matters on a 1.7 GiB corpus, and it is invisible without this.
     pub reads: AtomicU64,
     /// What [`Memories::project_of_directory`] answers, by directory.
-    pub directories: std::cell::RefCell<BTreeMap<String, DirectoryProject>>,
+    pub directories: Mutex<BTreeMap<String, DirectoryProject>>,
+}
+
+/// A fake's lock is never held across a panic that matters: whatever it holds is still the
+/// state the test wants to look at.
+fn held<T>(lock: &Mutex<T>) -> MutexGuard<'_, T> {
+    lock.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl FakeMemories {
@@ -296,18 +348,37 @@ impl FakeMemories {
     #[must_use]
     pub fn new(stamp: &str) -> Self {
         Self {
-            events: std::cell::RefCell::new(BTreeMap::new()),
+            events: Mutex::new(BTreeMap::new()),
             stamp: stamp.to_owned(),
             written: AtomicU64::new(0),
-            history: std::cell::RefCell::new(BTreeMap::new()),
+            history: Mutex::new(BTreeMap::new()),
             reads: AtomicU64::new(0),
-            directories: std::cell::RefCell::new(BTreeMap::new()),
+            directories: Mutex::new(BTreeMap::new()),
         }
     }
 
     /// Seeds a project with events, as if they had been written before.
     pub fn seed(&self, project: &str, events: Vec<Event>) {
-        self.events.borrow_mut().insert(project.to_owned(), events);
+        held(&self.events).insert(project.to_owned(), events);
+    }
+
+    /// The events written so far, by project.
+    #[must_use]
+    pub fn written(&self) -> BTreeMap<String, Vec<Event>> {
+        held(&self.events).clone()
+    }
+
+    /// Adds a transcript to a project.
+    pub fn add_transcript(&self, project: &str, transcript: FakeTranscript) {
+        held(&self.history)
+            .entry(project.to_owned())
+            .or_default()
+            .push(transcript);
+    }
+
+    /// Seeds what [`Memories::project_of_directory`] answers for one directory.
+    pub fn answer_directory(&self, directory: &str, answer: DirectoryProject) {
+        held(&self.directories).insert(directory.to_owned(), answer);
     }
 }
 
@@ -316,22 +387,20 @@ impl Memories for FakeMemories {
         // Memory journals and transcripts both live under `projects/<name>`, and the real store
         // answers by listing that directory. A project with sessions but no memory yet is still a
         // project, so the fake has to say so too.
-        let mut names: Vec<String> = self.events.borrow().keys().cloned().collect();
-        names.extend(self.history.borrow().keys().cloned());
+        let mut names: Vec<String> = held(&self.events).keys().cloned().collect();
+        names.extend(held(&self.history).keys().cloned());
         names.sort();
         names.dedup();
         Ok(names)
     }
 
     fn load(&self, project: &str) -> Result<Memory, String> {
-        let borrowed = self.events.borrow();
-        let events = borrowed.get(project).cloned().unwrap_or_default();
+        let events = held(&self.events).get(project).cloned().unwrap_or_default();
         Ok(fold(&events, Vec::new()))
     }
 
     fn append(&self, project: &str, event: &Event) -> Result<(), String> {
-        self.events
-            .borrow_mut()
+        held(&self.events)
             .entry(project.to_owned())
             .or_default()
             .push(event.clone());
@@ -339,8 +408,8 @@ impl Memories for FakeMemories {
     }
 
     fn transcripts(&self, project: &str) -> Result<Vec<TranscriptRef>, String> {
-        let borrowed = self.history.borrow();
-        let mut found: Vec<TranscriptRef> = borrowed
+        let history = held(&self.history);
+        let mut found: Vec<TranscriptRef> = history
             .get(project)
             .into_iter()
             .flatten()
@@ -355,8 +424,7 @@ impl Memories for FakeMemories {
 
     fn read_transcript(&self, project: &str, session: &str) -> Result<Vec<u8>, String> {
         self.reads.fetch_add(1, Ordering::Relaxed);
-        let borrowed = self.history.borrow();
-        borrowed
+        held(&self.history)
             .get(project)
             .into_iter()
             .flatten()
@@ -378,8 +446,7 @@ impl Memories for FakeMemories {
     }
 
     fn project_of_directory(&self, directory: &str) -> Result<DirectoryProject, String> {
-        self.directories
-            .borrow()
+        held(&self.directories)
             .get(directory)
             .cloned()
             .ok_or_else(|| format!("no answer seeded for {directory}"))
@@ -398,7 +465,9 @@ pub fn project_here(engine_dir: &Path, cwd: &Path) -> Result<Option<String>, Str
         // Only a project the store already holds. A client may start its servers in any
         // directory — measured: `/tmp` resolves to a project called `tmp` — and a default that
         // creates projects would scatter memory into places nobody syncs on purpose.
-        DirectoryProject::Unheld { .. } | DirectoryProject::Ignored { .. } => None,
+        DirectoryProject::Unheld { .. }
+        | DirectoryProject::Ignored { .. }
+        | DirectoryProject::NotVisible => None,
     })
 }
 

@@ -1,8 +1,9 @@
-//! `vibememory-mcp`: the memory of the store, offered over MCP on stdio.
+//! `vibememory-mcp`: the memory of the store, offered over MCP.
 //!
-//! One line in, one line out. Nothing is printed to stdout that is not a JSON-RPC response —
-//! stdout *is* the protocol here, and a stray `println!` would break the client. Anything the
-//! operator should see goes to stderr.
+//! On stdio — one line in, one line out — nothing is printed to stdout that is not a JSON-RPC
+//! response: stdout *is* the protocol there, and a stray `println!` would break the client.
+//! Anything the operator should see goes to stderr. `access check` is the one command whose
+//! answer is stdout: the cabinet reads its first line.
 
 #![allow(
     clippy::disallowed_methods,
@@ -13,19 +14,24 @@
 use std::io::{BufRead as _, Write as _};
 use std::process::ExitCode;
 
+use vibememory_mcp::access;
 use vibememory_mcp::git_memories::GitMemories;
+use vibememory_mcp::host::Host;
+use vibememory_mcp::http;
 use vibememory_mcp::memories::{Memories, from_engine, project_here};
 use vibememory_mcp::protocol;
 use vibememory_mcp::tools::Caller;
 
-/// Who the records say wrote them, when the client does not introduce itself.
+/// Who the records say wrote them, when a stdio client does not introduce itself.
 const DEFAULT_AGENT: &str = "mcp";
-
-/// The shortest token accepted: a guessable token on a public port is no token at all.
-const MIN_TOKEN_LENGTH: usize = 32;
 
 /// The machine the host's writes are signed with, when `--machine` does not name one.
 const DEFAULT_HOST_MACHINE: &str = "host";
+
+/// Exit code of `access check` when the file is read and the snapshot breaks a rule.
+const CHECK_REFUSED: u8 = 1;
+/// Exit code of `access check` when the file cannot be read at all, or the command is misused.
+const CHECK_UNREADABLE: u8 = 2;
 
 /// The value after a flag on the command line.
 fn flag(name: &str) -> Option<String> {
@@ -42,53 +48,27 @@ fn main() -> ExitCode {
         println!("vibememory-mcp {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if arguments.first().map(String::as_str) == Some("access") {
+        return access_command(arguments.get(1..).unwrap_or_default());
+    }
+
+    // Over HTTP every request brings its own token, and the token says who it is; nothing about
+    // the caller comes from the command line.
+    if let Some(address) = flag("--http") {
+        return serve_http(&address);
+    }
 
     // The client's name if it gave one at launch; otherwise a name that at least says it came
     // over MCP rather than pretending to be Claude Code.
     let agent = flag("--agent").unwrap_or_else(|| DEFAULT_AGENT.to_owned());
 
-    // On the store's host there is no engine and no working copy — only the bare repository.
-    // A client reaches it over ssh (or through the HTTP front), and has no directory of ours to
-    // name a project by, so every write names its own.
+    // The owner over ssh, on the store's host: no engine and no working copy there — only the bare
+    // repository — and no directory of ours to name a project by, so every write names its own.
     if let Some(repo) = flag("--git-store") {
         let machine = flag("--machine").unwrap_or_else(|| DEFAULT_HOST_MACHINE.to_owned());
         let memories = GitMemories::new(repo.into(), machine);
-        // Over HTTP, behind the TLS proxy: the token is read from a file, never from the command
-        // line, where every user of the machine could read it in the process list.
-        if let Some(address) = flag("--http") {
-            let token = match flag("--token-file").map(std::fs::read_to_string) {
-                Some(Ok(token)) => token.trim().to_owned(),
-                Some(Err(error)) => {
-                    eprintln!("vibememory-mcp: the token file cannot be read: {error}");
-                    return ExitCode::FAILURE;
-                }
-                None => {
-                    eprintln!("vibememory-mcp: --http needs --token-file");
-                    return ExitCode::FAILURE;
-                }
-            };
-            if token.len() < MIN_TOKEN_LENGTH {
-                eprintln!(
-                    "vibememory-mcp: the token is shorter than {MIN_TOKEN_LENGTH} characters"
-                );
-                return ExitCode::FAILURE;
-            }
-            let listener = match std::net::TcpListener::bind(&address) {
-                Ok(listener) => listener,
-                Err(error) => {
-                    eprintln!("vibememory-mcp: cannot listen on {address}: {error}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            eprintln!("vibememory-mcp: serving MCP over HTTP on {address}");
-            vibememory_mcp::http::serve(&listener, &token, &memories);
-            return ExitCode::FAILURE;
-        }
-        let caller = Caller {
-            agent: &agent,
-            project: None,
-        };
-        return serve(&memories, &caller);
+        return serve(&memories, &Caller::owner(&agent, None));
     }
 
     // The engine's own rule for where it lives, not a second copy of it: the server used to read
@@ -122,11 +102,77 @@ fn main() -> ExitCode {
             None
         }
     };
-    let caller = Caller {
-        agent: &agent,
-        project: project.as_deref(),
+    serve(&memories, &Caller::owner(&agent, project.as_deref()))
+}
+
+/// `access check <file>`: the checker the cabinet runs on every snapshot before it publishes it.
+/// First line of stdout — `ok` or the code of the first rule broken; second — what exactly.
+fn access_command(rest: &[String]) -> ExitCode {
+    let [command, file] = rest else {
+        println!("usage\nvibememory-mcp access check <file>");
+        return ExitCode::from(CHECK_UNREADABLE);
     };
-    serve(&memories, &caller)
+    if command != "check" {
+        println!("usage\nvibememory-mcp access check <file>");
+        return ExitCode::from(CHECK_UNREADABLE);
+    }
+    let bytes = match std::fs::read(file) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            println!("snapshotUnreadable\n{file}: {error}");
+            return ExitCode::from(CHECK_UNREADABLE);
+        }
+    };
+    match access::check(&bytes) {
+        Ok(snapshot) => {
+            println!(
+                "ok\n{} teams, {} tokens, {} machine keys",
+                snapshot.teams.len(),
+                snapshot.tokens.len(),
+                snapshot.keys.len()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(refusal) => {
+            println!("{}\n{}", refusal.code, refusal.detail);
+            ExitCode::from(CHECK_REFUSED)
+        }
+    }
+}
+
+/// Serves MCP over HTTP behind the TLS proxy, with the rights of the access snapshot.
+fn serve_http(address: &str) -> ExitCode {
+    let (Some(access), Some(teams)) = (flag("--access"), flag("--teams")) else {
+        eprintln!("vibememory-mcp: --http needs --access <snapshot> and --teams <directory>");
+        return ExitCode::FAILURE;
+    };
+    let connections = match flag("--connections").map(|value| value.parse::<usize>()) {
+        None => http::DEFAULT_CONNECTIONS,
+        Some(Ok(connections)) if connections > 0 => connections,
+        Some(_) => {
+            eprintln!("vibememory-mcp: --connections takes a whole number above zero");
+            return ExitCode::FAILURE;
+        }
+    };
+    let host = match Host::open(access.into(), teams.into(), flag("--cabinet")) {
+        Ok(host) => host,
+        Err(problem) => {
+            eprintln!("vibememory-mcp: the access snapshot cannot be used: {problem}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let listener = match std::net::TcpListener::bind(address) {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("vibememory-mcp: cannot listen on {address}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    eprintln!(
+        "vibememory-mcp: serving MCP over HTTP on {address}, {connections} connections at once"
+    );
+    http::serve(&listener, &host, connections);
+    ExitCode::FAILURE
 }
 
 /// Reads requests until stdin closes.

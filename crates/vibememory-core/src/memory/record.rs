@@ -208,6 +208,11 @@ pub struct Record {
     pub metadata: BTreeMap<String, String>,
     /// Which agent wrote this version — memory is shared between agents, so it has to say.
     pub agent: String,
+    /// Which member of a team wrote this version, when a token or a machine key of a member
+    /// wrote it. Absent on what the store's owner writes with their own engine, and on every line
+    /// older than teams: a team shares one memory, and "which agent" alone does not say whose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member: Option<String>,
     /// When the record was first written, in the writer's clock.
     pub created_at: String,
     /// When this version was written, in the writer's clock.

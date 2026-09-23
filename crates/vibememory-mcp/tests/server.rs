@@ -19,13 +19,18 @@ use vibememory_mcp::tools::{self, Caller};
 const STAMP: &str = "2026-09-09T12:00:00Z";
 const AGENT: &str = "codex";
 /// A server started outside any project of the store.
-const CALLER: Caller<'static> = Caller {
-    agent: AGENT,
-    project: None,
-};
+const CALLER: Caller<'static> = Caller::owner(AGENT, None);
+
+/// The projects the store holds. A write does not create a project, so the tests' stores start
+/// with the ones they write to.
+const PROJECTS: &[&str] = &["Promed", "VibeIDE", "VibeIDEA", "VibeMemory"];
 
 fn memories() -> FakeMemories {
-    FakeMemories::new(STAMP)
+    let fake = FakeMemories::new(STAMP);
+    for project in PROJECTS {
+        fake.seed(project, Vec::new());
+    }
+    fake
 }
 
 /// Calls a tool and unwraps the structured half of the answer.
@@ -127,7 +132,7 @@ fn saving_writes_one_event_and_refuses_to_shadow_an_existing_record() {
     );
     assert_eq!(saved["saved"], "store-naming");
 
-    let events = fake.events.borrow();
+    let events = fake.written();
     let written = &events["VibeMemory"];
     assert_eq!(written.len(), 1, "one call, one event");
     assert!(written[0].parent.is_none(), "a first version has no parent");
@@ -245,7 +250,7 @@ fn deleting_appends_a_tombstone_and_leaves_the_versions_alone() {
     )
     .expect("delete");
 
-    let events = fake.events.borrow();
+    let events = fake.written();
     let written = &events["VibeMemory"];
     assert_eq!(
         written.len(),
@@ -301,7 +306,7 @@ fn a_search_without_a_project_looks_in_every_one_of_them() {
     let hits = found["results"].as_array().expect("array");
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0]["project"], "Promed");
-    assert_eq!(fake.projects().expect("projects").len(), 2);
+    assert_eq!(fake.projects().expect("projects"), PROJECTS);
 }
 
 #[test]
@@ -326,7 +331,7 @@ fn two_updates_in_the_same_second_are_two_versions_and_not_one() {
     )
     .expect("second update");
 
-    let events = fake.events.borrow();
+    let events = fake.written();
     let written = &events["VibeMemory"];
     let uuids: std::collections::BTreeSet<&str> =
         written.iter().map(|event| event.uuid.as_str()).collect();
@@ -365,11 +370,7 @@ fn transcript(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    fake.history
-        .borrow_mut()
-        .entry(project.to_owned())
-        .or_default()
-        .push((session.to_owned(), modified, text));
+    fake.add_transcript(project, (session.to_owned(), modified, text));
 }
 
 #[test]
@@ -497,16 +498,15 @@ fn history_narrows_to_one_project_and_survives_a_line_it_cannot_read() {
     transcript(&fake, "VibeMemory", "b", 20, &[("user", "общее слово")]);
     // A line this build cannot parse: the format is Anthropic's and changes between versions.
     // A search that dies on one unknown line is a search nobody can rely on.
-    fake.history
-        .borrow_mut()
-        .get_mut("Promed")
-        .expect("project")
-        .push((
+    fake.add_transcript(
+        "Promed",
+        (
             "broken".to_owned(),
             30,
             "не json вовсе\n{\"type\":\"user\",\"message\":{\"content\":\"общее слово\"}}"
                 .to_owned(),
-        ));
+        ),
+    );
 
     let narrowed = call(
         "history_search",
@@ -545,10 +545,7 @@ fn an_excerpt_shows_the_moment_without_handing_over_the_conversation() {
 #[test]
 fn a_write_without_a_project_goes_to_the_project_the_server_was_started_in() {
     let fake = memories();
-    let here = Caller {
-        agent: AGENT,
-        project: Some("VibeIDE"),
-    };
+    let here = Caller::owner(AGENT, Some("VibeIDE"));
     let fact = |id: &str| json!({ "id": id, "kind": "project", "description": "d", "body": "b" });
     tools::call("memory_save", &fact("from-the-ide"), &here, &fake)
         .expect("an agent in an IDE knows its folder, not the store's name for it");
@@ -598,10 +595,7 @@ fn the_handshake_tells_the_agent_which_project_it_is_in() {
     let request =
         protocol::parse(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#).expect("parse");
     let fake = memories();
-    let here = Caller {
-        agent: AGENT,
-        project: Some("VibeIDE"),
-    };
+    let here = Caller::owner(AGENT, Some("VibeIDE"));
     let told = serde_json::to_value(protocol::handle(&request, &here, &fake).expect("answer"))
         .expect("json");
     assert!(
@@ -639,9 +633,7 @@ fn a_folder_is_named_by_the_rules_and_a_missing_project_says_why() {
             },
         ),
     ] {
-        fake.directories
-            .borrow_mut()
-            .insert(directory.to_owned(), answer);
+        fake.answer_directory(directory, answer);
     }
 
     let held = call(
@@ -677,4 +669,69 @@ fn a_folder_is_named_by_the_rules_and_a_missing_project_says_why() {
 
     let refused = call("project_resolve", &json!({}), &fake).expect_err("directory is required");
     assert!(refused.contains("directory"));
+}
+
+#[test]
+fn a_token_for_some_projects_sees_and_writes_only_those() {
+    let fake = memories();
+    save_one(
+        &fake,
+        "store-naming",
+        "The name follows the git common dir.",
+    );
+    let scope = ["VibeIDE".to_owned()];
+    let narrow = Caller {
+        scope: Some(&scope),
+        ..Caller::owner(AGENT, None)
+    };
+    let fact = json!({
+        "project": "VibeIDE", "id": "ide-only", "kind": "project", "description": "d", "body": "b"
+    });
+    tools::call("memory_save", &fact, &narrow, &fake).expect("a listed project");
+
+    let all =
+        tools::call("memory_search", &json!({ "query": "" }), &narrow, &fake).expect("search");
+    let projects: Vec<&str> = all["results"]
+        .as_array()
+        .expect("array")
+        .iter()
+        .map(|hit| hit["project"].as_str().expect("project"))
+        .collect();
+    assert_eq!(
+        projects,
+        ["VibeIDE"],
+        "a search without a project stays inside the list"
+    );
+
+    let elsewhere = tools::call(
+        "memory_get",
+        &json!({ "project": "VibeMemory", "id": "store-naming" }),
+        &narrow,
+        &fake,
+    );
+    assert!(
+        elsewhere.is_err_and(|problem| problem.contains("not among the projects")),
+        "naming a project outside the list is refused, not answered empty"
+    );
+    let mut outside = fact;
+    outside["project"] = json!("VibeMemory");
+    outside["id"] = json!("outside");
+    assert!(tools::call("memory_save", &outside, &narrow, &fake).is_err());
+}
+
+#[test]
+fn a_write_to_a_project_the_store_does_not_hold_is_refused_and_names_the_near_one() {
+    let fake = memories();
+    let fact = json!({
+        "project": "vibeide", "id": "typo", "kind": "project", "description": "d", "body": "b"
+    });
+    let refused = tools::call("memory_save", &fact, &CALLER, &fake).expect_err("refused");
+    assert!(
+        refused.contains("does not create one") && refused.contains("VibeIDE"),
+        "{refused}"
+    );
+    assert!(
+        fake.written().values().all(Vec::is_empty),
+        "nothing was written anywhere"
+    );
 }

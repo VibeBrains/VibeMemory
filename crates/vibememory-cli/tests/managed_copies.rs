@@ -265,3 +265,53 @@ fn differing_copies_with_no_recorded_agreement_are_never_guessed_about() {
     );
     assert_eq!(managed_state(&layout), "conflict");
 }
+
+/// The settings of one case of `fixtures/export/settingsWithToken.json`: a synthetic token where a
+/// real one would sit.
+fn settings_with_token(case: &str) -> String {
+    let file: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fixtures/export/settingsWithToken.json"
+    ))
+    .expect("settingsWithToken.json");
+    file["cases"]
+        .as_array()
+        .expect("cases")
+        .iter()
+        .find(|entry| entry["id"] == case)
+        .and_then(|entry| entry["text"].as_str())
+        .expect("the case exists")
+        .to_owned()
+}
+
+#[test]
+fn a_copy_holding_a_token_stays_on_the_machine_until_the_token_is_taken_out() {
+    let temp = TempDir::new("managed-token");
+    let layout = layout(&temp);
+    fs::write(
+        layout.config_dir.join("settings.json"),
+        settings_with_token("envHoldsToken"),
+    )
+    .expect("local");
+
+    let done = reconcile(&layout, &layout.store(), STAMP).expect("reconcile");
+    assert_eq!(done.withheld, vec!["settings.json".to_owned()]);
+    assert!(done.pushed.is_empty(), "{done:?}");
+    assert!(
+        !layout.store().join("config/settings.json").exists(),
+        "nothing reached the store"
+    );
+    assert_eq!(
+        managed_state(&layout),
+        "conflict",
+        "`doctor` names the file and `install` leaves it alone"
+    );
+
+    fs::write(
+        layout.config_dir.join("settings.json"),
+        r#"{"theme":"dark"}"#,
+    )
+    .expect("token taken out");
+    let done = reconcile(&layout, &layout.store(), STAMP).expect("reconcile");
+    assert_eq!(done.pushed, vec!["settings.json".to_owned()]);
+    assert_eq!(store_settings(&layout), serde_json::json!({"theme":"dark"}));
+}

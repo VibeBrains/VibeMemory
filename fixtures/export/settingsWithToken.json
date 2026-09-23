@@ -1,0 +1,86 @@
+{
+  "description": "Whether a managed copy (settings.json, CLAUDE.md) holds a token a cabinet issued. Such a copy is not pushed to the store: in a synced file a token would be in the store's history and its mirror for good. Tokens here are synthetic: the secret is one repeated character, which no issued token is.",
+  "cases": [
+    {
+      "id": "envHoldsToken",
+      "provenance": "computed",
+      "note": "The likeliest way a token gets into settings.json: an env block for an MCP config that reads it from the environment. The file must stay on the machine.",
+      "text": "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(git status)\"\n    ]\n  },\n  \"env\": {\n    \"VIBEMEMORY_TOKEN\": \"vmt_7q2m9x4a_1111111111111111111111111111111111111111111\"\n  }\n}",
+      "expect": {
+        "holdsToken": true
+      }
+    },
+    {
+      "id": "hookCommandHoldsToken",
+      "provenance": "computed",
+      "note": "A hook command that calls the server with the token inline: the same file, the same leak.",
+      "text": "{\n  \"hooks\": {\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"curl -s -H 'X-Vibememory-Token: vmt_7q2m9x4a_1111111111111111111111111111111111111111111' https://example.invalid/ping\"\n          }\n        ]\n      }\n    ]\n  }\n}",
+      "expect": {
+        "holdsToken": true
+      }
+    },
+    {
+      "id": "tokenTouchingOtherText",
+      "provenance": "computed",
+      "note": "A token glued to the text before it is still a token: the check looks for the shape anywhere, not for a whole word.",
+      "text": "prefixvmt_7q2m9x4a_1111111111111111111111111111111111111111111;",
+      "expect": {
+        "holdsToken": true
+      }
+    },
+    {
+      "id": "shapeInProseIsNotAToken",
+      "provenance": "computed",
+      "note": "Words about the format are not a token: without eight characters of the id alphabet and the separator, nothing is withheld.",
+      "text": "Tokens look like vmt_<id>_<secret>; the id is eight characters.",
+      "expect": {
+        "holdsToken": false
+      }
+    },
+    {
+      "id": "idOutsideTheAlphabet",
+      "provenance": "computed",
+      "note": "No cabinet issues an id with capitals or with i, l, o, u: such a string is not one of ours.",
+      "text": "vmt_ILOU1234_1111111111111111111111111111111111111111111",
+      "expect": {
+        "holdsToken": false
+      }
+    },
+    {
+      "id": "shortIdIsNotAToken",
+      "provenance": "computed",
+      "note": "An id is exactly eight characters.",
+      "text": "vmt_7q2m_1111111111111111111111111111111111111111111",
+      "expect": {
+        "holdsToken": false
+      }
+    },
+    {
+      "id": "idWithoutSecretIsNotAToken",
+      "provenance": "computed",
+      "note": "The public id alone — as it appears in a journal line or in the cabinet — opens nothing and may travel.",
+      "text": "the token vmt_7q2m9x4a was revoked",
+      "expect": {
+        "holdsToken": false
+      }
+    },
+    {
+      "id": "legacyTokenHasNoShape",
+      "provenance": "computed",
+      "note": "The token from before the cabinet is 64 hex characters, like any digest, and cannot be told apart by its shape; it is not looked for, and the spec says so.",
+      "text": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "expect": {
+        "holdsToken": false
+      }
+    },
+    {
+      "id": "ordinarySettings",
+      "provenance": "computed",
+      "note": "Settings without a token are shared as always.",
+      "text": "{\n  \"permissions\": {\n    \"allow\": [\n      \"Bash(cargo test)\"\n    ]\n  },\n  \"model\": \"opus\"\n}",
+      "expect": {
+        "holdsToken": false
+      }
+    }
+  ]
+}

@@ -19,10 +19,7 @@ use vibememory_mcp::git_memories::{Appended, GitMemories};
 use vibememory_mcp::memories::{Memories, StoreMemories};
 use vibememory_mcp::tools::{self, Caller};
 
-const CALLER: Caller<'static> = Caller {
-    agent: "host-test",
-    project: None,
-};
+const CALLER: Caller<'static> = Caller::owner("host-test", None);
 
 /// A directory of this test, removed at the end.
 struct Temp(PathBuf);
@@ -84,6 +81,9 @@ fn host_and_machine(temp: &Temp) -> (PathBuf, PathBuf) {
     );
     git(&work, &["symbolic-ref", "HEAD", "refs/heads/main"], None);
 
+    // A project exists before memory is written to it — a session made it — because a write does
+    // not create one.
+    fs::create_dir_all(work.join("projects/Project")).expect("project");
     let local = StoreMemories::new(work.clone(), "mac-test".to_owned());
     save(
         &local,

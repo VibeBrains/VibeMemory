@@ -19,7 +19,7 @@ pub const INDEX_FILE: &str = "MEMORY.md";
 const DOCUMENT_EXTENSION: &str = "md";
 /// Keys of `metadata` this format names itself; everything else is carried untouched.
 const KNOWN_METADATA: &[&str] = &[
-    "type", "project", "status", "agent", "created", "updated", "version",
+    "type", "project", "status", "agent", "member", "created", "updated", "version",
 ];
 
 /// Fence around the frontmatter block.
@@ -147,6 +147,7 @@ fn document(record: &Record, version: &str) -> Vec<u8> {
         Some(("project", record.project.as_str())),
         status,
         Some(("agent", record.agent.as_str())),
+        record.member.as_deref().map(|member| ("member", member)),
         Some(("created", record.created_at.as_str())),
         Some(("updated", record.updated_at.as_str())),
         Some(("version", version)),
@@ -241,6 +242,10 @@ pub fn parse_document(path: &str, bytes: &[u8]) -> Result<Document, MemoryError>
         links: links_in(&body),
         body: body.trim().to_owned(),
         agent: nested.get("agent").cloned().unwrap_or_default(),
+        member: nested
+            .get("member")
+            .filter(|member| !member.is_empty())
+            .cloned(),
         created_at: nested.get("created").cloned().unwrap_or_default(),
         updated_at: nested.get("updated").cloned().unwrap_or_default(),
         id,
@@ -295,12 +300,17 @@ pub struct Import {
 /// *not* an edit either: the delete arrived with the journal, the file stayed behind. Only when
 /// the file differs from the version the delete saw did somebody write it, and then it is an edit
 /// concurrent with the delete, which keeps the record.
+///
+/// A new version is signed by whoever imports it — `agent`, and `member` when the writer is a
+/// member of a team — whatever the file said: the file names the author of the version it was
+/// projected from, and the edit is somebody else's work.
 #[must_use]
 pub fn import(
     documents: &[(String, Vec<u8>)],
     memory: &Memory,
     stamp: &str,
     agent: &str,
+    member: Option<&str>,
 ) -> Import {
     let mut import = Import::default();
     for (path, bytes) in documents {
@@ -329,6 +339,7 @@ pub fn import(
         }
         let mut record = document.record;
         agent.clone_into(&mut record.agent);
+        record.member = member.map(str::to_owned);
         stamp.clone_into(&mut record.updated_at);
         if let Some(entry) = known {
             record.created_at.clone_from(&entry.record.created_at);

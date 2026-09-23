@@ -493,7 +493,7 @@ fn link_state(link: &Path, target: &Path) -> State {
 /// owed (`Missing` — `install` performs it, the tick would too). Both sides moved, or no sync was
 /// ever recorded while the copies differ, is a conflict a person has to settle.
 fn managed_copy_state(layout: &Layout, store: &Path, name: &str) -> State {
-    use crate::managed::{ManagedState, Verdict, verdict};
+    use crate::managed::{ManagedState, Verdict, verdict, withheld_reason};
 
     let local_path = layout.config_dir.join(name);
     let store_path = store.join("config").join(name);
@@ -516,6 +516,16 @@ fn managed_copy_state(layout: &Layout, store: &Path, name: &str) -> State {
             };
         }
     };
+    // A copy that holds a token never travels, and the person has to act: a conflict, not work
+    // `install` could do.
+    if local
+        .as_deref()
+        .is_some_and(vibememory_core::token::holds_token)
+    {
+        return State::Conflict {
+            found: withheld_reason(name),
+        };
+    }
     let local_hash = local.as_deref().map(crate::sha256::hex);
     let store_hash = store.as_deref().map(crate::sha256::hex);
     let state = ManagedState::read(&layout.engine_dir);
@@ -525,6 +535,9 @@ fn managed_copy_state(layout: &Layout, store: &Path, name: &str) -> State {
         // Calling it missing would make `install` perform the same no-op for ever.
         Verdict::Nothing | Verdict::Same => State::Satisfied,
         Verdict::Pull | Verdict::Push => State::Missing,
+        Verdict::Withheld => State::Conflict {
+            found: withheld_reason(name),
+        },
         Verdict::Conflict => State::Conflict {
             found: if base.is_some() {
                 "both copies changed since the last sync; this machine's version is in the \

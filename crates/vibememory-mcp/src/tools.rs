@@ -6,8 +6,9 @@
 //! vocabulary, `project_resolve`, only reads the engine's naming rules and writes nothing.
 
 use serde_json::{Value, json};
-use vibememory_core::memory::journal::{Action, Event};
+use vibememory_core::memory::journal::{self, Action, Event, Memory};
 use vibememory_core::memory::record::{Record, RecordId, RecordKind, RecordStatus};
+use vibememory_core::naming::StoreName;
 
 use crate::memories::{DirectoryProject, Memories};
 
@@ -157,13 +158,13 @@ pub fn call(
     memories: &dyn Memories,
 ) -> ToolResult {
     match name {
-        "memory_search" => search(arguments, memories),
-        "memory_get" => get(arguments, memories),
+        "memory_search" => search(arguments, caller, memories),
+        "memory_get" => get(arguments, caller, memories),
         "memory_save" => save(arguments, caller, memories),
         "memory_update" => update(arguments, caller, memories),
         "memory_delete" => delete(arguments, caller, memories),
-        "history_search" => history_search(arguments, memories),
-        "project_resolve" => project_resolve(arguments, memories),
+        "history_search" => history_search(arguments, caller, memories),
+        "project_resolve" => project_resolve(arguments, caller, memories),
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -183,35 +184,193 @@ fn optional(arguments: &Value, field: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Who calls and from where, fixed for the life of the server.
+/// Whether a caller may write, and if not, why: the two refusals need different advice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Writes {
+    /// Writes go through.
+    Allowed,
+    /// The token was issued to read.
+    ReaderToken,
+    /// The team is read-only: its grant is over.
+    ReadOnlyTeam,
+}
+
+/// Limits a team sets on its memory; `None` is no limit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Limits {
+    /// Records of memory in one project.
+    pub max_records: Option<u64>,
+    /// Bytes of one version of a record, as it lands in the journal.
+    pub max_record_bytes: Option<u64>,
+}
+
+/// Who calls and from where, fixed for the life of a session or of one request.
 #[derive(Debug, Clone, Copy)]
 pub struct Caller<'a> {
     /// Written into every record the call creates: memory is shared between agents, so it has to
     /// say who wrote it.
     pub agent: &'a str,
+    /// The member of a team the call writes as; `None` for the store's owner.
+    pub member: Option<&'a str>,
     /// The store project of the directory the client started the server in, when it is one. A
     /// write that names no project goes there: an agent in an IDE knows its folder, not the name
     /// the store gave it.
     pub project: Option<&'a str>,
+    /// Whether the call may change memory.
+    pub writes: Writes,
+    /// Whether the call may search past sessions.
+    pub history: bool,
+    /// The projects a token was issued for; `None` is every project of the store.
+    pub scope: Option<&'a [String]>,
+    /// The team's limits.
+    pub limits: Limits,
+    /// Where the cabinet is, for refusals only the cabinet can lift.
+    pub cabinet: Option<&'a str>,
 }
 
-/// The project a write goes to: the one it named, else the one the server was started in.
-fn project_of(arguments: &Value, caller: &Caller<'_>) -> Result<String, String> {
-    optional(arguments, "project")
+impl<'a> Caller<'a> {
+    /// The store's owner on their own store: every right, every project, no limits, no member.
+    #[must_use]
+    pub const fn owner(agent: &'a str, project: Option<&'a str>) -> Self {
+        Self {
+            agent,
+            member: None,
+            project,
+            writes: Writes::Allowed,
+            history: true,
+            scope: None,
+            limits: Limits {
+                max_records: None,
+                max_record_bytes: None,
+            },
+            cabinet: None,
+        }
+    }
+}
+
+/// Refuses a change the caller has no right to, with the advice that fits the reason.
+fn may_write(caller: &Caller<'_>) -> Result<(), String> {
+    match caller.writes {
+        Writes::Allowed => Ok(()),
+        Writes::ReaderToken => Err("this token only reads: a token that writes is issued by \
+                                    the team's owner or an admin in the cabinet"
+            .to_owned()),
+        Writes::ReadOnlyTeam => Err(caller.cabinet.map_or_else(
+            || "the team is read-only: its grant is over, and the cabinet renews it".to_owned(),
+            |cabinet| {
+                format!(
+                    "the team is read-only: its grant is over, renew it in the cabinet at {cabinet}"
+                )
+            },
+        )),
+    }
+}
+
+/// Refuses a project outside the token's list, before anything is read.
+fn in_scope(project: &str, caller: &Caller<'_>) -> Result<(), String> {
+    if caller
+        .scope
+        .is_some_and(|scope| !scope.iter().any(|allowed| allowed == project))
+    {
+        return Err(format!(
+            "{project} is not among the projects this token opens"
+        ));
+    }
+    Ok(())
+}
+
+/// The projects this caller may see: the store's, narrowed to the token's list when it has one.
+fn visible(caller: &Caller<'_>, memories: &dyn Memories) -> Result<Vec<String>, String> {
+    let mut projects = memories.projects()?;
+    if let Some(scope) = caller.scope {
+        projects.retain(|project| scope.contains(project));
+    }
+    Ok(projects)
+}
+
+/// The project a write goes to: the one it named, else the one the server was started in — and
+/// only one the store already holds. A write does not create a project: on a team store a typo
+/// would otherwise start a second memory nobody reads, and on disks that ignore case two such
+/// names are one directory.
+fn project_of(
+    arguments: &Value,
+    caller: &Caller<'_>,
+    memories: &dyn Memories,
+) -> Result<String, String> {
+    let project = optional(arguments, "project")
         .or_else(|| caller.project.map(str::to_owned))
         .ok_or_else(|| {
             "project is required: this server was started outside any project of the store, so \
              name the one to write to"
                 .to_owned()
-        })
+        })?;
+    in_scope(&project, caller)?;
+    let held = memories.projects()?;
+    if held.contains(&project) {
+        return Ok(project);
+    }
+    let key = StoreName::parse(&project).ok().map(|name| name.key());
+    let near = held.iter().find(|other| {
+        key.as_ref()
+            .is_some_and(|key| StoreName::parse(other).is_ok_and(|name| name.key() == *key))
+    });
+    Err(match near {
+        Some(near) => format!(
+            "the store holds no project {project}, and a write does not create one; the store \
+             has {near}"
+        ),
+        None => format!("the store holds no project {project}, and a write does not create one"),
+    })
 }
 
-/// Which projects a call looks at: the one it named, or all of them.
-fn scope(arguments: &Value, memories: &dyn Memories) -> Result<Vec<String>, String> {
-    optional(arguments, "project").map_or_else(|| memories.projects(), |one| Ok(vec![one]))
+/// Which projects a read looks at: the one it named, or every one the caller may see.
+fn scope(
+    arguments: &Value,
+    caller: &Caller<'_>,
+    memories: &dyn Memories,
+) -> Result<Vec<String>, String> {
+    match optional(arguments, "project") {
+        Some(one) => {
+            in_scope(&one, caller)?;
+            Ok(vec![one])
+        }
+        None => visible(caller, memories),
+    }
 }
 
-fn project_resolve(arguments: &Value, memories: &dyn Memories) -> ToolResult {
+/// Refuses a version the team's limits do not allow. The names of the refusals are the ones
+/// Anthropic's memory tool uses, so an agent recognises them without being taught.
+fn within_limits(
+    caller: &Caller<'_>,
+    project: &str,
+    memory: &Memory,
+    event: &Event,
+) -> Result<(), String> {
+    let new = !memory.records.contains_key(event.id());
+    if let Some(max) = caller.limits.max_records
+        && new
+        && u64::try_from(memory.records.len()).unwrap_or(u64::MAX) >= max
+    {
+        return Err(format!(
+            "too_many_entries: {project} already holds {} memories, the team's limit is {max}; \
+             forget or merge some first",
+            memory.records.len()
+        ));
+    }
+    if let Some(max) = caller.limits.max_record_bytes {
+        let size = journal::encode(event)
+            .map_err(|error| error.to_string())?
+            .len();
+        if u64::try_from(size).unwrap_or(u64::MAX) > max {
+            return Err(format!(
+                "entry_too_large: this version takes {size} bytes, the team's limit is {max}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn project_resolve(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolResult {
     let directory = text(arguments, "directory")?;
     Ok(match memories.project_of_directory(&directory)? {
         DirectoryProject::Held { name, rule } => json!({
@@ -225,10 +384,16 @@ fn project_resolve(arguments: &Value, memories: &dyn Memories) -> ToolResult {
             "directory": directory, "project": null,
             "why": format!("the owner excluded this folder ({reason})")
         }),
+        DirectoryProject::NotVisible => json!({
+            "directory": directory, "project": null,
+            "projects": visible(caller, memories)?,
+            "why": "the store is on another machine and cannot see your disk: pass one of \
+                    `projects` as `project`"
+        }),
     })
 }
 
-fn search(arguments: &Value, memories: &dyn Memories) -> ToolResult {
+fn search(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolResult {
     let needle = optional(arguments, "query")
         .unwrap_or_default()
         .to_lowercase();
@@ -240,7 +405,7 @@ fn search(arguments: &Value, memories: &dyn Memories) -> ToolResult {
         .transpose()?;
 
     let mut found = Vec::new();
-    for project in scope(arguments, memories)? {
+    for project in scope(arguments, caller, memories)? {
         for entry in memories.load(&project)?.records.values() {
             let record = &entry.record;
             if kind.is_some_and(|wanted| wanted != record.kind)
@@ -279,9 +444,9 @@ fn matches(record: &Record, needle: &str) -> bool {
     })
 }
 
-fn get(arguments: &Value, memories: &dyn Memories) -> ToolResult {
+fn get(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolResult {
     let id = RecordId::parse(&text(arguments, "id")?).map_err(|error| error.to_string())?;
-    for project in scope(arguments, memories)? {
+    for project in scope(arguments, caller, memories)? {
         let memory = memories.load(&project)?;
         if let Some(entry) = memory.records.get(&id) {
             let record = &entry.record;
@@ -295,6 +460,7 @@ fn get(arguments: &Value, memories: &dyn Memories) -> ToolResult {
                 "body": record.body,
                 "links": record.links.iter().map(RecordId::as_str).collect::<Vec<_>>(),
                 "agent": record.agent,
+                "member": record.member,
                 "created": record.created_at,
                 "updated": record.updated_at,
                 // The version is what memory_update needs as a parent; hiding it would make every
@@ -308,10 +474,12 @@ fn get(arguments: &Value, memories: &dyn Memories) -> ToolResult {
 }
 
 fn save(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolResult {
+    may_write(caller)?;
     let agent = caller.agent;
-    let project = project_of(arguments, caller)?;
+    let project = project_of(arguments, caller, memories)?;
     let id = RecordId::parse(&text(arguments, "id")?).map_err(|error| error.to_string())?;
-    if memories.load(&project)?.records.contains_key(&id) {
+    let memory = memories.load(&project)?;
+    if memory.records.contains_key(&id) {
         return Err(format!(
             "{} already exists in {project}; change it with memory_update",
             id.as_str()
@@ -331,6 +499,7 @@ fn save(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> Tool
         body,
         status: RecordStatus::Active,
         agent: agent.to_owned(),
+        member: caller.member.map(str::to_owned),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -340,13 +509,15 @@ fn save(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> Tool
         parent: None,
         action: Action::Upsert { record },
     };
+    within_limits(caller, &project, &memory, &event)?;
     memories.append(&project, &event)?;
     Ok(json!({ "saved": id.as_str(), "version": event.uuid }))
 }
 
 fn update(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolResult {
+    may_write(caller)?;
     let agent = caller.agent;
-    let project = project_of(arguments, caller)?;
+    let project = project_of(arguments, caller, memories)?;
     let id = RecordId::parse(&text(arguments, "id")?).map_err(|error| error.to_string())?;
     let memory = memories.load(&project)?;
     let entry = memory
@@ -366,6 +537,7 @@ fn update(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> To
         record.status = RecordStatus::parse(&status).map_err(|error| error.to_string())?;
     }
     agent.clone_into(&mut record.agent);
+    record.member = caller.member.map(str::to_owned);
     record.updated_at = memories.now();
     record.validate().map_err(|error| error.to_string())?;
 
@@ -376,13 +548,15 @@ fn update(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> To
         parent: Some(entry.version.clone()),
         action: Action::Upsert { record },
     };
+    within_limits(caller, &project, &memory, &event)?;
     memories.append(&project, &event)?;
     Ok(json!({ "updated": id.as_str(), "version": event.uuid, "parent": entry.version }))
 }
 
 fn delete(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolResult {
+    may_write(caller)?;
     let agent = caller.agent;
-    let project = project_of(arguments, caller)?;
+    let project = project_of(arguments, caller, memories)?;
     let id = RecordId::parse(&text(arguments, "id")?).map_err(|error| error.to_string())?;
     let memory = memories.load(&project)?;
     let entry = memory
@@ -395,6 +569,7 @@ fn delete(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> To
         action: Action::Delete {
             id: id.clone(),
             agent: agent.to_owned(),
+            member: caller.member.map(str::to_owned),
             updated_at: memories.now(),
         },
     };
@@ -416,7 +591,14 @@ const EXCERPT: usize = 240;
 /// Newest first, and stops as soon as it has enough: the store here holds 1959 transcripts and
 /// 1.7 GiB, so reading all of them to answer one question would make the tool useless. A file is
 /// read only when the search actually reaches it.
-fn history_search(arguments: &Value, memories: &dyn Memories) -> ToolResult {
+fn history_search(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolResult {
+    if !caller.history {
+        return Err(
+            "this token cannot search past sessions: only a token of the team's owner or \
+                    of an admin can"
+                .to_owned(),
+        );
+    }
     let needle = text(arguments, "query")?.to_lowercase();
     if needle.trim().is_empty() {
         return Err("query is required: an empty search would return the whole history".to_owned());
@@ -435,7 +617,7 @@ fn history_search(arguments: &Value, memories: &dyn Memories) -> ToolResult {
     // Newest first across projects too, not project by project: "what did I say about X" is a
     // question about time, not about directories.
     let mut sessions = Vec::new();
-    for project in scope(arguments, memories)? {
+    for project in scope(arguments, caller, memories)? {
         for transcript in memories.transcripts(&project)? {
             sessions.push((transcript.modified, project.clone(), transcript.session));
         }

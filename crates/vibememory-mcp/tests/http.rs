@@ -1,4 +1,5 @@
-//! MCP over HTTP: who is let in, what is answered, and a real round trip over a socket.
+//! MCP over HTTP: who is let in, what is answered, what the journal is told, and real round trips
+//! over a socket.
 
 #![allow(
     clippy::panic,
@@ -11,12 +12,67 @@
 
 use std::io::{Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
+use std::time::Duration;
 
 use serde_json::Value;
-use vibememory_mcp::http::{self, HttpRequest, MAX_BODY, answer, parse, serve};
+use vibememory_mcp::http::{
+    self, Admission, Door, Grant, HttpRequest, MAX_BODY, Note, Visit, answer, journal_line, parse,
+    serve,
+};
 use vibememory_mcp::memories::FakeMemories;
+use vibememory_mcp::tools::{Limits, Writes};
 
-const TOKEN: &str = "test-token-0123456789abcdef";
+const TOKEN: &str = "vmt_7q2m9x4a_0123456789abcdef0123456789abcdef";
+const EXPIRED: &str = "vmt_b3c4d5e6_0123456789abcdef0123456789abcdef";
+/// What a record says about who wrote it, in the grant and in the journal.
+const TOKEN_ID: &str = "tk_7q2m9x4a";
+
+fn grant() -> Grant {
+    Grant {
+        token: TOKEN_ID.to_owned(),
+        team: "vibebrains".to_owned(),
+        member: "alice".to_owned(),
+        agent: "claude-code".to_owned(),
+        writes: Writes::Allowed,
+        history: false,
+        scope: None,
+        limits: Limits::default(),
+        cabinet: None,
+    }
+}
+
+/// A door with one token that opens it, one that did once, and a switch that shuts it for all.
+struct FakeDoor {
+    memories: FakeMemories,
+    closed: bool,
+}
+
+impl FakeDoor {
+    fn new() -> Self {
+        let memories = FakeMemories::new("2026-09-13T12:00:00Z");
+        memories.seed("VibeIDE", Vec::new());
+        Self {
+            memories,
+            closed: false,
+        }
+    }
+}
+
+impl Door for FakeDoor {
+    fn admit(&self, token: &str) -> Admission<'_> {
+        if self.closed {
+            return Admission::Closed;
+        }
+        match token {
+            TOKEN => Admission::Granted(Visit {
+                grant: grant(),
+                memories: Box::new(&self.memories),
+            }),
+            EXPIRED => Admission::Expired("tk_b3c4d5e6".to_owned()),
+            _ => Admission::Unknown,
+        }
+    }
+}
 
 fn post(body: &str, headers: &[(&str, &str)]) -> HttpRequest {
     let mut all: Vec<(String, String)> = vec![("authorization".into(), format!("Bearer {TOKEN}"))];
@@ -33,16 +89,18 @@ fn post(body: &str, headers: &[(&str, &str)]) -> HttpRequest {
     }
 }
 
-#[test]
-fn only_the_token_opens_the_door() {
-    let fake = FakeMemories::new("2026-09-13T12:00:00Z");
-    let ping = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
-    assert_eq!(answer(&post(ping, &[]), TOKEN, &fake).status, 200);
+const PING: &str = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
 
-    let mut wrong = post(ping, &[]);
-    wrong.headers[0].1 = "Bearer test-token-0123456789abcdeX".into();
-    let refused = answer(&wrong, TOKEN, &fake);
-    assert_eq!(refused.status, 401);
+#[test]
+fn only_a_token_the_door_knows_opens_it() {
+    let door = FakeDoor::new();
+    let (answered, note) = answer(&post(PING, &[]), &door);
+    assert_eq!((answered.status, note), (200, Note::Quiet));
+
+    let mut wrong = post(PING, &[]);
+    wrong.headers[0].1 = "Bearer vmt_7q2m9x4a_wrong".into();
+    let (refused, note) = answer(&wrong, &door);
+    assert_eq!((refused.status, &note), (401, &Note::Refused));
     assert!(
         refused
             .headers
@@ -50,66 +108,123 @@ fn only_the_token_opens_the_door() {
             .any(|(name, _)| *name == "WWW-Authenticate")
     );
 
-    let mut none = post(ping, &[]);
-    none.headers.clear();
-    assert_eq!(answer(&none, TOKEN, &fake).status, 401);
+    let mut bare = post(PING, &[]);
+    bare.headers.clear();
+    assert_eq!(answer(&bare, &door), (refused, Note::Refused));
 
-    // A server started without a token refuses everyone rather than admitting everyone — including
-    // a request that brings no token either, which an empty comparison would call a match.
-    assert_eq!(answer(&post(ping, &[]), "", &fake).status, 401);
-    let mut bare = post(ping, &[]);
-    bare.headers[0].1 = "Bearer ".into();
-    assert_eq!(answer(&bare, "", &fake).status, 401);
+    // A token past its time gets exactly what an unknown one gets: the answer says nothing about
+    // which it was. Only the journal knows, because a known client is not an attack.
+    let mut old = post(PING, &[]);
+    old.headers[0].1 = format!("Bearer {EXPIRED}");
+    let (expired, note) = answer(&old, &door);
+    assert_eq!(expired, answer(&wrong, &door).0);
+    assert_eq!(note, Note::Expired("tk_b3c4d5e6".to_owned()));
+}
+
+#[test]
+fn a_door_that_cannot_read_its_rights_turns_everyone_away() {
+    let door = FakeDoor {
+        closed: true,
+        ..FakeDoor::new()
+    };
+    let (answered, note) = answer(&post(PING, &[]), &door);
+    assert_eq!((answered.status, note), (503, Note::Quiet));
 }
 
 #[test]
 fn a_web_page_is_turned_away_before_anything_else() {
-    let fake = FakeMemories::new("2026-09-13T12:00:00Z");
-    let ping = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
-    let from_page = post(ping, &[("origin", "https://example.invalid")]);
-    assert_eq!(answer(&from_page, TOKEN, &fake).status, 403);
+    let door = FakeDoor::new();
+    let from_page = post(PING, &[("origin", "https://example.invalid")]);
+    assert_eq!(answer(&from_page, &door).0.status, 403);
 }
 
 #[test]
 fn only_post_to_the_endpoint_is_served_and_a_notification_gets_no_body() {
-    let fake = FakeMemories::new("2026-09-13T12:00:00Z");
+    let door = FakeDoor::new();
     let mut get = post("", &[]);
     get.method = "GET".into();
-    assert_eq!(answer(&get, TOKEN, &fake).status, 405);
+    assert_eq!(answer(&get, &door).0.status, 405);
 
     let mut elsewhere = post("{}", &[]);
-    elsewhere.path = "/admin".into();
-    assert_eq!(answer(&elsewhere, TOKEN, &fake).status, 404);
+    elsewhere.path = "/other".into();
+    assert_eq!(answer(&elsewhere, &door).0.status, 404);
 
-    let note = answer(
-        &post(
-            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
-            &[],
-        ),
-        TOKEN,
-        &fake,
+    let notification = post(
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        &[],
     );
-    assert_eq!((note.status, note.body.len()), (202, 0));
+    let (accepted, _) = answer(&notification, &door);
+    assert_eq!((accepted.status, accepted.body.len()), (202, 0));
 }
 
 #[test]
-fn the_agent_header_names_who_wrote_the_record() {
-    let fake = FakeMemories::new("2026-09-13T12:00:00Z");
+fn the_token_names_who_wrote_the_record_and_the_client_cannot_say_otherwise() {
+    let door = FakeDoor::new();
     let save = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"memory_save","arguments":{"project":"VibeIDE","id":"over-http","kind":"project","description":"d","body":"b"}}}"#;
-    let answered = answer(
-        &post(save, &[("vibememory-agent", "work-laptop")]),
-        TOKEN,
-        &fake,
-    );
+    // The header clients used to name themselves with. A name a client chooses proves nothing
+    // over HTTPS; the token is the only source of who and which agent.
+    let (answered, note) = answer(&post(save, &[("vibememory-agent", "impostor")]), &door);
     assert_eq!(answered.status, 200);
-    let events = fake.events.borrow();
-    let written = serde_json::to_value(&events["VibeIDE"][0]).unwrap();
-    assert_eq!(written["record"]["agent"], "work-laptop", "{written}");
+    let written = serde_json::to_value(&door.memories.written()["VibeIDE"][0]).unwrap();
+    assert_eq!(written["record"]["agent"], "claude-code", "{written}");
+    assert_eq!(written["record"]["member"], "alice", "{written}");
+    assert_eq!(
+        note,
+        Note::Call {
+            token: TOKEN_ID.to_owned(),
+            team: "vibebrains".to_owned(),
+            member: "alice".to_owned(),
+            agent: "claude-code".to_owned(),
+            tool: "memory_save".to_owned(),
+            project: Some("VibeIDE".to_owned()),
+            ok: true,
+        }
+    );
+}
+
+#[test]
+fn the_journal_hears_who_called_what_and_never_the_secret_or_the_text() {
+    let door = FakeDoor::new();
+    let body = "the body nobody else may read";
+    let save = format!(
+        r#"{{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{{"name":"memory_save","arguments":{{"project":"VibeIDE","id":"secret-body","kind":"project","description":"d","body":"{body}"}}}}}}"#
+    );
+    let (_, note) = answer(&post(&save, &[]), &door);
+    let line = journal_line(&note, "203.0.113.7").expect("a call is journalled");
+    assert!(
+        line.contains(TOKEN_ID) && line.contains("alice") && line.contains("memory_save"),
+        "{line}"
+    );
+    assert!(line.contains("VibeIDE") && line.contains("done"), "{line}");
+    assert!(
+        !line.contains("0123456789abcdef") && !line.contains(body),
+        "{line}"
+    );
+
+    let refused = post(
+        r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"memory_save","arguments":{"project":"Elsewhere","id":"x","kind":"project","description":"d","body":"b"}}}"#,
+        &[],
+    );
+    let line = journal_line(&answer(&refused, &door).1, "203.0.113.7").expect("journalled");
+    assert!(line.ends_with("refused"), "{line}");
+
+    // The line the fail2ban filter matches, word for word; and the expired line must not be it.
+    assert_eq!(
+        journal_line(&Note::Refused, "203.0.113.7").as_deref(),
+        Some("vibememory-mcp: refused a request without the right token from 203.0.113.7")
+    );
+    let expired =
+        journal_line(&Note::Expired("tk_b3c4d5e6".to_owned()), "203.0.113.7").expect("journalled");
+    assert!(
+        !expired.contains("refused a request without the right token"),
+        "{expired}"
+    );
+    assert_eq!(journal_line(&Note::Quiet, "203.0.113.7"), None);
 }
 
 #[test]
 fn a_request_is_read_whole_and_refused_when_it_is_too_big() {
-    let body = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+    let body = PING;
     let raw = format!(
         "POST /mcp?x=1 HTTP/1.1\r\nHost: h\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
@@ -135,22 +250,35 @@ fn a_request_is_read_whole_and_refused_when_it_is_too_big() {
     assert_eq!(parse(chunked.as_bytes()).unwrap_err().status, 411);
 }
 
-#[test]
-fn a_real_socket_gets_a_real_answer() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let address = listener.local_addr().unwrap();
-    std::thread::spawn(move || {
-        let fake = FakeMemories::new("2026-09-13T12:00:00Z");
-        serve(&listener, TOKEN, &fake);
-    });
-    let body = r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#;
-    let mut stream = TcpStream::connect(address).expect("connect");
-    write!(
-        stream,
+/// A whole request as bytes.
+fn request_bytes(body: &str) -> Vec<u8> {
+    format!(
         "POST /mcp HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     )
-    .unwrap();
+    .into_bytes()
+}
+
+/// Starts a server on a free port with `connections` places.
+fn start(connections: usize) -> std::net::SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let door = FakeDoor::new();
+        serve(&listener, &door, connections);
+    });
+    address
+}
+
+#[test]
+fn a_real_socket_gets_a_real_answer() {
+    let address = start(http::DEFAULT_CONNECTIONS);
+    let mut stream = TcpStream::connect(address).expect("connect");
+    stream
+        .write_all(&request_bytes(
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/list"}"#,
+        ))
+        .unwrap();
     let mut reply = String::new();
     stream.read_to_string(&mut reply).unwrap();
     assert!(reply.starts_with("HTTP/1.1 200 OK\r\n"), "{reply}");
@@ -162,6 +290,41 @@ fn a_real_socket_gets_a_real_answer() {
                 == vibememory_mcp::tools::catalogue().as_array().map(Vec::len)),
         "{json}"
     );
+}
+
+#[test]
+fn the_gate_serves_as_many_connections_as_it_has_places_and_the_next_one_waits() {
+    let address = start(1);
+    // The first client takes the only place and sends half a request.
+    let whole = request_bytes(PING);
+    let mut first = TcpStream::connect(address).expect("connect");
+    first.write_all(&whole[..whole.len() / 2]).unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+
+    // The second sends everything and is not answered while the first holds the place.
+    let mut second = TcpStream::connect(address).expect("connect");
+    second.write_all(&whole).unwrap();
+    second
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .unwrap();
+    let mut early = [0u8; 16];
+    let waited = second.read(&mut early);
+    assert!(
+        waited.is_err(),
+        "the second connection was answered while the only place was taken: {waited:?}"
+    );
+
+    // The first finishes, is answered, and gives the place back; then the second is answered.
+    first.write_all(&whole[whole.len() / 2..]).unwrap();
+    let mut reply = String::new();
+    first.read_to_string(&mut reply).unwrap();
+    assert!(reply.starts_with("HTTP/1.1 200 OK\r\n"), "{reply}");
+    second
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut reply = String::new();
+    second.read_to_string(&mut reply).unwrap();
+    assert!(reply.starts_with("HTTP/1.1 200 OK\r\n"), "{reply}");
 }
 
 #[test]

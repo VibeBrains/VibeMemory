@@ -50,6 +50,9 @@ pub enum Action {
         id: RecordId,
         /// Which agent asked.
         agent: String,
+        /// Which member asked, as for [`Record::member`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        member: Option<String>,
         /// When, in the writer's clock.
         updated_at: String,
     },

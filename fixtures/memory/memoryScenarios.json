@@ -695,6 +695,133 @@
           }
         ]
       }
+    },
+    {
+      "id": "memberIsProjectedBesideTheAgent",
+      "provenance": "computed",
+      "note": "A version written by a member of a team says whose it is, next to the agent: a team shares one memory, and the agent alone does not say who wrote it. Read back untouched, the file writes nothing.",
+      "journal": [
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"team-conventions\", \"kind\": \"project\", \"project\": \"VibeIDE\", \"description\": \"how the team names branches\", \"body\": \"Branches are named after the ticket.\", \"links\": [], \"agent\": \"claude-code\", \"member\": \"alice\", \"createdAt\": \"2026-09-23T10:00:00Z\", \"updatedAt\": \"2026-09-23T10:00:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "team-conventions",
+            "version": "e1",
+            "rivals": []
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "files": [
+          {
+            "name": "team-conventions.md",
+            "text": "---\nname: team-conventions\ndescription: how the team names branches\nmetadata:\n  type: project\n  project: VibeIDE\n  agent: claude-code\n  member: alice\n  created: 2026-09-23T10:00:00Z\n  updated: 2026-09-23T10:00:00Z\n  version: e1\n---\n\nBranches are named after the ticket.\n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "deleteByMemberIsRead",
+      "provenance": "computed",
+      "note": "A delete made by a member names the member, and the fold reads it as any other delete: the record is forgotten and no line is unreadable.",
+      "journal": [
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"team-conventions\", \"kind\": \"project\", \"project\": \"VibeIDE\", \"description\": \"how the team names branches\", \"body\": \"Branches are named after the ticket.\", \"links\": [], \"agent\": \"claude-code\", \"member\": \"alice\", \"createdAt\": \"2026-09-23T10:00:00Z\", \"updatedAt\": \"2026-09-23T10:00:00Z\"}}",
+        "{\"uuid\": \"d1\", \"parent\": \"e1\", \"action\": \"delete\", \"id\": \"team-conventions\", \"agent\": \"claude-code\", \"member\": \"alice\", \"updatedAt\": \"2026-09-23T10:10:00Z\"}"
+      ],
+      "expect": {
+        "records": [],
+        "forgotten": [
+          "team-conventions"
+        ],
+        "unreadable": 0,
+        "files": [
+          {
+            "name": "MEMORY.md",
+            "text": "# Memory\n\nNothing remembered yet.\n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "importSignsTheVersionWithTheImporter",
+      "provenance": "computed",
+      "note": "The owner edited the projection of a version a member wrote. The new version is the owner's: the file still says `member: alice`, but that names the author of the version it was projected from, not of the edit.",
+      "journal": [
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"team-conventions\", \"kind\": \"project\", \"project\": \"VibeIDE\", \"description\": \"how the team names branches\", \"body\": \"Branches are named after the ticket.\", \"links\": [], \"agent\": \"claude-code\", \"member\": \"alice\", \"createdAt\": \"2026-09-23T10:00:00Z\", \"updatedAt\": \"2026-09-23T10:00:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "team-conventions",
+            "version": "e1",
+            "rivals": []
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "import": {
+          "stamp": "2026-09-23T12:00:00Z",
+          "agent": "mac-main",
+          "documents": [
+            {
+              "name": "team-conventions.md",
+              "text": "---\nname: team-conventions\ndescription: how the team names branches\nmetadata:\n  type: project\n  project: VibeIDE\n  agent: claude-code\n  member: alice\n  created: 2026-09-23T10:00:00Z\n  updated: 2026-09-23T10:00:00Z\n  version: e1\n---\n\nBranches are named after the ticket, and the owner reviews them.\n"
+            }
+          ],
+          "events": [
+            {
+              "uuid": "2026-09-23T12:00:00Z-team-conventions",
+              "parent": "e1",
+              "id": "team-conventions",
+              "bodyContains": "the owner reviews them",
+              "createdAt": "2026-09-23T10:00:00Z"
+            }
+          ],
+          "rejected": []
+        }
+      }
+    },
+    {
+      "id": "importByMemberSignsWithTheMember",
+      "provenance": "computed",
+      "note": "A member's engine imports an edit to a record the owner wrote: the new version names the member who made it.",
+      "journal": [
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"team-conventions\", \"kind\": \"project\", \"project\": \"VibeIDE\", \"description\": \"how the team names branches\", \"body\": \"Branches are named after the ticket.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-23T10:00:00Z\", \"updatedAt\": \"2026-09-23T10:00:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "team-conventions",
+            "version": "e1",
+            "rivals": []
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "import": {
+          "stamp": "2026-09-23T12:00:00Z",
+          "agent": "bob-laptop",
+          "member": "bob",
+          "documents": [
+            {
+              "name": "team-conventions.md",
+              "text": "---\nname: team-conventions\ndescription: how the team names branches\nmetadata:\n  type: project\n  project: VibeIDE\n  agent: claude-code\n  created: 2026-09-23T10:00:00Z\n  updated: 2026-09-23T10:00:00Z\n  version: e1\n---\n\nBranches are named after the ticket, lowercase.\n"
+            }
+          ],
+          "events": [
+            {
+              "uuid": "2026-09-23T12:00:00Z-team-conventions",
+              "parent": "e1",
+              "id": "team-conventions",
+              "bodyContains": "lowercase",
+              "createdAt": "2026-09-23T10:00:00Z",
+              "member": "bob"
+            }
+          ],
+          "rejected": []
+        }
+      }
     }
   ]
 }

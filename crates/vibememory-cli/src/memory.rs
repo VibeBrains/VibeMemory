@@ -110,7 +110,9 @@ pub fn sync(
 
     // 1. Edits first: what the projection holds now becomes versions before anything is written.
     let documents = read_documents(memory_dir)?;
-    let mut import = markdown::import(&documents, &memory, stamp, agent);
+    // The engine writes as the store's owner, and a version without a member is the owner's: a
+    // personal store has one author.
+    let mut import = markdown::import(&documents, &memory, stamp, agent, None);
     // The file never says which project it belongs to — it does not have to, it lives inside one.
     // A record does have to say: over MCP it arrives without a path, and "which project is this
     // memory about" then has no other answer.

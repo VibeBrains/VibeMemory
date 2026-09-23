@@ -63,6 +63,29 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// The secrets of the cabinet tokens in `text` that are not synthetic. A fixture token keeps the
+/// real shape — prefix, id, separator — so the code that looks for tokens is tested on the real
+/// thing; its secret is one character repeated, which no issued token ever is.
+fn real_token_secrets(text: &str) -> Vec<String> {
+    text.split(vibememory_core::token::PREFIX)
+        .skip(1)
+        .filter_map(|rest| rest.split_once('_'))
+        .filter(|(id, _)| vibememory_core::token::is_id(id))
+        .map(|(_, secret)| {
+            secret
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+                .collect::<String>()
+        })
+        .filter(|secret| {
+            let mut characters = secret.chars();
+            !characters
+                .next()
+                .is_some_and(|first| characters.all(|c| c == first))
+        })
+        .collect()
+}
+
 /// An ssh-ed25519 blob whose key bytes are all one value: the form every fixture key must have.
 fn is_synthetic_ed25519(base64: &str) -> bool {
     let Some(blob) = base64_decode(base64) else {
@@ -144,6 +167,11 @@ fn fixtures_carry_nothing_that_must_stay_on_the_machine() {
                 ));
             }
         }
+        for secret in real_token_secrets(&text) {
+            failures.push(format!(
+                "{name}: a vmt_ token with the secret {secret:.6}… is not synthetic"
+            ));
+        }
         // Transcript fixtures are scrubbed, and the scrubber gives every one of them the same
         // synthetic session: a real one would mean an unscrubbed line slipped through.
         if file
@@ -176,6 +204,16 @@ fn fixtures_carry_nothing_that_must_stay_on_the_machine() {
             "AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERES"
         ),
         "the synthetic-key rule accepts a key whose last byte differs"
+    );
+
+    assert!(
+        real_token_secrets("vmt_7q2m9x4a_1111111111 and vmt_<id>_<secret>").is_empty(),
+        "the synthetic-token rule does not accept its own sample"
+    );
+    assert_eq!(
+        real_token_secrets("vmt_7q2m9x4a_1111111112"),
+        ["1111111112"],
+        "the synthetic-token rule accepts a secret whose last character differs"
     );
 
     assert!(

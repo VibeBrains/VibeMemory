@@ -1,9 +1,9 @@
-//! The snapshot fixtures and the spec they are written against.
+//! The snapshot fixtures, the spec they are written against, and the checker that enforces it.
 //!
 //! `fixtures/access/accessSnapshots.json` is the contract the memory server and the cabinet are both
-//! built to. Until the checker exists (phase 1), this gate keeps the fixtures and the spec from
-//! drifting apart: every case is well formed and names a code the spec defines, and every code the
-//! spec defines has a case. When `access check` lands, the same cases are run through it.
+//! built to. Three things must agree: every case is well formed and names a code the spec defines,
+//! every code the spec defines has a case, and the checker answers every case with its code — the
+//! first rule broken, in the spec's order.
 
 // The gate reads the repository on purpose.
 #![allow(
@@ -20,6 +20,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use serde_json::{Map, Value};
+use vibememory_mcp::access;
 
 /// The only code that cannot have a case: a file that cannot be read has no content to patch.
 const CODE_WITHOUT_CASE: &str = "snapshotUnreadable";
@@ -97,22 +98,35 @@ fn every_case_is_well_formed_and_every_code_has_a_case() {
         if case["note"].as_str().is_none_or(str::is_empty) {
             failures.push(format!("{id}: note"));
         }
-        match (case.get("patch"), case.get("raw")) {
+        let bytes = match (case.get("patch"), case.get("raw")) {
             (Some(patch), None) => {
                 let mut snapshot = base.clone();
                 merge_patch(&mut snapshot, patch);
                 if !snapshot.is_object() {
                     failures.push(format!("{id}: the patch does not leave a snapshot object"));
                 }
+                serde_json::to_vec(&snapshot).expect("a JSON value encodes")
             }
-            (None, Some(Value::String(_))) => {}
-            _ => failures.push(format!("{id}: exactly one of `patch` or `raw` (text)")),
-        }
+            (None, Some(Value::String(raw))) => raw.clone().into_bytes(),
+            _ => {
+                failures.push(format!("{id}: exactly one of `patch` or `raw` (text)"));
+                continue;
+            }
+        };
         let code = case["expect"]["code"].as_str().unwrap_or_default();
         if code == "ok" || codes.contains(code) {
             covered.insert(code.to_owned());
         } else {
             failures.push(format!("{id}: code {code:?} is not in the spec"));
+        }
+        let answered = match access::check(&bytes) {
+            Ok(_) => "ok".to_owned(),
+            Err(refusal) => format!("{} ({})", refusal.code, refusal.detail),
+        };
+        if answered.split(' ').next() != Some(code) {
+            failures.push(format!(
+                "{id}: the checker answered {answered}, expected {code}"
+            ));
         }
     }
     for code in &codes {

@@ -67,6 +67,20 @@ pub enum Verdict {
     Push,
     /// Both moved since the last sync — or there is no record of one and they differ.
     Conflict,
+    /// This machine's copy holds an issued token: it stays on this machine, whatever the hashes
+    /// say. Pushed, the token would be in the store's history and its mirror for good.
+    Withheld,
+}
+
+/// Why a managed copy holding a token is not shared, and what to do instead: a client is given its
+/// token in `~/.claude.json`, which the engine never copies.
+#[must_use]
+pub fn withheld_reason(name: &str) -> String {
+    format!(
+        "{name} holds a vibememory token (vmt_…), so it is not copied to the store; register the \
+         server with `claude mcp add -s user` — that goes to ~/.claude.json, which the engine never \
+         copies — and take the token out of {name}"
+    )
 }
 
 /// Decides from the hashes of the shared form on each side and the last-synced base.
@@ -98,6 +112,8 @@ pub struct Reconciled {
     pub pulled: Vec<String>,
     /// Files both sides changed; left as they are, this machine's version in the quarantine.
     pub conflicting: Vec<String>,
+    /// Files that hold a token and stay on this machine.
+    pub withheld: Vec<String>,
 }
 
 /// Reconciles every managed file, recording the new base for each one that ends up agreed.
@@ -119,6 +135,7 @@ pub fn reconcile(layout: &Layout, store: &Path, stamp: &str) -> Result<Reconcile
             Verdict::Push => done.pushed.push((*name).to_owned()),
             Verdict::Pull => done.pulled.push((*name).to_owned()),
             Verdict::Conflict => done.conflicting.push((*name).to_owned()),
+            Verdict::Withheld => done.withheld.push((*name).to_owned()),
             Verdict::Same | Verdict::Nothing => {}
         }
     }
@@ -148,6 +165,14 @@ pub fn reconcile_one(
     let local_shared = local
         .as_deref()
         .map(|bytes| for_the_store(&local_path, bytes));
+    // Before any hash: nothing is written anywhere and the base stays where it was, so the file
+    // is reconciled as usual the moment the token is taken out.
+    if local_shared
+        .as_deref()
+        .is_some_and(vibememory_core::token::holds_token)
+    {
+        return Ok(Verdict::Withheld);
+    }
     let store_shared = read_optional(&store_path)?.map(|bytes| for_the_store(&store_path, &bytes));
 
     let local_hash = local_shared.as_deref().map(crate::sha256::hex);
@@ -199,6 +224,8 @@ pub fn reconcile_one(
                 crate::memory::quarantine(&layout.engine_dir, &format!("{name}-{stamp}"), &bytes)?;
             }
         }
+        // Decided before the hashes, above; `verdict` never answers it.
+        Verdict::Withheld => {}
     }
     Ok(decision)
 }

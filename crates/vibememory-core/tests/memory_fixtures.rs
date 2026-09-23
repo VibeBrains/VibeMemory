@@ -10,7 +10,7 @@
 
 use serde::Deserialize;
 use vibememory_core::memory::markdown::{self, Import};
-use vibememory_core::memory::{Memory, RecordId, fold, journal};
+use vibememory_core::memory::{Event, Memory, RecordId, fold, journal};
 
 const SCENARIOS: &str = include_str!("../../../fixtures/memory/memoryScenarios.json");
 
@@ -80,6 +80,9 @@ struct ExpectedFile {
 struct ExpectedImport {
     stamp: String,
     agent: String,
+    /// The member the import is made by; absent for the store's owner.
+    #[serde(default)]
+    member: Option<String>,
     /// Read the projection back untouched instead of listing documents.
     #[serde(default)]
     use_projection: bool,
@@ -104,6 +107,9 @@ struct ExpectedEvent {
     /// which is what every case written before the status existed expects.
     #[serde(default = "active_status")]
     status: String,
+    /// The member the event's record names. Absent means none.
+    #[serde(default)]
+    member: Option<String>,
 }
 
 fn active_status() -> String {
@@ -127,6 +133,77 @@ fn read_journal(lines: &[String]) -> Memory {
     fold(&events, unreadable)
 }
 
+/// One event an import wrote, against the one the case expects.
+fn check_event(
+    label: &str,
+    got: &Event,
+    want: &ExpectedEvent,
+    expected: &ExpectedImport,
+    failures: &mut Vec<String>,
+) {
+    if got.uuid != want.uuid {
+        failures.push(format!(
+            "{label}: event uuid {}, expected {}",
+            got.uuid, want.uuid
+        ));
+    }
+    if got.parent != want.parent {
+        failures.push(format!(
+            "{label}: parent {:?}, expected {:?}",
+            got.parent, want.parent
+        ));
+    }
+    if got.id().as_str() != want.id {
+        failures.push(format!(
+            "{label}: event about {}, expected {}",
+            got.id().as_str(),
+            want.id
+        ));
+    }
+    let vibememory_core::memory::Action::Upsert { record } = &got.action else {
+        failures.push(format!("{label}: expected an upsert"));
+        return;
+    };
+    if !record.body.contains(&want.body_contains) {
+        failures.push(format!(
+            "{label}: body does not contain {:?}",
+            want.body_contains
+        ));
+    }
+    if record.created_at != want.created_at {
+        failures.push(format!(
+            "{label}: createdAt {}, expected {}",
+            record.created_at, want.created_at
+        ));
+    }
+    if record.agent != expected.agent || record.updated_at != expected.stamp {
+        failures.push(format!(
+            "{label}: the event does not carry the caller's agent and stamp"
+        ));
+    }
+    if record.status.as_str() != want.status {
+        failures.push(format!(
+            "{label}: status {}, expected {}",
+            record.status.as_str(),
+            want.status
+        ));
+    }
+    if record.member != want.member {
+        failures.push(format!(
+            "{label}: member {:?}, expected {:?}",
+            record.member, want.member
+        ));
+    }
+    // Every event must survive the journal round trip, or it cannot be written at all.
+    let line = journal::encode(got).expect("event encodes");
+    let (parsed, unreadable) = journal::parse(&line);
+    if parsed.as_slice() != std::slice::from_ref(got) || !unreadable.is_empty() {
+        failures.push(format!(
+            "{label}: the event does not survive being written and read back"
+        ));
+    }
+}
+
 fn check_import(
     label: &str,
     memory: &Memory,
@@ -146,7 +223,13 @@ fn check_import(
         events,
         rejected,
         stale,
-    } = markdown::import(&documents, memory, &expected.stamp, &expected.agent);
+    } = markdown::import(
+        &documents,
+        memory,
+        &expected.stamp,
+        &expected.agent,
+        expected.member.as_deref(),
+    );
 
     if events.len() != expected.events.len() {
         failures.push(format!(
@@ -156,61 +239,7 @@ fn check_import(
         ));
     }
     for (got, want) in events.iter().zip(&expected.events) {
-        if got.uuid != want.uuid {
-            failures.push(format!(
-                "{label}: event uuid {}, expected {}",
-                got.uuid, want.uuid
-            ));
-        }
-        if got.parent != want.parent {
-            failures.push(format!(
-                "{label}: parent {:?}, expected {:?}",
-                got.parent, want.parent
-            ));
-        }
-        if got.id().as_str() != want.id {
-            failures.push(format!(
-                "{label}: event about {}, expected {}",
-                got.id().as_str(),
-                want.id
-            ));
-        }
-        let vibememory_core::memory::Action::Upsert { record } = &got.action else {
-            failures.push(format!("{label}: expected an upsert"));
-            continue;
-        };
-        if !record.body.contains(&want.body_contains) {
-            failures.push(format!(
-                "{label}: body does not contain {:?}",
-                want.body_contains
-            ));
-        }
-        if record.created_at != want.created_at {
-            failures.push(format!(
-                "{label}: createdAt {}, expected {}",
-                record.created_at, want.created_at
-            ));
-        }
-        if record.agent != expected.agent || record.updated_at != expected.stamp {
-            failures.push(format!(
-                "{label}: the event does not carry the caller's agent and stamp"
-            ));
-        }
-        if record.status.as_str() != want.status {
-            failures.push(format!(
-                "{label}: status {}, expected {}",
-                record.status.as_str(),
-                want.status
-            ));
-        }
-        // Every event must survive the journal round trip, or it cannot be written at all.
-        let line = journal::encode(got).expect("event encodes");
-        let (parsed, unreadable) = journal::parse(&line);
-        if parsed.as_slice() != std::slice::from_ref(got) || !unreadable.is_empty() {
-            failures.push(format!(
-                "{label}: the event does not survive being written and read back"
-            ));
-        }
+        check_event(label, got, want, expected, failures);
     }
     let codes: Vec<(String, String)> = rejected
         .iter()
@@ -340,7 +369,13 @@ fn check_projection(label: &str, memory: &Memory, expect: &Expect, failures: &mu
     }
     // Whatever the case says, a projection read straight back must produce nothing: the tick runs
     // every two minutes and may not write a version each time.
-    let untouched = markdown::import(&projection.files, memory, "2026-01-01T00:00:00Z", "gate");
+    let untouched = markdown::import(
+        &projection.files,
+        memory,
+        "2026-01-01T00:00:00Z",
+        "gate",
+        None,
+    );
     if !untouched.events.is_empty() {
         failures.push(format!(
             "{label}: reading back an untouched projection wrote {} events",

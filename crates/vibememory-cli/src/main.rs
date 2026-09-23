@@ -912,6 +912,12 @@ fn report_tick(ticked: &vibememory_cli::tick::Ticked, max_deletions: usize) {
         }
     }
     let managed = &ticked.managed;
+    for name in &managed.withheld {
+        println!(
+            "managed copies: {}",
+            vibememory_cli::managed::withheld_reason(name)
+        );
+    }
     if !managed.pushed.is_empty() || !managed.pulled.is_empty() || !managed.conflicting.is_empty() {
         println!(
             "managed copies: {} pushed, {} pulled, {} conflicting{}",
