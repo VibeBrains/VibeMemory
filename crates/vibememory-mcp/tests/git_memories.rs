@@ -64,6 +64,29 @@ fn git(dir: &Path, args: &[&str], date: Option<&str>) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
+/// The root of a repository made read-only for as long as it is held, and writable again after,
+/// so that the directory of the test can be removed. Unix only: the host is Linux, and its rights
+/// are what this imitates.
+#[cfg(unix)]
+struct ReadOnlyRoot(PathBuf);
+
+#[cfg(unix)]
+impl ReadOnlyRoot {
+    fn new(repo: &Path) -> Self {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(repo, fs::Permissions::from_mode(0o555)).expect("read-only");
+        Self(repo.to_path_buf())
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ReadOnlyRoot {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
+    }
+}
+
 /// A bare store and a machine's working copy of it, with memory and two sessions of different ages.
 fn host_and_machine(temp: &Temp) -> (PathBuf, PathBuf) {
     let bare = temp.0.join("store.git");
@@ -185,6 +208,11 @@ fn a_write_on_the_host_is_a_commit_a_machine_fetches() {
     let host = GitMemories::new(bare.clone(), "host".to_owned());
     let before = git(&bare, &["rev-parse", "main"], None);
 
+    // As on the host: the writer may add objects and move refs, and nothing else — the root of the
+    // repository, with its `config` and `hooks/`, is the owner's. A write that puts anything there,
+    // a temporary index say, is refused.
+    #[cfg(unix)]
+    let _root = ReadOnlyRoot::new(&bare);
     save(
         &host,
         "Project",

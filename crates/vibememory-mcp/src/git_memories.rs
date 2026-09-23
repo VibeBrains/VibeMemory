@@ -34,7 +34,7 @@ pub struct GitMemories {
 }
 
 /// Names the temporary index of each write. One per process: two requests of one server write at
-/// once, each with its own index file in the same repository.
+/// once, each with its own index file.
 fn next_index() -> u64 {
     static INDEXES: AtomicU64 = AtomicU64::new(0);
     INDEXES.fetch_add(1, Ordering::Relaxed)
@@ -158,7 +158,9 @@ impl GitMemories {
         content.extend_from_slice(line);
         let blob = text_of(&self.git(&["hash-object", "-w", "--stdin"], Some(&content), &[])?);
 
-        let index = self.repo.join(format!(
+        // Outside the repository: on the host the server writes as a user who may add objects and
+        // move refs there and nothing else — its `config` and `hooks/` are the owner's.
+        let index = std::env::temp_dir().join(format!(
             "vibememory-mcp-index-{}-{}",
             std::process::id(),
             next_index()
@@ -186,24 +188,64 @@ impl GitMemories {
                 ("GIT_COMMITTER_EMAIL", email.as_str()),
             ];
             let commit = self.text(&["commit-tree", &tree, "-p", old, "-m", message], &identity)?;
-            let branch = format!("refs/heads/{BRANCH}");
             // The old value makes this a compare-and-swap: a push that landed in between keeps
             // its commit, and this write is done again on top of it.
-            if self
-                .git(&["update-ref", &branch, &commit, old], None, &[])
-                .is_ok()
-            {
+            let Err(why) = self.move_branch(&commit, old) else {
                 return Ok(Appended::Committed(commit));
-            }
+            };
             let now = self.text(&["rev-parse", "--verify", BRANCH], &[])?;
             if now == old {
-                Err(format!("git refused to move {BRANCH} to {commit}"))
+                Err(format!("git refused to move {BRANCH} to {commit}: {why}"))
             } else {
                 Ok(Appended::Moved)
             }
         })();
         let _ = std::fs::remove_file(&index);
         attempt
+    }
+
+    /// Moves the branch from `old` to `new`, and only if it is still at `old`.
+    ///
+    /// Through a `HEAD` of its own. Git locks `HEAD` whenever it moves the branch `HEAD` names, and
+    /// the lock is created beside `HEAD`, at the root of the repository — which on the host is the
+    /// owner's and closed to the server, because `config` and `hooks/` live there. A linked
+    /// worktree's directory, holding its own `HEAD` and a `commondir` naming the repository, takes
+    /// that lock instead; the branch itself is locked and moved in the repository's `refs/`, the
+    /// same way every push moves it, so a push and a write still exclude each other.
+    fn move_branch(&self, new: &str, old: &str) -> Result<(), String> {
+        let repo = std::fs::canonicalize(&self.repo)
+            .map_err(|error| format!("{}: {error}", self.repo.display()))?;
+        let own = std::env::temp_dir().join(format!(
+            "vibememory-mcp-head-{}-{}",
+            std::process::id(),
+            next_index()
+        ));
+        let moved = (|| -> Result<(), String> {
+            std::fs::create_dir(&own).map_err(|error| format!("{}: {error}", own.display()))?;
+            std::fs::write(own.join("HEAD"), format!("ref: refs/heads/{BRANCH}\n"))
+                .map_err(|error| error.to_string())?;
+            std::fs::write(own.join("commondir"), format!("{}\n", repo.display()))
+                .map_err(|error| error.to_string())?;
+            // Seen through a worktree, the repository is not bare to git, and git would keep a
+            // reflog in its `logs/` — one more thing written at the root.
+            let output = Command::new("git")
+                .args(["-c", "core.logAllRefUpdates=false", "update-ref"])
+                .arg(format!("refs/heads/{BRANCH}"))
+                .args([new, old])
+                .env("GIT_DIR", &own)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .output()
+                .map_err(|error| format!("git could not be started: {error}"))?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+            }
+        })();
+        let _ = std::fs::remove_dir_all(&own);
+        moved
     }
 }
 
