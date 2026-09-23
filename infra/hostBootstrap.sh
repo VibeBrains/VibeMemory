@@ -115,12 +115,13 @@ member vmgit vibememory || sudo usermod -aG vibememory vmgit
 member vmgit vmaccess || sudo usermod -aG vmaccess vmgit
 member vmcab vmaccess || sudo usermod -aG vmaccess vmcab
 
-# owner:group:mode for each directory; created when missing, corrected when different.
+# owner:group:mode for each directory; created when missing, corrected when different. Looked at
+# with sudo: some of these live in homes the owner's account cannot enter (vmgit's is 700).
 place() {
   local path="$1" owner="$2" group="$3" mode="$4"
-  [ -d "$path" ] || sudo mkdir -p "$path"
-  [ "$(stat -c %U:%G "$path")" = "$owner:$group" ] || sudo chown "$owner:$group" "$path"
-  [ "$(stat -c %a "$path")" = "$mode" ] || sudo chmod "$mode" "$path"
+  sudo test -d "$path" || sudo mkdir -p "$path"
+  [ "$(sudo stat -c %U:%G "$path")" = "$owner:$group" ] || sudo chown "$owner:$group" "$path"
+  [ "$(sudo stat -c %a "$path")" = "$mode" ] || sudo chmod "$mode" "$path"
 }
 place /srv/vibememory root root 755
 place /srv/vibememory/bin root root 755

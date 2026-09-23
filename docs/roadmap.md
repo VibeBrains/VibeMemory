@@ -937,7 +937,25 @@
   секрета, поток на соединение под семафором. Сервер работает под `vmgit`; git запирал `HEAD.lock` в
   закрытом корне стора — `main` двигается через свой `HEAD`. Копия `settings.json` с токеном в стор не
   едет. Все гейты вживую. [knowledge](knowledge/design/hostWrites.md).
-- [ ] Кабинет, команды, роли, токены per member × agent, биллинг — фазы 2–6 по плану выше.
+- [x] **Фаза 2: вход ключом машины и `pre-receive`** — ✅ (2026-09-23, next) каждая строка
+  `authorized_keys` у `vmgit` — `restrict` и `vibememory-mcp shell <ключ>`: clone и fetch стора своей
+  команды (выгрузка `memory`-стора — только владельцу и админу), push в `sync`-команду, сервер памяти
+  команды по ssh, `status` только по командам ключа. Push проверяет хук: только `main`, только
+  `projects/` и каталог своей машины, резерв диска и квота, `receive.fsckObjects`. Коды отказов первой
+  строкой stderr; строка журнала хоста — только в syslog. Сквозной тест на Mac: clone и push через
+  подставной ssh с настоящим хуком. [спека](manuals/hostShellSpec.md),
+  [knowledge](knowledge/design/forcedCommandShell.md).
+- [x] **Фаза 2: применение снимка и отчёт хоста** — ✅ (2026-09-23, next) `access-apply` по `.path`
+  создаёт сторы команд с первым коммитом `.gitattributes`, сверяет его в живых, переименовывает
+  удалённые, не трогает сирот и ничего не удаляет; пишет `authorized_keys`, `applied.json` и
+  `host.json`, повторяет проход, если снимок сменился на ходу. Отчёт — раз в час, ночная упаковка
+  сторов команд — тем же `storeRepack.sh --teams`. Все гейты вживую, хост возвращён к `personal`.
+  [knowledge](knowledge/design/teamRepoLifecycle.md).
+- [x] **Фаза 2: бэкап сторов memory-команд** — ✅ (2026-09-23, next) `infra/backupSetup.sh`: ключ age
+  на Mac, приватный `VibeBrains/VibeMemoryBackup`, деплой-ключ `vmgit`; ночной `hostBackup.sh` кладёт
+  бандлы под age одним коммитом без истории. Бэкап тестовой команды расшифрован и прочитан на Mac.
+  [мануал](manuals/hostSetup.md).
+- [ ] Кабинет, команды, роли, токены per member × agent, биллинг — фазы 3–6 по плану выше.
 
 ## Открытое
 
