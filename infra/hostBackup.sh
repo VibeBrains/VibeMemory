@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Nightly encrypted backup of the stores that exist nowhere else: the stores of the memory teams,
-# whose members keep no clone. (A sync team is backed up by every member's clone.)
+# Nightly encrypted backup of what exists nowhere else: the stores of the memory teams, whose
+# members keep no clone (a sync team is backed up by every member's clone), and the cabinet's
+# database.
 #
 #   hostBackup.sh <remote>          e.g. memoryBackup:VibeBrains/VibeMemoryBackup.git
 #
@@ -12,7 +13,10 @@
 # opens it. The host cannot read its own backups.
 #
 # The list of memory teams comes from the access snapshot through the server binary, which checks
-# the snapshot first: a backup of a guessed list would look complete and not be.
+# the snapshot first: a backup of a guessed list would look complete and not be. The database is
+# dumped by vmgit's own Postgres role: peer authentication, read-only rights, no password anywhere.
+# A host without the cabinet's database yet has nothing to dump; once it exists, a failed dump fails
+# the backup.
 set -euo pipefail
 
 readonly SERVER_BIN=/srv/vibememory/bin/vibememory-mcp
@@ -22,6 +26,7 @@ readonly RECIPIENT=/srv/vibememory/backup/recipient.txt
 # Read by the host's report: the cabinet raises an alarm when the backup is older than a day.
 readonly REPORT=/srv/vibememory/access/backup.json
 readonly TAG=vibememory-backup
+readonly DATABASE=cabinet
 
 say() { logger -t "$TAG" -- "$*"; }
 fail() { say "failed: $*"; printf 'hostBackup.sh: %s\n' "$*" >&2; exit 1; }
@@ -49,18 +54,33 @@ for slug in $slugs; do
   count=$((count + 1))
 done
 
+dumped=0
+if [ "$(psql -d postgres -tAXc "select 1 from pg_database where datname = '$DATABASE'" 2>/dev/null)" = 1 ]; then
+  pg_dump --format=custom --dbname="$DATABASE" | age -R "$RECIPIENT" -o "$out/$DATABASE.pgdump.age" ||
+    fail "dump of the $DATABASE database"
+  dumped=1
+fi
+
 cat > "$out/README.md" <<'TEXT'
-# Бэкап VibeMemory: сторы memory-команд
+# Бэкап VibeMemory: сторы memory-команд и база кабинета
 
 Каждую ночь хост кладёт сюда один коммит без истории.
 В нём сторы memory-команд: у их участников клона нет, и других копий не существует.
-Каждый файл — `git bundle --all` стора, зашифрованный age открытым ключом владельца.
+Каждый `<слаг>.bundle.age` — `git bundle --all` стора, зашифрованный age открытым ключом владельца.
+`cabinet.pgdump.age` — дамп базы кабинета (`pg_dump --format=custom`) тем же ключом.
 
 Восстановить стор на Mac владельца:
 
 ```
 age -d -i ~/.vibememory/keys/backup.age <слаг>.bundle.age > <слаг>.bundle
 git clone --bare <слаг>.bundle <слаг>.git
+```
+
+Восстановить базу — порядок и что делать после дампа описаны в docs/manuals/cabinetSetup.md:
+
+```
+age -d -i ~/.vibememory/keys/backup.age cabinet.pgdump.age > cabinet.pgdump
+pg_restore --clean --if-exists --no-owner --dbname=<база> cabinet.pgdump
 ```
 
 Закрытый ключ есть только у владельца.
@@ -71,10 +91,10 @@ now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 git -C "$out" init --quiet --initial-branch=main
 git -C "$out" add -A
 git -C "$out" -c user.name=vibememory-backup -c user.email=backup@vibememory.invalid \
-  -c commit.gpgsign=false commit --quiet -m "backup $now: $count memory stores"
+  -c commit.gpgsign=false commit --quiet -m "backup $now: $count memory stores, database: $dumped"
 git -C "$out" push --quiet --force "$remote" main || fail "push to $remote"
 
 printf '{\n  "lastAt": "%s"\n}\n' "$now" > "$REPORT.new"
 chmod 640 "$REPORT.new"
 mv -f "$REPORT.new" "$REPORT"
-say "done: $count memory stores, $(du -sb --exclude=.git "$out" | cut -f1) bytes"
+say "done: $count memory stores, database $dumped, $(du -sb --exclude=.git "$out" | cut -f1) bytes"

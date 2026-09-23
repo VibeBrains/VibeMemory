@@ -1,0 +1,24 @@
+# The host's two sites, one file: rendered by infra/caddyApply.sh, which hostMcp.sh and
+# hostCabinet.sh both call — two scripts writing one Caddyfile would undo each other.
+#
+# {{DOMAIN}} is for agents: the memory server at /mcp and nothing else.
+# {{APP_DOMAIN}} is for people: the cabinet, and the releases under /dl/ beside its download page.
+{{DOMAIN}} {
+	handle /mcp {
+		reverse_proxy 127.0.0.1:{{MCP_PORT}}
+	}
+	handle {
+		respond 404
+	}
+}
+
+{{APP_DOMAIN}} {
+	# The archives and their sums; no directory listing.
+	handle_path /dl/* {
+		root * {{RELEASES}}
+		file_server
+	}
+	handle {
+		reverse_proxy 127.0.0.1:{{CABINET_PORT}}
+	}
+}

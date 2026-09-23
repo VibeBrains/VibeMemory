@@ -13,7 +13,8 @@
 # Idempotent: the binary is replaced by a rename and checked by running it. The first snapshot is
 # made once, from the token file of the single-token server, and that file is removed only after
 # the new server has been seen to accept the same token — clients keep working on the same value.
-# The units, the Caddyfile and the fail2ban jail are rewritten only when their text differs. Nothing
+# The units and the fail2ban jail are rewritten only when their text differs, and the Caddyfile comes
+# from infra/Caddyfile.tmpl through caddyApply.sh, the one writer of that file. Nothing
 # of the store is touched, and no token is ever printed: this output is read in sessions whose
 # transcripts are synced.
 set -euo pipefail
@@ -306,22 +307,6 @@ sudo systemctl start vibememory-access-apply.service ||
   { echo "Ошибка: применение снимка не прошло — journalctl -t vibememory-apply" >&2; exit 1; }
 echo "5/7 Команды хоста под vmgit: снимок применён ($(sudo -u vmgit cat "$(dirname "$access")/applied.json" | grep -c '"code"') проблем), отчёт — раз в час, упаковка сторов команд — $teamsRepackAt"
 
-command -v caddy >/dev/null || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq caddy >/dev/null
-caddyfile=/etc/caddy/Caddyfile
-caddyText="$domain {
-	handle /mcp {
-		reverse_proxy 127.0.0.1:$port
-	}
-	handle {
-		respond 404
-	}
-}"
-if [ "$(sudo cat "$caddyfile" 2>/dev/null || true)" != "$caddyText" ]; then
-  printf '%s\n' "$caddyText" | sudo tee "$caddyfile" >/dev/null
-  sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy
-fi
-echo "6/7 Caddy: $(systemctl is-active caddy), https://$domain/mcp"
-
 # The server logs every refused token with the address Caddy saw (the last X-Forwarded-For entry).
 # Bans go to the web ports only: a wrong token says nothing about ssh. Without fail2ban on the host
 # the step is skipped out loud — bootstrapping it is sshHardening.md's job, not this script's.
@@ -331,7 +316,7 @@ echo "6/7 Caddy: $(systemctl is-active caddy), https://$domain/mcp"
 # host and process, so a failregex anchored at ^ matches nothing. An expired token is logged in
 # other words, which the filter does not match: a client that was let in once is not an attack.
 if ! command -v fail2ban-client >/dev/null && [ ! -x /usr/bin/fail2ban-client ]; then
-  echo "7/7 fail2ban не установлен — джейл для /mcp пропущен"
+  echo "6/7 fail2ban не установлен — джейл для /mcp пропущен"
   exit 0
 fi
 filter=/etc/fail2ban/filter.d/vibememory-mcp.conf
@@ -365,9 +350,13 @@ fi
 # "active" is not the claim that matters; an action that can reach the firewall is.
 actions=$(sudo /usr/bin/fail2ban-client get vibememory-mcp actions 2>/dev/null | tail -n +2)
 if [ -n "$actions" ]; then
-  echo "7/7 fail2ban: джейл vibememory-mcp с действием $actions"
+  echo "6/7 fail2ban: джейл vibememory-mcp с действием $actions"
 else
-  echo "7/7 fail2ban: джейл vibememory-mcp БЕЗ действия — баны не дойдут до firewall" >&2
+  echo "6/7 fail2ban: джейл vibememory-mcp БЕЗ действия — баны не дойдут до firewall" >&2
   exit 1
 fi
 REMOTE
+
+# Caddy last, from the template both host scripts share: the cabinet's site stays in the same file.
+say "7/7 Caddy"
+"$(dirname "$0")/caddyApply.sh" --alias "$sshAlias" --domain "$domain" --mcp-port "$port"
