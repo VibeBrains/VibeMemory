@@ -204,8 +204,8 @@ impl Door for Host {
     }
 }
 
-/// One team's memory, as a request of one token sees it.
-struct TeamMemories {
+/// One team's memory, as a request of one token or the session of one machine key sees it.
+pub(crate) struct TeamMemories {
     git: GitMemories,
     /// The projects of a `memory` team, as the snapshot lists them: its repository is empty until
     /// the first write, and a project exists because the cabinet says so. `None` for a team whose
@@ -213,6 +213,24 @@ struct TeamMemories {
     declared: Option<Vec<String>>,
     lock: Arc<Mutex<()>>,
     repo: PathBuf,
+}
+
+impl TeamMemories {
+    /// A team's memory for a process of its own — an ssh session serves one client, so its lock
+    /// only orders the session's own writes; writes of other processes meet at the
+    /// compare-and-swap of `main`.
+    pub(crate) fn for_session(
+        repo: PathBuf,
+        writer: String,
+        declared: Option<Vec<String>>,
+    ) -> Self {
+        Self {
+            git: GitMemories::new(repo.clone(), writer),
+            declared,
+            lock: Arc::default(),
+            repo,
+        }
+    }
 }
 
 impl Memories for TeamMemories {

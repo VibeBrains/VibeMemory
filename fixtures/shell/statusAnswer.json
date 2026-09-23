@@ -1,0 +1,212 @@
+{
+  "description": "The status answer a machine key gets: the snapshot and host.json projected onto the key's teams. The snapshot is the base of fixtures/access/accessSnapshots.json with snapshotPatch applied; host is the host.json of fixtures/host/status.json case everyKindOfDirectory.",
+  "snapshotPatch": {
+    "teamCount": 5,
+    "teams": {
+      "otherteam": {
+        "mode": "sync",
+        "writable": true,
+        "limits": {
+          "maxRecords": 5000,
+          "maxRecordBytes": 65536,
+          "quotaBytes": 10737418240,
+          "seats": 5
+        },
+        "members": {
+          "bob": "owner"
+        }
+      }
+    },
+    "keys": [
+      {
+        "id": "mk_3f8k1p0z",
+        "member": "alice",
+        "machine": "laptop",
+        "storeName": "alice-laptop",
+        "teams": [
+          "vibebrains",
+          "syncteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+      },
+      {
+        "id": "mk_4g5h6j7k",
+        "member": "alice",
+        "machine": "desk",
+        "storeName": "alice-desk",
+        "teams": [
+          "syncteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz"
+      },
+      {
+        "id": "mk_5m6n7p8q",
+        "member": "bob",
+        "machine": "desk",
+        "storeName": "bob-desk",
+        "teams": [
+          "otherteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi"
+      }
+    ]
+  },
+  "host": {
+    "version": 1,
+    "generatedAt": "2026-09-23T11:00:00Z",
+    "applied": {
+      "version": 1,
+      "snapshotHash": "9f2c000000000000000000000000000000000000000000000000000000000000",
+      "appliedAt": "2026-09-23T10:00:00Z",
+      "teamCount": 5,
+      "problems": [
+        {
+          "code": "slugRetired",
+          "team": "reborn",
+          "detail": "teams/reborn.deleted-2026-09-01.git exists"
+        }
+      ]
+    },
+    "teams": {
+      "otherteam": {
+        "projects": [],
+        "sizeBytes": 8192,
+        "lastCommitAt": "2026-09-22T08:00:00Z"
+      },
+      "personal": {
+        "projects": [
+          "VibeIDE",
+          "VibeMemory"
+        ],
+        "sizeBytes": 953221120,
+        "lastCommitAt": "2026-09-23T10:58:12Z"
+      },
+      "vibebrains": {
+        "projects": [
+          "VibeIDE"
+        ],
+        "sizeBytes": 40960,
+        "lastCommitAt": "2026-09-23T09:12:40Z"
+      }
+    },
+    "deleted": [
+      {
+        "slug": "oldteam",
+        "date": "2026-09-01",
+        "sizeBytes": 20480
+      }
+    ],
+    "orphans": [
+      {
+        "slug": "lost",
+        "projects": [
+          "Acme"
+        ],
+        "sizeBytes": 81920,
+        "machines": true
+      }
+    ],
+    "hostKeys": [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm"
+    ],
+    "disk": {
+      "freeBytes": 44987523072,
+      "totalBytes": 52710469632
+    },
+    "services": {
+      "caddy": "active",
+      "vibememory-mcp": "active"
+    },
+    "backup": {
+      "lastAt": "2026-09-23T04:30:00Z"
+    }
+  },
+  "cases": [
+    {
+      "id": "twoTeamsOfTheKey",
+      "provenance": "computed",
+      "note": "Alice's laptop opens vibebrains and syncteam: both are answered with her rank in each; syncteam has no repository yet, so its size and last commit are null. storeNames lists every machine of alice, not every name starting with alice-.",
+      "key": "mk_3f8k1p0z",
+      "expect": {
+        "version": 1,
+        "generatedAt": "2026-09-23T11:00:00Z",
+        "key": {
+          "id": "mk_3f8k1p0z",
+          "member": "alice",
+          "machine": "laptop",
+          "storeName": "alice-laptop"
+        },
+        "storeNames": [
+          "alice-desk",
+          "alice-laptop"
+        ],
+        "teams": {
+          "syncteam": {
+            "mode": "sync",
+            "role": "admin",
+            "writable": false,
+            "sizeBytes": null,
+            "quotaBytes": 10737418240,
+            "lastCommitAt": null
+          },
+          "vibebrains": {
+            "mode": "memory",
+            "role": "member",
+            "writable": true,
+            "sizeBytes": 40960,
+            "quotaBytes": 10737418240,
+            "lastCommitAt": "2026-09-23T09:12:40Z"
+          }
+        },
+        "hostKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm"
+        ],
+        "disk": {
+          "freeBytes": 44987523072
+        }
+      }
+    },
+    {
+      "id": "otherMembersKey",
+      "provenance": "computed",
+      "note": "Bob's key sees his own team only: no slug, project or size of alice's teams reaches him.",
+      "key": "mk_5m6n7p8q",
+      "expect": {
+        "version": 1,
+        "generatedAt": "2026-09-23T11:00:00Z",
+        "key": {
+          "id": "mk_5m6n7p8q",
+          "member": "bob",
+          "machine": "desk",
+          "storeName": "bob-desk"
+        },
+        "storeNames": [
+          "bob-desk"
+        ],
+        "teams": {
+          "otherteam": {
+            "mode": "sync",
+            "role": "owner",
+            "writable": true,
+            "sizeBytes": 8192,
+            "quotaBytes": 10737418240,
+            "lastCommitAt": "2026-09-22T08:00:00Z"
+          }
+        },
+        "hostKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm"
+        ],
+        "disk": {
+          "freeBytes": 44987523072
+        }
+      }
+    },
+    {
+      "id": "revokedKey",
+      "provenance": "computed",
+      "note": "A key that is not in the snapshot gets no answer; the shell refuses it with unknownKey.",
+      "key": "mk_00000000",
+      "expect": null
+    }
+  ]
+}

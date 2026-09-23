@@ -1,0 +1,232 @@
+{
+  "description": "What access-apply plans for the host's teams/ directory, and the authorized_keys it writes for vmgit. The snapshot is the base of fixtures/access/accessSnapshots.json with snapshotPatch and then the case's patch applied; dirs are the names under teams/.",
+  "snapshotPatch": {
+    "teamCount": 5,
+    "teams": {
+      "otherteam": {
+        "mode": "sync",
+        "writable": true,
+        "limits": {
+          "maxRecords": 5000,
+          "maxRecordBytes": 65536,
+          "quotaBytes": 10737418240,
+          "seats": 5
+        },
+        "members": {
+          "bob": "owner"
+        }
+      }
+    },
+    "keys": [
+      {
+        "id": "mk_3f8k1p0z",
+        "member": "alice",
+        "machine": "laptop",
+        "storeName": "alice-laptop",
+        "teams": [
+          "vibebrains",
+          "syncteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+      },
+      {
+        "id": "mk_5m6n7p8q",
+        "member": "bob",
+        "machine": "desk",
+        "storeName": "bob-desk",
+        "teams": [
+          "otherteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi"
+      }
+    ]
+  },
+  "authorizedKeys": {
+    "binary": "/srv/vibememory/bin/vibememory-mcp",
+    "expect": "# Written by vibememory-mcp access-apply from the access snapshot; edits are overwritten.\nrestrict,command=\"/srv/vibememory/bin/vibememory-mcp shell mk_3f8k1p0z\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER mk_3f8k1p0z\nrestrict,command=\"/srv/vibememory/bin/vibememory-mcp shell mk_5m6n7p8q\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi mk_5m6n7p8q\n"
+  },
+  "cases": [
+    {
+      "id": "freshHost",
+      "provenance": "computed",
+      "note": "Every live team of the snapshot gets its store; the deleted team has no directory and the adopted store is not the host's to create.",
+      "dirs": [],
+      "expect": {
+        "steps": [
+          {
+            "create": "otherteam"
+          },
+          {
+            "create": "syncteam"
+          },
+          {
+            "create": "vibebrains"
+          }
+        ],
+        "problems": []
+      }
+    },
+    {
+      "id": "everythingInPlace",
+      "provenance": "computed",
+      "note": "A second application of the same snapshot: settings, hook and .gitattributes checked again, nothing created, the renamed directory left alone.",
+      "dirs": [
+        "otherteam.git",
+        "syncteam.git",
+        "vibebrains.git",
+        "oldteam.deleted-2026-09-01.git"
+      ],
+      "expect": {
+        "steps": [
+          {
+            "keep": "otherteam"
+          },
+          {
+            "keep": "syncteam"
+          },
+          {
+            "keep": "vibebrains"
+          }
+        ],
+        "problems": []
+      }
+    },
+    {
+      "id": "deletedTeamRenamed",
+      "provenance": "computed",
+      "note": "A team marked deleted gives up its live name: the directory is renamed with the day from the snapshot, so a repeat finds nothing to do.",
+      "dirs": [
+        "oldteam.git",
+        "otherteam.git",
+        "syncteam.git",
+        "vibebrains.git"
+      ],
+      "expect": {
+        "steps": [
+          {
+            "retire": "oldteam",
+            "to": "oldteam.deleted-2026-09-01.git"
+          },
+          {
+            "keep": "otherteam"
+          },
+          {
+            "keep": "syncteam"
+          },
+          {
+            "keep": "vibebrains"
+          }
+        ],
+        "problems": []
+      }
+    },
+    {
+      "id": "slugRetired",
+      "provenance": "computed",
+      "note": "A slug that once belonged to a deleted team is not given a new empty store: the old one would look like lost memory.",
+      "patch": {
+        "teamCount": 6,
+        "teams": {
+          "reborn": {
+            "mode": "sync",
+            "writable": true,
+            "limits": {
+              "maxRecords": 5000,
+              "maxRecordBytes": 65536,
+              "quotaBytes": 10737418240,
+              "seats": 5
+            },
+            "members": {
+              "borodatych": "owner"
+            }
+          }
+        }
+      },
+      "dirs": [
+        "otherteam.git",
+        "syncteam.git",
+        "vibebrains.git",
+        "reborn.deleted-2026-08-01.git"
+      ],
+      "expect": {
+        "steps": [
+          {
+            "keep": "otherteam"
+          },
+          {
+            "keep": "syncteam"
+          },
+          {
+            "keep": "vibebrains"
+          }
+        ],
+        "problems": [
+          {
+            "code": "slugRetired",
+            "team": "reborn",
+            "detail": "teams/reborn.deleted-2026-08-01.git exists"
+          }
+        ]
+      }
+    },
+    {
+      "id": "retireBlocked",
+      "provenance": "computed",
+      "note": "A deleted team whose renamed directory already exists beside a live one: the rename would land on it, so both stay as they are and the owner is told.",
+      "dirs": [
+        "oldteam.git",
+        "oldteam.deleted-2026-09-01.git",
+        "otherteam.git",
+        "syncteam.git",
+        "vibebrains.git"
+      ],
+      "expect": {
+        "steps": [
+          {
+            "keep": "otherteam"
+          },
+          {
+            "keep": "syncteam"
+          },
+          {
+            "keep": "vibebrains"
+          }
+        ],
+        "problems": [
+          {
+            "code": "retireBlocked",
+            "team": "oldteam",
+            "detail": "teams/oldteam.deleted-2026-09-01.git exists already; teams/oldteam.git is left as it is"
+          }
+        ]
+      }
+    },
+    {
+      "id": "strangersUntouched",
+      "provenance": "computed",
+      "note": "An orphan, a directory that is no store and a store named like the adopted team are none of the application's business.",
+      "dirs": [
+        "lost.git",
+        "not-a-store",
+        "personal.git",
+        "otherteam.git",
+        "syncteam.git",
+        "vibebrains.git"
+      ],
+      "expect": {
+        "steps": [
+          {
+            "keep": "otherteam"
+          },
+          {
+            "keep": "syncteam"
+          },
+          {
+            "keep": "vibebrains"
+          }
+        ],
+        "problems": []
+      }
+    }
+  ]
+}

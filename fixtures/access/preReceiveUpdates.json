@@ -1,0 +1,563 @@
+{
+  "description": "What pre-receive decides for a push to a team store: the update lines, the paths changed on main and the sizes, against the access snapshot. The snapshot is the base of accessSnapshots.json with snapshotPatch and then the case's patch applied.",
+  "snapshotPatch": {
+    "teamCount": 5,
+    "teams": {
+      "syncteam": {
+        "writable": true
+      },
+      "otherteam": {
+        "mode": "sync",
+        "writable": true,
+        "limits": {
+          "maxRecords": 5000,
+          "maxRecordBytes": 65536,
+          "quotaBytes": 10737418240,
+          "seats": 5
+        },
+        "members": {
+          "bob": "owner"
+        }
+      }
+    },
+    "keys": [
+      {
+        "id": "mk_3f8k1p0z",
+        "member": "alice",
+        "machine": "laptop",
+        "storeName": "alice-laptop",
+        "teams": [
+          "vibebrains",
+          "syncteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+      },
+      {
+        "id": "mk_5m6n7p8q",
+        "member": "bob",
+        "machine": "desk",
+        "storeName": "bob-desk",
+        "teams": [
+          "otherteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi"
+      }
+    ]
+  },
+  "defaults": {
+    "repoBytes": 1048576,
+    "incomingBytes": 65536,
+    "freeBytes": 42949672960,
+    "reserveBytes": 2147483648
+  },
+  "cases": [
+    {
+      "id": "projectsAndOwnMachine",
+      "provenance": "computed",
+      "note": "What a tick pushes: transcripts and memory of projects, and this machine's own files.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "machines/alice-laptop/live.json",
+        "projects/Acme/memory.jsonl",
+        "projects/Acme/s1.jsonl"
+      ],
+      "expect": {
+        "code": "ok"
+      }
+    },
+    {
+      "id": "branch",
+      "provenance": "computed",
+      "note": "A second branch would carry paths and size past every check into the bundle.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "0000000000000000000000000000000000000000",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/side"
+        ]
+      ],
+      "changed": [],
+      "expect": {
+        "code": "refDenied"
+      }
+    },
+    {
+      "id": "tag",
+      "provenance": "computed",
+      "note": "A tag is refused the same way.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "0000000000000000000000000000000000000000",
+          "2222222222222222222222222222222222222222",
+          "refs/tags/v1"
+        ]
+      ],
+      "changed": [],
+      "expect": {
+        "code": "refDenied"
+      }
+    },
+    {
+      "id": "mainAndTag",
+      "provenance": "computed",
+      "note": "One bad line refuses the whole push, the good main included.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ],
+        [
+          "0000000000000000000000000000000000000000",
+          "2222222222222222222222222222222222222222",
+          "refs/tags/v1"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "expect": {
+        "code": "refDenied"
+      }
+    },
+    {
+      "id": "deleteMain",
+      "provenance": "computed",
+      "note": "Deleting main is refused here too, before receive.denyDeletes.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "0000000000000000000000000000000000000000",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [],
+      "expect": {
+        "code": "refDenied"
+      }
+    },
+    {
+      "id": "otherMachine",
+      "provenance": "computed",
+      "note": "Another member's machine directory is not this key's to write.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "machines/bob-desk/live.json",
+        "projects/Acme/s1.jsonl"
+      ],
+      "expect": {
+        "code": "pathDenied",
+        "paths": [
+          "machines/bob-desk/live.json"
+        ]
+      }
+    },
+    {
+      "id": "gitattributes",
+      "provenance": "computed",
+      "note": "The host owns .gitattributes: a member's edit is refused.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        ".gitattributes"
+      ],
+      "expect": {
+        "code": "pathDenied",
+        "paths": [
+          ".gitattributes"
+        ]
+      }
+    },
+    {
+      "id": "rootFile",
+      "provenance": "computed",
+      "note": "The owner's own outbox files do not belong in a team store.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "history.jsonl"
+      ],
+      "expect": {
+        "code": "pathDenied",
+        "paths": [
+          "history.jsonl"
+        ]
+      }
+    },
+    {
+      "id": "config",
+      "provenance": "computed",
+      "note": "A shared settings.json with hooks would run commands on every member's machine.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "config/settings.json",
+        "history.jsonl"
+      ],
+      "expect": {
+        "code": "configDenied",
+        "paths": [
+          "config/settings.json"
+        ]
+      }
+    },
+    {
+      "id": "everyDeniedPath",
+      "provenance": "computed",
+      "note": "Every path that is refused is named, in order, so a person fixes them in one go.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "tasks/a.json",
+        "machines/bob-desk/tails.json",
+        "desktop/card.json"
+      ],
+      "expect": {
+        "code": "pathDenied",
+        "paths": [
+          "desktop/card.json",
+          "machines/bob-desk/tails.json",
+          "tasks/a.json"
+        ]
+      }
+    },
+    {
+      "id": "readOnly",
+      "provenance": "computed",
+      "note": "A team whose grant is over is read-only: fetch works, push does not.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "patch": {
+        "teams": {
+          "syncteam": {
+            "writable": false
+          }
+        }
+      },
+      "expect": {
+        "code": "readOnly"
+      }
+    },
+    {
+      "id": "memoryTeam",
+      "provenance": "computed",
+      "note": "A memory team's store is written by the memory server alone.",
+      "key": "mk_3f8k1p0z",
+      "team": "vibebrains",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/VibeIDE/memory.jsonl"
+      ],
+      "expect": {
+        "code": "pushDenied"
+      }
+    },
+    {
+      "id": "unknownKey",
+      "provenance": "computed",
+      "note": "A key revoked while the connection was open.",
+      "key": "mk_00000000",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "expect": {
+        "code": "unknownKey"
+      }
+    },
+    {
+      "id": "noKey",
+      "provenance": "computed",
+      "note": "A push that did not come through the shell carries no key.",
+      "key": null,
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "expect": {
+        "code": "unknownKey"
+      }
+    },
+    {
+      "id": "snapshotUnusable",
+      "provenance": "computed",
+      "note": "A snapshot that broke while the connection was open lets nothing land.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "snapshotUsable": false,
+      "expect": {
+        "code": "snapshotUnusable"
+      }
+    },
+    {
+      "id": "machineNamePrefix",
+      "provenance": "computed",
+      "note": "A machine whose name starts with this key's storeName is still another machine.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "machines/alice-laptop-2/live.json",
+        "machines/alice-laptop/live.json"
+      ],
+      "expect": {
+        "code": "pathDenied",
+        "paths": [
+          "machines/alice-laptop-2/live.json"
+        ]
+      }
+    },
+    {
+      "id": "topLevelNamesAsFiles",
+      "provenance": "computed",
+      "note": "projects and machines as files are not the directories the rule opens.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "machines/alice-laptop",
+        "projects"
+      ],
+      "expect": {
+        "code": "pathDenied",
+        "paths": [
+          "machines/alice-laptop",
+          "projects"
+        ]
+      }
+    },
+    {
+      "id": "deletedTeam",
+      "provenance": "computed",
+      "note": "The team was deleted; its directory is renamed at the next application.",
+      "key": "mk_3f8k1p0z",
+      "team": "oldteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "expect": {
+        "code": "teamGone"
+      }
+    },
+    {
+      "id": "orphanTeam",
+      "provenance": "computed",
+      "note": "A directory the snapshot does not know.",
+      "key": "mk_3f8k1p0z",
+      "team": "lost",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "expect": {
+        "code": "teamGone"
+      }
+    },
+    {
+      "id": "notAMember",
+      "provenance": "computed",
+      "note": "A team this key does not open.",
+      "key": "mk_3f8k1p0z",
+      "team": "otherteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "expect": {
+        "code": "notAMember"
+      }
+    },
+    {
+      "id": "diskReserve",
+      "provenance": "computed",
+      "note": "A push that would leave the host with less than the reserve is refused before it lands.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "sizes": {
+        "freeBytes": 2147484648
+      },
+      "expect": {
+        "code": "diskReserve"
+      }
+    },
+    {
+      "id": "quota",
+      "provenance": "computed",
+      "note": "The store with the incoming pack would be over the team's quota.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "sizes": {
+        "repoBytes": 10737417240
+      },
+      "expect": {
+        "code": "quota"
+      }
+    },
+    {
+      "id": "quotaExactlyFull",
+      "provenance": "computed",
+      "note": "Reaching the quota exactly is still within it.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "sizes": {
+        "repoBytes": 10737352704
+      },
+      "expect": {
+        "code": "ok"
+      }
+    }
+  ]
+}

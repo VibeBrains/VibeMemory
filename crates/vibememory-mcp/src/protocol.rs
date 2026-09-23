@@ -1,9 +1,9 @@
 //! JSON-RPC over stdio, which is all MCP is on the wire.
 //!
 //! Written by hand rather than taken from a library: the surface is three methods, and the
-//! project's rule is zero runtime dependencies on the target machine. Everything here is pure —
-//! a request and a [`Memories`] go in, a response comes out — so the whole protocol is tested
-//! without a store or a pipe.
+//! project's rule is zero runtime dependencies on the target machine. Answering is pure — a
+//! request and a [`Memories`] go in, a response comes out — and [`serve_lines`] runs it over any
+//! pair of streams, so the whole protocol is tested without a store or a pipe.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -152,4 +152,45 @@ pub fn parse(line: &str) -> Result<Request, String> {
 #[must_use]
 pub fn malformed(detail: &str) -> Response {
     Response::failed(Value::Null, -32700, detail)
+}
+
+/// Serves MCP over a stream of lines until the input closes: one request per line, one answer per
+/// line, nothing else on `output` — it *is* the protocol. `after` sees every request with its
+/// answer; the host journals tool calls with it.
+///
+/// # Errors
+///
+/// Input that cannot be read. A client that goes away mid-answer is not an error of the server.
+pub fn serve_lines(
+    input: impl std::io::BufRead,
+    mut output: impl std::io::Write,
+    caller: &crate::tools::Caller<'_>,
+    memories: &dyn Memories,
+    after: &mut dyn FnMut(&Request, Option<&Response>),
+) -> Result<(), String> {
+    for line in input.lines() {
+        let line = line.map_err(|error| error.to_string())?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let response = match parse(&line) {
+            Ok(request) => {
+                let response = handle(&request, caller, memories);
+                after(&request, response.as_ref());
+                response
+            }
+            Err(detail) => Some(malformed(&detail)),
+        };
+        let Some(response) = response else {
+            continue; // a notification: answered by saying nothing
+        };
+        let Ok(text) = serde_json::to_string(&response) else {
+            eprintln!("vibememory-mcp: a response could not be encoded");
+            continue;
+        };
+        if writeln!(output, "{text}").is_err() || output.flush().is_err() {
+            return Ok(());
+        }
+    }
+    Ok(())
 }

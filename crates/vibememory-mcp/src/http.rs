@@ -62,7 +62,8 @@ pub struct Visit<'a> {
 /// Who an admitted request is. Owned: it lives exactly as long as the request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grant {
-    /// The token's public id, `tk_…`: it names the request in the journal and signs its versions.
+    /// The public id of what opened the door — a token `tk_…` over HTTPS, a machine key `mk_…`
+    /// over ssh: it names the request in the journal.
     pub token: String,
     /// The team's slug.
     pub team: String,
@@ -307,7 +308,8 @@ pub fn answer(request: &HttpRequest, door: &dyn Door) -> (HttpResponse, Note) {
 }
 
 /// The journal line of a tool call; nothing for the handshake and the catalogue.
-fn call_note(
+#[must_use]
+pub fn call_note(
     message: &crate::protocol::Request,
     response: Option<&crate::protocol::Response>,
     grant: &Grant,

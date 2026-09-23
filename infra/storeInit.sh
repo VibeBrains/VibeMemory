@@ -5,13 +5,18 @@
 #   storeInit.sh <path> [--adopted] [--branch main]
 #
 # Runs ON THE HOST as the repository's owner or root. Creates the repository when it is missing,
-# never makes a commit, never deletes anything. Idempotent: a value is written only when it
-# differs, so a second run leaves the config file untouched.
+# never makes a commit, never deletes anything. Idempotent: a value or a file is written only when
+# it differs, so a second run leaves the config file and the hook untouched.
 #
 # `--adopted` is the owner's store that existed before teams. It gets the common settings only:
-# the `receive.*` guards below would stop the owner's own engine, which is not bound by team rules
-# and whose tick may push more than one limit's worth after a long time offline.
+# the `receive.*` guards and the `pre-receive` hook below would stop the owner's own engine, which
+# is not bound by team rules and whose tick may push more than one limit's worth after a long time
+# offline.
 set -euo pipefail
+
+# The server binary that decides every push to a team store: the path the host's layout gives it
+# (crates/vibememory-mcp/src/layout.rs).
+readonly SERVER_BIN=/srv/vibememory/bin/vibememory-mcp
 
 repo=""
 adopted=no
@@ -76,4 +81,23 @@ if [ "$adopted" = no ]; then
   set_config receive.denyDeletes true
   # One push may not fill the disk that every team shares.
   set_config receive.maxInputSize 1g
+  # Objects are checked as they arrive: a tree with a `..` or `.git` entry would break, or worse,
+  # every other member's checkout of the store.
+  set_config receive.fsckObjects true
+
+  # Every push is decided against the access snapshot: whose key, which references, which paths,
+  # how much room (docs/manuals/hostShellSpec.md). The hook only hands the push over.
+  hook="$repo/hooks/pre-receive"
+  wantedHook="#!/bin/sh
+# Written by storeInit.sh: every push to this team store is decided by the server against the
+# access snapshot.
+exec $SERVER_BIN pre-receive
+"
+  mkdir -p "$repo/hooks"
+  if ! printf '%s' "$wantedHook" | cmp -s - "$hook"; then
+    printf '%s' "$wantedHook" > "$hook.new"
+    chmod 755 "$hook.new"
+    mv "$hook.new" "$hook"
+    printf 'storeInit.sh: pre-receive hook written in %s\n' "$repo"
+  fi
 fi

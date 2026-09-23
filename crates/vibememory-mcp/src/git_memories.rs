@@ -8,7 +8,7 @@
 //! journal merge driver unions it with whatever that machine wrote itself.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -40,6 +40,63 @@ fn next_index() -> u64 {
     INDEXES.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Runs git on the bare repository `repo` and returns its stdout as bytes.
+///
+/// Always with `--git-dir`: on the host the repositories belong to other accounts, and git answers
+/// `-C` or a working directory there with "dubious ownership", while an explicit git dir is not
+/// checked. Output is read while git runs, so a transcript of 19 MiB cannot fill the pipe and wedge
+/// it.
+///
+/// # Errors
+///
+/// Git that could not start, or its stderr when it failed.
+pub fn run(
+    repo: &Path,
+    args: &[&str],
+    input: Option<&[u8]>,
+    env: &[(&str, &str)],
+) -> Result<Vec<u8>, String> {
+    use std::io::Write as _;
+
+    let mut command = Command::new("git");
+    command
+        .arg("--git-dir")
+        .arg(repo)
+        .args(args)
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("git could not be started: {error}"))?;
+    if let Some(bytes) = input {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "git took no input".to_owned())?;
+        stdin.write_all(bytes).map_err(|error| error.to_string())?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| error.to_string())?;
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(format!(
+            "git {}: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
 /// What one attempt to append found.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Appended {
@@ -56,53 +113,13 @@ impl GitMemories {
         Self { repo, writer }
     }
 
-    /// Runs git on the repository and returns its stdout as bytes. Output is read while git runs,
-    /// so a transcript of 19 MiB cannot fill the pipe and wedge it.
     fn git(
         &self,
         args: &[&str],
         input: Option<&[u8]>,
         env: &[(&str, &str)],
     ) -> Result<Vec<u8>, String> {
-        use std::io::Write as _;
-
-        let mut command = Command::new("git");
-        command
-            .arg("--git-dir")
-            .arg(&self.repo)
-            .args(args)
-            .stdin(if input.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        for (name, value) in env {
-            command.env(name, value);
-        }
-        let mut child = command
-            .spawn()
-            .map_err(|error| format!("git could not be started: {error}"))?;
-        if let Some(bytes) = input {
-            let mut stdin = child
-                .stdin
-                .take()
-                .ok_or_else(|| "git took no input".to_owned())?;
-            stdin.write_all(bytes).map_err(|error| error.to_string())?;
-        }
-        let output = child
-            .wait_with_output()
-            .map_err(|error| error.to_string())?;
-        if output.status.success() {
-            Ok(output.stdout)
-        } else {
-            Err(format!(
-                "git {}: {}",
-                args.join(" "),
-                String::from_utf8_lossy(&output.stderr).trim()
-            ))
-        }
+        run(&self.repo, args, input, env)
     }
 
     fn text(&self, args: &[&str], env: &[(&str, &str)]) -> Result<String, String> {
@@ -156,7 +173,62 @@ impl GitMemories {
         let mut content = self.blob(old, &path)?.unwrap_or_default();
         // Append, never rewrite: the journal is what machines merge by union.
         content.extend_from_slice(line);
-        let blob = text_of(&self.git(&["hash-object", "-w", "--stdin"], Some(&content), &[])?);
+        self.put_on(Some(old), &path, &content, message)
+    }
+
+    /// The commit `main` points at, or `None` in a repository that has no `main` yet. Asked with
+    /// `for-each-ref`, so a missing branch is an answer and a broken repository an error.
+    ///
+    /// # Errors
+    ///
+    /// What git refused.
+    pub fn main_commit(&self) -> Result<Option<String>, String> {
+        let found = self.text(
+            &[
+                "for-each-ref",
+                "--format=%(objectname)",
+                &format!("refs/heads/{BRANCH}"),
+            ],
+            &[],
+        )?;
+        Ok((!found.is_empty()).then_some(found))
+    }
+
+    /// Makes `path` on `main` hold exactly `content`, committing only when it does not; in a
+    /// repository without `main` the commit is its first. The host keeps a team store's
+    /// `.gitattributes` this way. Returns whether a commit was made.
+    ///
+    /// # Errors
+    ///
+    /// What git refused, or `main` moving under every attempt.
+    pub fn settle_file(&self, path: &str, content: &[u8], message: &str) -> Result<bool, String> {
+        for _ in 0..APPEND_ATTEMPTS {
+            let old = self.main_commit()?;
+            if let Some(old) = &old
+                && self.blob(old, path)?.as_deref() == Some(content)
+            {
+                return Ok(false);
+            }
+            if let Appended::Committed(_) = self.put_on(old.as_deref(), path, content, message)? {
+                return Ok(true);
+            }
+        }
+        Err(format!(
+            "{BRANCH} moved under every one of {APPEND_ATTEMPTS} attempts; {path} was not written"
+        ))
+    }
+
+    /// One commit that makes `path` hold `content`: on top of `old`, or the repository's first
+    /// commit when `old` is `None`. `main` moves only if it is still at `old` — still missing, for
+    /// a first commit.
+    fn put_on(
+        &self,
+        old: Option<&str>,
+        path: &str,
+        content: &[u8],
+        message: &str,
+    ) -> Result<Appended, String> {
+        let blob = text_of(&self.git(&["hash-object", "-w", "--stdin"], Some(content), &[])?);
 
         // Outside the repository: on the host the server writes as a user who may add objects and
         // move refs there and nothing else — its `config` and `hooks/` are the owner's.
@@ -168,7 +240,10 @@ impl GitMemories {
         let index_path = index.to_string_lossy().into_owned();
         let attempt = (|| -> Result<Appended, String> {
             let with_index = [("GIT_INDEX_FILE", index_path.as_str())];
-            self.git(&["read-tree", old], None, &with_index)?;
+            match old {
+                Some(old) => self.git(&["read-tree", old], None, &with_index)?,
+                None => self.git(&["read-tree", "--empty"], None, &with_index)?,
+            };
             self.git(
                 &[
                     "update-index",
@@ -187,14 +262,19 @@ impl GitMemories {
                 ("GIT_COMMITTER_NAME", self.writer.as_str()),
                 ("GIT_COMMITTER_EMAIL", email.as_str()),
             ];
-            let commit = self.text(&["commit-tree", &tree, "-p", old, "-m", message], &identity)?;
+            let mut arguments = vec!["commit-tree", tree.as_str()];
+            if let Some(old) = old {
+                arguments.extend(["-p", old]);
+            }
+            arguments.extend(["-m", message]);
+            let commit = self.text(&arguments, &identity)?;
             // The old value makes this a compare-and-swap: a push that landed in between keeps
-            // its commit, and this write is done again on top of it.
-            let Err(why) = self.move_branch(&commit, old) else {
+            // its commit, and this write is done again on top of it. An empty old value is git's
+            // "the branch must not exist yet".
+            let Err(why) = self.move_branch(&commit, old.unwrap_or_default()) else {
                 return Ok(Appended::Committed(commit));
             };
-            let now = self.text(&["rev-parse", "--verify", BRANCH], &[])?;
-            if now == old {
+            if self.main_commit()?.as_deref() == old {
                 Err(format!("git refused to move {BRANCH} to {commit}: {why}"))
             } else {
                 Ok(Appended::Moved)

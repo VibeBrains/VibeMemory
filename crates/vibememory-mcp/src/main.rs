@@ -1,9 +1,12 @@
-//! `vibememory-mcp`: the memory of the store, offered over MCP.
+//! `vibememory-mcp`: the memory of the store, offered over MCP, and the host's own commands.
 //!
 //! On stdio — one line in, one line out — nothing is printed to stdout that is not a JSON-RPC
 //! response: stdout *is* the protocol there, and a stray `println!` would break the client.
-//! Anything the operator should see goes to stderr. `access check` is the one command whose
-//! answer is stdout: the cabinet reads its first line.
+//! Anything the operator should see goes to stderr. The commands whose answer is stdout are
+//! `access check` and `access teams`, which scripts and the cabinet read, and the key's `status`.
+//!
+//! On the host: `shell <key>` is the forced command of every machine key, `pre-receive` the hook
+//! of every team store, `access-apply` applies the access snapshot, `status` writes the report.
 
 #![allow(
     clippy::disallowed_methods,
@@ -11,13 +14,15 @@
     clippy::disallowed_macros
 )]
 
-use std::io::{BufRead as _, Write as _};
+use std::io::Write as _;
 use std::process::ExitCode;
 
-use vibememory_mcp::access;
+use vibememory_mcp::access::{self, Mode};
 use vibememory_mcp::git_memories::GitMemories;
 use vibememory_mcp::host::Host;
+use vibememory_mcp::hostops::{self, ApplyPaths, HostPaths};
 use vibememory_mcp::http;
+use vibememory_mcp::layout;
 use vibememory_mcp::memories::{Memories, from_engine, project_here};
 use vibememory_mcp::protocol;
 use vibememory_mcp::tools::Caller;
@@ -32,6 +37,11 @@ const DEFAULT_HOST_MACHINE: &str = "host";
 const CHECK_REFUSED: u8 = 1;
 /// Exit code of `access check` when the file cannot be read at all, or the command is misused.
 const CHECK_UNREADABLE: u8 = 2;
+/// How the `access` commands are called.
+const ACCESS_USAGE: &str =
+    "vibememory-mcp access check <file> | vibememory-mcp access teams <file> [--mode memory|sync]";
+/// What `sshd` puts the command a key's client asked for in.
+const ORIGINAL_COMMAND: &str = "SSH_ORIGINAL_COMMAND";
 
 /// The value after a flag on the command line.
 fn flag(name: &str) -> Option<String> {
@@ -49,8 +59,42 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    if arguments.first().map(String::as_str) == Some("access") {
-        return access_command(arguments.get(1..).unwrap_or_default());
+    match arguments.first().map(String::as_str) {
+        Some("access") => return access_command(arguments.get(1..).unwrap_or_default()),
+        Some("shell") => {
+            // The key comes from the key line's forced command, never from the client: what the
+            // client asked for is only ever read from the variable sshd sets.
+            let Some(key) = arguments.get(1) else {
+                eprintln!("vibememory-mcp: usage: vibememory-mcp shell <key id>");
+                return ExitCode::FAILURE;
+            };
+            let original = std::env::var(ORIGINAL_COMMAND).unwrap_or_default();
+            return hostops::shell(key, &original, &host_paths());
+        }
+        Some("pre-receive") => {
+            let reserve = match flag("--reserve-bytes").map(|value| value.parse::<u64>()) {
+                None => layout::DEFAULT_RESERVE_BYTES,
+                Some(Ok(bytes)) => bytes,
+                Some(Err(_)) => {
+                    eprintln!("vibememory-mcp: --reserve-bytes takes a whole number of bytes");
+                    return ExitCode::FAILURE;
+                }
+            };
+            return hostops::pre_receive(&host_paths(), reserve);
+        }
+        Some("access-apply") => {
+            let apply_paths = ApplyPaths {
+                authorized_keys: flag("--authorized-keys")
+                    .unwrap_or_else(|| layout::AUTHORIZED_KEYS.to_owned())
+                    .into(),
+                store_init: flag("--store-init")
+                    .unwrap_or_else(|| layout::STORE_INIT.to_owned())
+                    .into(),
+            };
+            return hostops::access_apply(&host_paths(), &apply_paths);
+        }
+        Some("status") => return hostops::status(&host_paths()),
+        _ => {}
     }
 
     // Over HTTP every request brings its own token, and the token says who it is; nothing about
@@ -105,23 +149,31 @@ fn main() -> ExitCode {
     serve(&memories, &Caller::owner(&agent, project.as_deref()))
 }
 
+/// Where the host's commands find the snapshot and the team stores: the host's layout, or another
+/// copy of it named by `--access` and `--teams`.
+fn host_paths() -> HostPaths {
+    HostPaths {
+        access: flag("--access")
+            .unwrap_or_else(|| layout::ACCESS_FILE.to_owned())
+            .into(),
+        teams: flag("--teams")
+            .unwrap_or_else(|| layout::TEAMS_DIR.to_owned())
+            .into(),
+    }
+}
+
+/// `access check <file>` and `access teams <file> [--mode memory|sync]`.
+fn access_command(rest: &[String]) -> ExitCode {
+    match rest {
+        [command, file] if command == "check" => check_command(file),
+        [command, file, options @ ..] if command == "teams" => teams_command(file, options),
+        _ => say(CHECK_UNREADABLE, "usage", ACCESS_USAGE),
+    }
+}
+
 /// `access check <file>`: the checker the cabinet runs on every snapshot before it publishes it.
 /// First line of stdout — `ok` or the code of the first rule broken; second — what exactly.
-fn access_command(rest: &[String]) -> ExitCode {
-    let [command, file] = rest else {
-        return say(
-            CHECK_UNREADABLE,
-            "usage",
-            "vibememory-mcp access check <file>",
-        );
-    };
-    if command != "check" {
-        return say(
-            CHECK_UNREADABLE,
-            "usage",
-            "vibememory-mcp access check <file>",
-        );
-    }
+fn check_command(file: &str) -> ExitCode {
     let bytes = match std::fs::read(file) {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -145,6 +197,38 @@ fn access_command(rest: &[String]) -> ExitCode {
         ),
         Err(refusal) => say(CHECK_REFUSED, refusal.code, &refusal.detail),
     }
+}
+
+/// `access teams <file> [--mode memory|sync]`: the slugs of the live teams with a store under
+/// `teams/`, one per line — the nightly backup bundles the `memory` ones. A snapshot that does not
+/// pass the check lists nothing and fails: a backup of a guessed list would look complete.
+fn teams_command(file: &str, options: &[String]) -> ExitCode {
+    let mode = match options {
+        [] => None,
+        [flag, value] if flag == "--mode" && value == "memory" => Some(Mode::Memory),
+        [flag, value] if flag == "--mode" && value == "sync" => Some(Mode::Sync),
+        _ => return say(CHECK_UNREADABLE, "usage", ACCESS_USAGE),
+    };
+    let snapshot = match std::fs::read(file)
+        .map_err(|error| format!("{file}: {error}"))
+        .and_then(|bytes| {
+            access::check(&bytes).map_err(|refusal| format!("{}: {}", refusal.code, refusal.detail))
+        }) {
+        Ok(snapshot) => snapshot,
+        Err(why) => {
+            eprintln!("vibememory-mcp: the access snapshot cannot be used: {why}");
+            return ExitCode::from(CHECK_UNREADABLE);
+        }
+    };
+    let mut out = std::io::stdout().lock();
+    for (slug, _) in snapshot.teams.iter().filter(|(_, team)| {
+        !team.adopted && team.deleted.is_none() && mode.is_none_or(|mode| team.mode == Some(mode))
+    }) {
+        if writeln!(out, "{slug}").is_err() {
+            return ExitCode::FAILURE;
+        }
+    }
+    ExitCode::SUCCESS
 }
 
 /// The two lines of an answer, and its exit code. A reader that stops after the first line —
@@ -195,33 +279,17 @@ fn serve_http(address: &str) -> ExitCode {
 /// Reads requests until stdin closes.
 fn serve(memories: &dyn Memories, caller: &Caller<'_>) -> ExitCode {
     let stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
-    for line in stdin.lock().lines() {
-        let line = match line {
-            Ok(line) => line,
-            Err(error) => {
-                eprintln!("vibememory-mcp: {error}");
-                return ExitCode::FAILURE;
-            }
-        };
-        if line.trim().is_empty() {
-            continue;
-        }
-        let response = match protocol::parse(&line) {
-            Ok(request) => protocol::handle(&request, caller, memories),
-            Err(detail) => Some(protocol::malformed(&detail)),
-        };
-        let Some(response) = response else {
-            continue; // a notification: answered by saying nothing
-        };
-        let Ok(text) = serde_json::to_string(&response) else {
-            eprintln!("vibememory-mcp: a response could not be encoded");
-            continue;
-        };
-        if writeln!(stdout, "{text}").is_err() || stdout.flush().is_err() {
-            // The client went away mid-answer; that is its business, not a failure of ours.
-            return ExitCode::SUCCESS;
+    match protocol::serve_lines(
+        stdin.lock(),
+        std::io::stdout(),
+        caller,
+        memories,
+        &mut |_, _| {},
+    ) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(problem) => {
+            eprintln!("vibememory-mcp: {problem}");
+            ExitCode::FAILURE
         }
     }
-    ExitCode::SUCCESS
 }

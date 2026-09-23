@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Number;
 use vibememory_core::naming::StoreName;
 use vibememory_core::token;
@@ -29,7 +29,7 @@ const ED25519: &str = "ssh-ed25519";
 const ED25519_KEY_BYTES: usize = 32;
 
 /// What kind of store a team keeps.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
     /// Only the memory server: members have no clone.
@@ -39,7 +39,7 @@ pub enum Mode {
 }
 
 /// A member's rank in a team.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Rank {
     /// The one who answers for the team; exactly one per team.
@@ -48,6 +48,15 @@ pub enum Rank {
     Admin,
     /// Everyone else.
     Member,
+}
+
+impl Rank {
+    /// Whether this rank runs the team: an owner or an admin may export a memory team's store and
+    /// search past sessions.
+    #[must_use]
+    pub fn runs_the_team(self) -> bool {
+        matches!(self, Self::Owner | Self::Admin)
+    }
 }
 
 /// What a token may do with the memory it opens.
@@ -190,6 +199,12 @@ pub enum Admission<'a> {
 }
 
 impl Snapshot {
+    /// The machine key with this id.
+    #[must_use]
+    pub fn key(&self, id: &str) -> Option<&Key> {
+        self.keys.iter().find(|key| key.id == id)
+    }
+
     /// Who `presented` is, at `now` (`YYYY-MM-DDTHH:MM:SSZ`).
     ///
     /// A `vmt_<id>_<secret>` string is looked up by its id and compared by digest; anything else
@@ -348,7 +363,8 @@ struct RawKey {
 
 /// `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`: a team slug, a handle, a machine, an agent. The name
 /// is a directory and an argument to git and ssh; a leading hyphen would make it an option.
-fn is_name(name: &str) -> bool {
+#[must_use]
+pub fn is_name(name: &str) -> bool {
     let bytes = name.as_bytes();
     (1..=MAX_NAME_LENGTH).contains(&bytes.len())
         && bytes
@@ -458,7 +474,8 @@ fn digits(text: &str) -> Option<u32> {
 }
 
 /// `YYYY-MM-DD`, a day that exists.
-fn is_day(text: &str) -> bool {
+#[must_use]
+pub fn is_day(text: &str) -> bool {
     let mut parts = text.split('-');
     let (Some(year), Some(month), Some(day), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())

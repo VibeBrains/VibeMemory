@@ -4,7 +4,8 @@
 # post-receive hook that mirrors every push to a private repository at any git host.
 #
 # Runs on the OWNER'S machine over the key seeded by seedKey.sh; each server step is one ssh
-# session with a here-document, and infra/storeInit.sh is copied to the host first.
+# session with a here-document, and infra/storeInit.sh and infra/storeRepack.sh are copied to the
+# host first.
 #
 # Idempotent: accounts, directories and permissions are changed only where they differ, config
 # values and files are rewritten only when their text differs, and sshd rules are applied under a
@@ -14,8 +15,13 @@ set -euo pipefail
 readonly DEFAULT_ALIAS=vibememory
 readonly DEFAULT_PATH=vibememory/store.git
 readonly DEFAULT_BRANCH=main
-readonly STORE_INIT_LOCAL="$(dirname "$0")/storeInit.sh"
-readonly STORE_INIT_REMOTE=/srv/vibememory/bin/storeInit.sh
+readonly SCRIPTS_LOCAL="$(dirname "$0")"
+readonly BIN_REMOTE=/srv/vibememory/bin
+# The one source of repository settings, and the nightly repacking of the owner's store and of
+# every team store: both are run on the host from here.
+readonly HOST_SCRIPTS="storeInit.sh storeRepack.sh"
+readonly STORE_INIT_REMOTE="$BIN_REMOTE/storeInit.sh"
+readonly STORE_REPACK_REMOTE="$BIN_REMOTE/storeRepack.sh"
 
 sshAlias="${VIBEMEMORY_SSH_ALIAS:-$DEFAULT_ALIAS}"
 repoPath="${VIBEMEMORY_REPO_PATH:-$DEFAULT_PATH}"
@@ -59,7 +65,9 @@ done
 [ -n "$sshAlias" ] || fail "Пустой алиас"
 [ -n "$repoPath" ] || fail "Пустой путь репозитория"
 [ -n "$branch" ] || fail "Пустая ветка"
-[ -f "$STORE_INIT_LOCAL" ] || fail "Нет $STORE_INIT_LOCAL"
+for script in $HOST_SCRIPTS; do
+  [ -f "$SCRIPTS_LOCAL/$script" ] || fail "Нет $SCRIPTS_LOCAL/$script"
+done
 
 ssh -o BatchMode=yes "$sshAlias" 'echo ok' >/dev/null 2>&1 ||
   fail "Сервер не пускает по ключу. Сначала ./infra/seedKey.sh"
@@ -121,25 +129,30 @@ place /srv/vibememory/teams vmgit vibememory 2770
 # setgid for the group and the sticky bit on top: the cabinet and the memory server both write here,
 # and neither may replace the other's file — the cabinet publishes rights, the host reports back.
 place /srv/vibememory/access root vmaccess 3770
+# The keys of vmgit are written by the application of the access snapshot alone, as vmgit.
+place /home/vmgit/.ssh vmgit vmgit 700
 echo "1/6 Учётки vmgit и vmcab, группы vibememory и vmaccess, каталоги /srv/vibememory на месте"
 REMOTE
 
-# 2. The one source of repository settings goes to the host, where the owner's store and, later,
-# every team repository are initialised by it.
-ssh -o BatchMode=yes "$sshAlias" "tmp=\$(mktemp); cat > \"\$tmp\";
-  if sudo cmp -s \"\$tmp\" $STORE_INIT_REMOTE; then echo '2/6 storeInit.sh на хосте совпадает';
-  else sudo install -o root -g root -m 755 \"\$tmp\" $STORE_INIT_REMOTE; echo '2/6 storeInit.sh записан на хост'; fi;
-  rm -f \"\$tmp\"" < "$STORE_INIT_LOCAL"
+# 2. The shared scripts go to the host: the settings every store is initialised with, and the
+# nightly repacking of the owner's store and of the team stores.
+for script in $HOST_SCRIPTS; do
+  ssh -o BatchMode=yes "$sshAlias" "tmp=\$(mktemp); cat > \"\$tmp\";
+    if sudo cmp -s \"\$tmp\" $BIN_REMOTE/$script; then echo '2/6 $script на хосте совпадает';
+    else sudo install -o root -g root -m 755 \"\$tmp\" $BIN_REMOTE/$script; echo '2/6 $script записан на хост'; fi;
+    rm -f \"\$tmp\"" < "$SCRIPTS_LOCAL/$script"
+done
 
 # 3. The personal store: settings from storeInit.sh, then permissions for the memory server.
 # ssh glues its arguments into one command line for the remote shell, so an empty argument
 # disappears and every argument after it moves one place left. Each one is quoted for that shell.
-ssh -o BatchMode=yes "$sshAlias" "bash -s -- $(printf '%q ' "$repoPath" "$branch" "$STORE_INIT_REMOTE" "$mirror")" <<'REMOTE'
+ssh -o BatchMode=yes "$sshAlias" "bash -s -- $(printf '%q ' "$repoPath" "$branch" "$STORE_INIT_REMOTE" "$STORE_REPACK_REMOTE" "$mirror")" <<'REMOTE'
 set -euo pipefail
 repoPath="${1:?путь репозитория не передан}"
 branch="${2:?ветка не передана}"
 storeInit="${3:?путь storeInit.sh не передан}"
-mirror="${4:-}"
+repack="${4:?путь storeRepack.sh не передан}"
+mirror="${5:-}"
 repo="$HOME/$repoPath"
 parent="$(dirname "$repo")"
 
@@ -179,64 +192,12 @@ git config --system --get-all safe.directory 2>/dev/null | grep -Fxq "$repo" ||
   sudo git config --system --add safe.directory "$repo"
 echo "4/6 Права стора: группа vibememory, запись группе только в objects/ и refs/; путь к нему — 710; safe.directory для $repo"
 
-# Nightly repacking, incremental. `gc.auto=0` keeps garbage collection out of the push path — a
-# tick must not wait for a repack — but every push lands as its own pack (`unpackLimit=1`), and
-# hundreds of small packs slow every read.
-#
-# Not `git gc`. It rewrites the whole store into one new pack, so it needs as much free space as
-# the store occupies: on 2026-09-16 it did that once, and on 2026-09-17 it died half-way at 2.23 GiB
-# with the disk full, and pushes stopped. `repack --geometric=2` merges the small packs and leaves
-# the big one alone while the small ones stay small.
-#
-# The script refuses to start without room for the worst case — every pack rewritten plus a
-# reserve — and says so in the journal: `journalctl -t vibememory-repack`. The old line sent its
-# output to /dev/null, which is how a failed repack stayed invisible for two nights.
+# Nightly repacking, incremental: storeRepack.sh, installed in step 2, says why it is not `git gc`
+# and refuses to start without room. An earlier bootstrap wrote its own copy under ~/vibememory/bin;
+# that copy is left where it is, and the crontab line below moves to the shared one.
 #
 # `set -e` kills the script on the first non-zero status, and both `crontab -l` (no crontab yet)
 # and `grep -q` (no match) return one legitimately. Hence `|| true` and an explicit `if`.
-repack="$parent/bin/storeRepack.sh"
-mkdir -p "$(dirname "$repack")"
-wantedRepack='#!/usr/bin/env bash
-# Nightly incremental repack of the store. Written by infra/hostBootstrap.sh.
-set -uo pipefail
-repo="${1:?repository path}"
-readonly RESERVE_BYTES=$((1024 * 1024 * 1024))
-readonly TAG=vibememory-repack
-say() { logger -t "$TAG" -- "$*"; }
-
-packs="$repo/objects/pack"
-[ -d "$packs" ] || { say "no pack directory in $repo"; exit 1; }
-# printf "%.0f", not print: awk prints large sums in exponent form, and under a Russian locale
-# with a decimal comma ("3,63136e+09"), which bash arithmetic rejects. Found on the first live run.
-packBytes=$(find "$packs" -maxdepth 1 -name "pack-*.pack" -printf "%s\n" | LC_ALL=C awk "{s+=\$1} END {printf \"%.0f\", s}")
-freeBytes=$(df -B1 --output=avail "$packs" | tail -1 | tr -d " ")
-needBytes=$((packBytes + RESERVE_BYTES))
-if [ "$freeBytes" -lt "$needBytes" ]; then
-  say "skipped: $freeBytes bytes free, $needBytes needed (packs $packBytes + reserve $RESERVE_BYTES)"
-  exit 1
-fi
-leftover=$(find "$packs" -maxdepth 1 -name "tmp_pack_*" | wc -l)
-[ "$leftover" -eq 0 ] || say "warning: $leftover tmp_pack file(s) left by an earlier run"
-# --git-dir, not -C: the repository is shared with another account, and -C checks ownership.
-# -n: no `update-server-info`. It rewrites info/refs on every run for the dumb HTTP transport, which
-# this store does not serve, and writes it group-writable outside objects/ and refs/.
-if out=$(git --git-dir="$repo" repack -d -n --geometric=2 --quiet 2>&1); then
-  say "done: $(git --git-dir="$repo" count-objects -v | tr "\n" " ")"
-else
-  say "failed: $out"
-  exit 1
-fi
-'
-# `cmp` and not `[ "$(cat …)" = … ]`: command substitution drops the trailing newline the text ends
-# with, so that comparison never matched and the file was rewritten on every run.
-if printf '%s' "$wantedRepack" | cmp -s - "$repack"; then
-  echo "5/6 Скрипт упаковки уже стоит и совпадает"
-else
-  printf '%s' "$wantedRepack" > "$repack"
-  chmod 755 "$repack"
-  echo "5/6 Скрипт упаковки записан: $repack"
-fi
-
 if command -v crontab >/dev/null 2>&1; then
   line="17 4 * * * $repack $repo"
   current="$(crontab -l 2>/dev/null || true)"
@@ -301,9 +262,10 @@ KbdInteractiveAuthentication no
 MaxAuthTries 3'
 # Ends with `Match all`: drop-ins are included at the top of sshd_config, and without it every
 # directive after the Include would apply to vmgit alone.
-serviceText='# Written by infra/hostBootstrap.sh. The memory server account: keys only, no terminal,
-# no forwarding of any kind.
+serviceText='# Written by infra/hostBootstrap.sh. The memory server account: keys only, from the one file the
+# application of the access snapshot writes; no terminal, no forwarding of any kind.
 Match User vmgit
+    AuthorizedKeysFile .ssh/authorized_keys
     PasswordAuthentication no
     KbdInteractiveAuthentication no
     PermitTTY no

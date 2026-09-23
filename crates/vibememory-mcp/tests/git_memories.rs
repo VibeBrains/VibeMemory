@@ -279,3 +279,60 @@ fn a_write_that_started_before_a_push_changes_nothing() {
         "no temporary index left behind"
     );
 }
+
+#[test]
+fn the_host_makes_the_first_commit_and_keeps_a_file_in_step() {
+    let temp = Temp::new("settle");
+    git(
+        &temp.0,
+        &[
+            "init",
+            "--quiet",
+            "--bare",
+            "--initial-branch=main",
+            "team.git",
+        ],
+        None,
+    );
+    let bare = temp.0.join("team.git");
+    let host = GitMemories::new(bare.clone(), "host".to_owned());
+    assert_eq!(host.main_commit().expect("asked"), None, "no main yet");
+
+    let older = b"* -text\n";
+    assert!(
+        host.settle_file(".gitattributes", older, "first")
+            .expect("the first commit")
+    );
+    let first = host
+        .main_commit()
+        .expect("asked")
+        .expect("main after the first commit");
+    assert_eq!(
+        git(&bare, &["ls-tree", "--name-only", "main"], None),
+        ".gitattributes",
+        "the first commit holds the one file"
+    );
+    assert!(
+        !host
+            .settle_file(".gitattributes", older, "again")
+            .expect("nothing to do"),
+        "the same text makes no commit"
+    );
+    assert_eq!(host.main_commit().expect("asked"), Some(first.clone()));
+
+    let current = vibememory_cli::install::GITATTRIBUTES;
+    assert!(
+        host.settle_file(".gitattributes", current.as_bytes(), "evolve")
+            .expect("a second commit")
+    );
+    assert_eq!(git(&bare, &["rev-list", "--count", "main"], None), "2");
+    assert_eq!(
+        git(&bare, &["rev-parse", "main^"], None),
+        first,
+        "history is kept"
+    );
+    assert_eq!(
+        git(&bare, &["cat-file", "blob", "main:.gitattributes"], None),
+        current.trim_end()
+    );
+}

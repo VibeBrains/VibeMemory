@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Puts the memory server on the store's host, both ways a client without a local store reaches it:
 # over ssh as a stdio server for the owner, and over HTTPS behind Caddy for every token of the
-# access snapshot.
+# access snapshot. With it come the host's own commands under vmgit: the application of the access
+# snapshot whenever it changes, the host's report every hour, and the nightly repacking of the team
+# stores.
 #
 # Runs on the OWNER'S machine. The binary is built for x86_64 Linux beforehand (see
 # docs/manuals/mcpServer.md) and passed with --binary; everything on the server happens in one ssh
@@ -11,7 +13,7 @@
 # Idempotent: the binary is replaced by a rename and checked by running it. The first snapshot is
 # made once, from the token file of the single-token server, and that file is removed only after
 # the new server has been seen to accept the same token — clients keep working on the same value.
-# The unit, the Caddyfile and the fail2ban jail are rewritten only when their text differs. Nothing
+# The units, the Caddyfile and the fail2ban jail are rewritten only when their text differs. Nothing
 # of the store is touched, and no token is ever printed: this output is read in sessions whose
 # transcripts are synced.
 set -euo pipefail
@@ -25,6 +27,12 @@ readonly OWNER_BIN=vibememory/bin/vibememory-mcp
 readonly SERVER_BIN=/srv/vibememory/bin/vibememory-mcp
 readonly ACCESS=/srv/vibememory/access/access.json
 readonly TEAMS=/srv/vibememory/teams
+# Installed by hostBootstrap.sh; repacks every live team store.
+readonly STORE_REPACK=/srv/vibememory/bin/storeRepack.sh
+# vmgit's keys: written by the application of the snapshot alone.
+readonly VMGIT_SSH=/home/vmgit/.ssh
+# After the nightly backup (backupSetup.sh, 03:47) and the owner's repack (hostBootstrap.sh, 04:17).
+readonly TEAMS_REPACK_AT='*-*-* 04:47:00'
 # The token of the single-token server: made into the snapshot's legacy line, then removed.
 readonly TOKEN_PATH=vibememory/mcp-token
 # Limits of the personal store in the first snapshot: memories per project, bytes per memory.
@@ -76,17 +84,19 @@ case "$port" in *[!0-9]*|"") fail "порт $port — не число" ;; esac
 # The same rule `access check` applies; checked here too, because the handle goes into JSON text.
 case "$owner" in *[!a-z0-9-]*) fail "handle $owner: только строчные латинские буквы, цифры и дефис" ;; esac
 
-say "1/6 Копирую бинарь"
+say "1/7 Копирую бинарь"
 ssh -o BatchMode=yes "$sshAlias" "mkdir -p \$HOME/$(dirname "$OWNER_BIN")"
 scp -q "$binary" "$sshAlias:$OWNER_BIN.new"
 
-ssh -o BatchMode=yes "$sshAlias" 'bash -s' -- "$domain" "$port" "$REPO_PATH" "$OWNER_BIN" \
-  "$SERVER_BIN" "$ACCESS" "$TEAMS" "$TOKEN_PATH" "${owner:--}" "$PERSONAL_MAX_RECORDS" \
-  "$PERSONAL_MAX_RECORD_BYTES" "$JAIL_MAXRETRY" "$JAIL_FINDTIME" <<'REMOTE'
+ssh -o BatchMode=yes "$sshAlias" "bash -s -- $(printf '%q ' "$domain" "$port" "$REPO_PATH" \
+  "$OWNER_BIN" "$SERVER_BIN" "$ACCESS" "$TEAMS" "$TOKEN_PATH" "${owner:--}" "$PERSONAL_MAX_RECORDS" \
+  "$PERSONAL_MAX_RECORD_BYTES" "$JAIL_MAXRETRY" "$JAIL_FINDTIME" "$STORE_REPACK" "$VMGIT_SSH" \
+  "$TEAMS_REPACK_AT")" <<'REMOTE'
 set -euo pipefail
 domain="$1"; port="$2"; repo="$HOME/$3"; ownerBin="$HOME/$4"; serverBin="$5"; access="$6"
 teams="$7"; token="$HOME/$8"; owner="$9"; maxRecords="${10}"; maxRecordBytes="${11}"
-jailMaxretry="${12}"; jailFindtime="${13}"
+jailMaxretry="${12}"; jailFindtime="${13}"; storeRepack="${14}"; vmgitSsh="${15}"
+teamsRepackAt="${16}"
 # ssh glues arguments into one line and an empty one vanishes; "-" stands for "not given".
 [ "$owner" = - ] && owner=""
 
@@ -112,7 +122,7 @@ check() { sudo -u vmgit "$serverBin" access check "$1" | head -n 1 || true; }
 if sudo test -e "$access"; then
   verdict=$(check "$access")
   [ "$verdict" = ok ] || { echo "Ошибка: снимок $access не проходит проверку: $verdict" >&2; exit 1; }
-  echo "2/6 Снимок прав на месте и проходит проверку"
+  echo "2/7 Снимок прав на месте и проходит проверку"
 else
   [ -n "$owner" ] || { echo "Ошибка: снимка ещё нет — нужен --owner <handle владельца>" >&2; exit 1; }
   [ -s "$token" ] || { echo "Ошибка: нет ни снимка $access, ни файла токена $token" >&2; exit 1; }
@@ -158,7 +168,7 @@ JSON
   sudo install -o vmcab -g vmaccess -m 0640 "$candidate" "$access.new"
   sudo mv -f "$access.new" "$access"
   rm -f "$candidate"
-  echo "2/6 Снимок прав собран: личный стор, член $owner, строка tk_legacy с отпечатком токена"
+  echo "2/7 Снимок прав собран: личный стор, член $owner, строка tk_legacy с отпечатком токена"
 fi
 
 unit=/etc/systemd/system/vibememory-mcp.service
@@ -189,7 +199,7 @@ for _ in $(seq 1 20); do
   curl -s -o /dev/null "http://127.0.0.1:$port/mcp" && break
   sleep 0.5
 done
-echo "3/6 Сервис vibememory-mcp под vmgit: $(systemctl is-active vibememory-mcp)"
+echo "3/7 Сервис vibememory-mcp под vmgit: $(systemctl is-active vibememory-mcp)"
 
 status() { curl -s -o /dev/null -w '%{http_code}' "$@" "http://127.0.0.1:$port/mcp"; }
 anonymous=$(status -X POST -H 'Content-Type: application/json' --data '{}')
@@ -204,10 +214,97 @@ if [ -s "$token" ]; then
   rm -f "$header"
   [ "$pinged" = 200 ] || { echo "Ошибка: новый сервер не принял прежний токен (код $pinged); файл токена оставлен" >&2; exit 1; }
   rm -f "$token"
-  echo "4/6 Прежний токен принят новым сервером; его файл удалён — в снимке остался отпечаток"
+  echo "4/7 Прежний токен принят новым сервером; его файл удалён — в снимке остался отпечаток"
 else
-  echo "4/6 Без токена — 401; файла прежнего токена нет"
+  echo "4/7 Без токена — 401; файла прежнего токена нет"
 fi
+
+# The host's own commands, all under vmgit, each unit writing exactly where its command writes:
+# the application of the snapshot (team stores, vmgit's keys, applied.json, host.json) whenever
+# the cabinet publishes one, the report every hour, and the nightly repacking of the team stores.
+[ -x "$storeRepack" ] || { echo "Ошибка: нет $storeRepack — сначала hostBootstrap.sh" >&2; exit 1; }
+reload=0
+putUnit() {
+  local file="/etc/systemd/system/$1" text="$2"
+  if [ "$(sudo cat "$file" 2>/dev/null || true)" != "$text" ]; then
+    printf '%s\n' "$text" | sudo tee "$file" >/dev/null
+    reload=1
+  fi
+}
+putUnit vibememory-access-apply.service "[Unit]
+Description=VibeMemory: apply the access snapshot to the team stores and vmgit's keys
+
+[Service]
+Type=oneshot
+User=vmgit
+UMask=0007
+ExecStart=$serverBin access-apply --access $access --teams $teams
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=$teams $(dirname "$access") $vmgitSsh"
+putUnit vibememory-access-apply.path "[Unit]
+Description=VibeMemory: apply the access snapshot whenever it changes
+
+[Path]
+PathChanged=$access
+Unit=vibememory-access-apply.service
+
+[Install]
+WantedBy=multi-user.target"
+putUnit vibememory-status.service "[Unit]
+Description=VibeMemory: the host's report for the cabinet
+
+[Service]
+Type=oneshot
+User=vmgit
+UMask=0007
+ExecStart=$serverBin status --access $access --teams $teams
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=$(dirname "$access")"
+putUnit vibememory-status.timer "[Unit]
+Description=VibeMemory: the host's report every hour
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target"
+putUnit vibememory-teams-repack.service "[Unit]
+Description=VibeMemory: nightly repacking of the team stores
+
+[Service]
+Type=oneshot
+User=vmgit
+UMask=0007
+ExecStart=$storeRepack --teams $teams
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=$teams"
+putUnit vibememory-teams-repack.timer "[Unit]
+Description=VibeMemory: repack the team stores every night
+
+[Timer]
+OnCalendar=$teamsRepackAt
+Persistent=true
+
+[Install]
+WantedBy=timers.target"
+[ "$reload" = 0 ] || sudo systemctl daemon-reload
+sudo systemctl enable --now --quiet vibememory-access-apply.path vibememory-status.timer \
+  vibememory-teams-repack.timer
+# Applied once now rather than at the cabinet's first publication: vmgit's keys and the host's
+# report exist from the start.
+sudo systemctl start vibememory-access-apply.service ||
+  { echo "Ошибка: применение снимка не прошло — journalctl -t vibememory-apply" >&2; exit 1; }
+echo "5/7 Команды хоста под vmgit: снимок применён ($(sudo -u vmgit cat "$(dirname "$access")/applied.json" | grep -c '"code"') проблем), отчёт — раз в час, упаковка сторов команд — $teamsRepackAt"
 
 command -v caddy >/dev/null || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq caddy >/dev/null
 caddyfile=/etc/caddy/Caddyfile
@@ -223,7 +320,7 @@ if [ "$(sudo cat "$caddyfile" 2>/dev/null || true)" != "$caddyText" ]; then
   printf '%s\n' "$caddyText" | sudo tee "$caddyfile" >/dev/null
   sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy
 fi
-echo "5/6 Caddy: $(systemctl is-active caddy), https://$domain/mcp"
+echo "6/7 Caddy: $(systemctl is-active caddy), https://$domain/mcp"
 
 # The server logs every refused token with the address Caddy saw (the last X-Forwarded-For entry).
 # Bans go to the web ports only: a wrong token says nothing about ssh. Without fail2ban on the host
@@ -234,7 +331,7 @@ echo "5/6 Caddy: $(systemctl is-active caddy), https://$domain/mcp"
 # host and process, so a failregex anchored at ^ matches nothing. An expired token is logged in
 # other words, which the filter does not match: a client that was let in once is not an attack.
 if ! command -v fail2ban-client >/dev/null && [ ! -x /usr/bin/fail2ban-client ]; then
-  echo "6/6 fail2ban не установлен — джейл для /mcp пропущен"
+  echo "7/7 fail2ban не установлен — джейл для /mcp пропущен"
   exit 0
 fi
 filter=/etc/fail2ban/filter.d/vibememory-mcp.conf
@@ -268,9 +365,9 @@ fi
 # "active" is not the claim that matters; an action that can reach the firewall is.
 actions=$(sudo /usr/bin/fail2ban-client get vibememory-mcp actions 2>/dev/null | tail -n +2)
 if [ -n "$actions" ]; then
-  echo "6/6 fail2ban: джейл vibememory-mcp с действием $actions"
+  echo "7/7 fail2ban: джейл vibememory-mcp с действием $actions"
 else
-  echo "6/6 fail2ban: джейл vibememory-mcp БЕЗ действия — баны не дойдут до firewall" >&2
+  echo "7/7 fail2ban: джейл vibememory-mcp БЕЗ действия — баны не дойдут до firewall" >&2
   exit 1
 fi
 REMOTE

@@ -1,10 +1,11 @@
-# Хост стора: ключ, bare-репозиторий, зеркало
+# Хост стора: ключ, bare-репозиторий, зеркало, команды хоста, бэкап
 
 Стор — приватный git-репозиторий на **своём** хосте (`vm@vibememory.ru`). Машины пушат туда и
 забирают оттуда; зеркало в приватный GitHub делает сам хост, а не машина, — тогда бэкап не
 зависит от того, чья машина пушила последней.
 
-Три шага, три скрипта, все запускаются **на домашней машине**.
+Основа — три шага, три скрипта, все запускаются **на домашней машине**. Дальше по разделам:
+зеркало, переезд, приёмник копий соседнего продукта, команды хоста и бэкап сторов команд.
 
 ## 1. Ключ — `./infra/seedKey.sh`
 
@@ -44,9 +45,11 @@ ssh-add --apple-use-keychain ~/.ssh/id_ed25519_vibememory
    терминала. `vmcab` — кабинет: без sudo и без доступа к репозиториям. Группа `vibememory` (`vm`,
    `vmgit`) делит репозитории, группа `vmaccess` (`vmcab`, `vmgit`) — каталог обмена снимком прав.
    Каталоги: `/srv/vibememory/bin` (755), `teams` (2770 `vmgit:vibememory`), `access` (3770
-   `root:vmaccess` — sticky, чтобы кабинет и сервер не подменяли файлы друг друга).
-2. **`infra/storeInit.sh` едет на хост** в `/srv/vibememory/bin/` — единственное место настроек
-   голого репозитория: и личного стора, и будущих репозиториев команд.
+   `root:vmaccess` — sticky, чтобы кабинет и сервер не подменяли файлы друг друга),
+   `/home/vmgit/.ssh` (700) — ключи машин в нём пишет только применение снимка прав.
+2. **`infra/storeInit.sh` и `infra/storeRepack.sh` едут на хост** в `/srv/vibememory/bin/`.
+   Первый — единственное место настроек голого репозитория: и личного стора, и репозиториев
+   команд. Второй — ночная упаковка: личного стора из cron владельца и сторов команд по таймеру.
 3. **Личный стор** — `storeInit.sh <путь> --adopted`: `core.autocrlf=false` (байты остаются
    байтами), `core.filemode=false`, `gc.auto=0` (сборка мусора не на приёме push), `transfer.unpackLimit=1`
    (push остаётся пакетом с дельтами), без `core.bigFileThreshold`, `pack.threads=1`,
@@ -58,12 +61,14 @@ ssh-add --apple-use-keychain ~/.ssh/id_ed25519_vibememory
    кода от владельца. Путь к стору — `/home/vm` и `~/vibememory` — 710 с группой `vibememory`.
    `safe.directory` в системном конфиге git — для ручных команд `git -C` из-под `vmgit`; код ходит
    `--git-dir` и в нём не нуждается.
-5. **Ночная упаковка** `~/vibememory/bin/storeRepack.sh` в 04:17: `repack -d -n --geometric=2`, отказ
-   без места на худший случай, строка в `journalctl -t vibememory-repack`. С `--mirror` — хук
-   `post-receive` с `git push --mirror`; недоступное зеркало push **не** отклоняет.
+5. **Ночная упаковка** `/srv/vibememory/bin/storeRepack.sh` в 04:17 из cron владельца:
+   `repack -d -n --geometric=2`, отказ без места на худший случай, строка в
+   `journalctl -t vibememory-repack`. Копия, которую ставили прежние версии в `~/vibememory/bin/`,
+   остаётся на месте, а строка cron переезжает на общую. С `--mirror` — хук `post-receive` с
+   `git push --mirror`; недоступное зеркало push **не** отклоняет.
 6. **sshd** — два drop-in под страховочным таймером: `10-vibememory-hardening.conf` (вход только по
-   ключу, root без пароля, три попытки) и `20-vibememory-vmgit.conf` (`Match User vmgit`: без
-   терминала и без проброса, заканчивается `Match all`). Правила остаются, только если новое
+   ключу, root без пароля, три попытки) и `20-vibememory-vmgit.conf` (`Match User vmgit`: ключи
+   только из `~/.ssh/authorized_keys`, без терминала и без проброса, заканчивается `Match all`). Правила остаются, только если новое
    соединение по ключу подтвердилось в журнале sshd; иначе через 180 с сервер вернёт прежние файлы сам.
 
 **Откат прав стора** одной строкой, на хосте:
@@ -180,3 +185,85 @@ Deploy-ключ старого сервера в репозитории зерк
 
 Имена копий обязаны быть уникальными: перезапись существующего файла rrsync молча пропускает с кодом
 0. Как это проверено и чем — [knowledge/design/backupDrop.md](../knowledge/design/backupDrop.md).
+
+## 7. Команды хоста: снимок прав, отчёт, сторы команд
+
+Их ставит `./infra/hostMcp.sh` вместе с сервером памяти ([mcpServer.md](mcpServer.md)), после
+`hostBootstrap.sh`. Все работают под `vmgit`, каждая пишет только туда, где её работа:
+
+| Юнит | Когда | Что делает |
+|---|---|---|
+| `vibememory-access-apply.path` → `.service` | при каждой смене `/srv/vibememory/access/access.json` | `vibememory-mcp access-apply`: сторы команд, ключи машин в `~vmgit/.ssh/authorized_keys`, `applied.json` и отчёт `host.json` |
+| `vibememory-status.timer` → `.service` | раз в час | `vibememory-mcp status`: отчёт `host.json` для кабинета |
+| `vibememory-teams-repack.timer` → `.service` | в 04:47 | `storeRepack.sh --teams`: упаковка каждого живого стора команды |
+
+Что делает применение снимка с каталогом `teams/`:
+
+- команда есть в снимке, каталога нет — создаётся `teams/<слаг>.git` настройками `storeInit.sh`,
+  с хуком `pre-receive`, и первым коммитом с единственным файлом `.gitattributes` движка
+- каталог есть — настройки и хук ставятся заново, `.gitattributes` в `main` сверяется с текстом
+  движка и при расхождении получает новый коммит поверх, история цела
+- команда помечена `deleted` — каталог переименовывается в `teams/<слаг>.deleted-<дата>.git`
+- слага нет в снимке — каталог не трогается и попадает в `orphans` отчёта
+- ничего не удаляется никогда
+
+Что не получилось, лежит в `problems` файла `applied.json` с кодом
+([hostStatusSpec.md](hostStatusSpec.md)): слаг удалённой команды, негодный снимок, сбой операции.
+Снимок, который не проходит `access check`, не меняет ничего — ни сторов, ни ключей.
+
+Проверить руками:
+
+```bash
+ssh vibememory 'systemctl list-timers "vibememory-*" --no-pager'
+```
+
+```bash
+ssh vibememory 'journalctl -t vibememory-apply -t vibememory-status -t vibememory-repack --since today --no-pager'
+```
+
+```bash
+ssh vibememory 'sudo cat /srv/vibememory/access/applied.json'
+```
+
+Вход ключом машины и правила push — [hostShellSpec.md](hostShellSpec.md); строки журнала —
+`journalctl -t vibememory-shell -t vibememory-pre-receive`.
+
+## 8. Бэкап сторов memory-команд — `./infra/backupSetup.sh`
+
+У участников `memory`-команды клона нет: стор существует только на хосте. Каждую ночь хост кладёт
+`git bundle --all` каждого такого стора, зашифрованный age **открытым** ключом владельца, одним
+коммитом без истории в приватный репозиторий. Закрытый ключ создаётся на Mac и хост не покидает
+никогда: захваченный хост свои бэкапы прочитать не может. `sync`-команды в бэкап не входят —
+полный клон есть у каждого участника.
+
+```bash
+./infra/backupSetup.sh --repo VibeBrains/VibeMemoryBackup --gh-user VibeBrains
+```
+
+Скрипт создаёт ключ `~/.vibememory/keys/backup.age` (если его нет), приватный репозиторий (если
+его нет), ставит на хост `age`, открытый ключ получателя в `/srv/vibememory/backup/recipient.txt`,
+deploy key и ssh-алиас `memoryBackup` у `vmgit`, `known_hosts` GitHub из его API и таймер
+`vibememory-backup` на 03:47. Затем делает первый бэкап и проверяет его на этой машине:
+расшифровывает и клонирует каждый стор. `--gh-user` — учётка gh, которой принадлежит репозиторий,
+если она не активная; её токен уходит в gh через окружение и не печатается.
+
+**Сохраните копию `~/.vibememory/keys/backup.age` там, где храните пароли.** Без него бэкап не
+открыть никому.
+
+Время последнего бэкапа — `backup.json` рядом со снимком прав, в отчёте хоста — поле `backup`.
+Восстановить стор:
+
+```bash
+gh repo clone VibeBrains/VibeMemoryBackup /tmp/backup
+```
+
+```bash
+age -d -i ~/.vibememory/keys/backup.age /tmp/backup/<слаг>.bundle.age > /tmp/<слаг>.bundle
+```
+
+```bash
+git clone --bare /tmp/<слаг>.bundle /tmp/<слаг>.git
+```
+
+Дальше каталог едет на хост в `/srv/vibememory/teams/<слаг>.git` владельцем `vmgit:vibememory`, и
+следующее применение снимка ставит ему настройки и хук.

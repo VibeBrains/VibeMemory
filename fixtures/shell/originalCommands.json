@@ -1,0 +1,327 @@
+{
+  "description": "What a machine key may run on the host: SSH_ORIGINAL_COMMAND against the access snapshot. The snapshot is the base of fixtures/access/accessSnapshots.json with snapshotPatch applied. Keys are synthetic ed25519: all 32 key bytes equal.",
+  "snapshotPatch": {
+    "teamCount": 5,
+    "teams": {
+      "otherteam": {
+        "mode": "sync",
+        "writable": true,
+        "limits": {
+          "maxRecords": 5000,
+          "maxRecordBytes": 65536,
+          "quotaBytes": 10737418240,
+          "seats": 5
+        },
+        "members": {
+          "bob": "owner"
+        }
+      }
+    },
+    "keys": [
+      {
+        "id": "mk_3f8k1p0z",
+        "member": "alice",
+        "machine": "laptop",
+        "storeName": "alice-laptop",
+        "teams": [
+          "vibebrains",
+          "syncteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+      },
+      {
+        "id": "mk_4g5h6j7k",
+        "member": "alice",
+        "machine": "desk",
+        "storeName": "alice-desk",
+        "teams": [
+          "syncteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz"
+      },
+      {
+        "id": "mk_5m6n7p8q",
+        "member": "bob",
+        "machine": "desk",
+        "storeName": "bob-desk",
+        "teams": [
+          "otherteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi"
+      },
+      {
+        "id": "mk_6r7s8t9v",
+        "member": "borodatych",
+        "machine": "mac",
+        "storeName": "borodatych-mac",
+        "teams": [
+          "vibebrains",
+          "syncteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIERERERERERERERERERERERERERERERERERERERERERE"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "syncUploadByAdmin",
+      "provenance": "computed",
+      "note": "An admin of a sync team clones its store: the path as git sends it, in single quotes.",
+      "key": "mk_3f8k1p0z",
+      "command": "git-upload-pack 'teams/syncteam.git'",
+      "expect": {
+        "action": "upload",
+        "team": "syncteam"
+      }
+    },
+    {
+      "id": "absolutePath",
+      "provenance": "computed",
+      "note": "The same store named by its absolute path on the host.",
+      "key": "mk_3f8k1p0z",
+      "command": "git-upload-pack '/srv/vibememory/teams/syncteam.git'",
+      "expect": {
+        "action": "upload",
+        "team": "syncteam"
+      }
+    },
+    {
+      "id": "unquotedPath",
+      "provenance": "computed",
+      "note": "Some clients send the path without quotes; a path with no metacharacters is the same path.",
+      "key": "mk_3f8k1p0z",
+      "command": "git-upload-pack teams/syncteam.git",
+      "expect": {
+        "action": "upload",
+        "team": "syncteam"
+      }
+    },
+    {
+      "id": "memoryExportByMember",
+      "provenance": "computed",
+      "note": "A plain member of a memory team has no clone, and a clone would be an export: refused.",
+      "key": "mk_3f8k1p0z",
+      "command": "git-upload-pack 'teams/vibebrains.git'",
+      "expect": {
+        "code": "exportDenied"
+      }
+    },
+    {
+      "id": "memoryExportByOwner",
+      "provenance": "computed",
+      "note": "The owner of a memory team may export its store.",
+      "key": "mk_6r7s8t9v",
+      "command": "git-upload-pack 'teams/vibebrains.git'",
+      "expect": {
+        "action": "upload",
+        "team": "vibebrains"
+      }
+    },
+    {
+      "id": "syncPush",
+      "provenance": "computed",
+      "note": "A member pushes to a sync team even when its grant is over: pre-receive answers with readOnly, which the tick understands.",
+      "key": "mk_3f8k1p0z",
+      "command": "git-receive-pack 'teams/syncteam.git'",
+      "expect": {
+        "action": "receive",
+        "team": "syncteam"
+      }
+    },
+    {
+      "id": "memoryPush",
+      "provenance": "computed",
+      "note": "Nobody pushes to a memory team: only the memory server writes its store.",
+      "key": "mk_6r7s8t9v",
+      "command": "git-receive-pack 'teams/vibebrains.git'",
+      "expect": {
+        "code": "pushDenied"
+      }
+    },
+    {
+      "id": "injectionSemicolon",
+      "provenance": "computed",
+      "note": "A second command after a semicolon is not a path.",
+      "key": "mk_3f8k1p0z",
+      "command": "git-upload-pack 'teams/syncteam.git'; rm -rf ~",
+      "expect": {
+        "code": "commandDenied"
+      }
+    },
+    {
+      "id": "injectionPipe",
+      "provenance": "computed",
+      "note": "Nor is a pipe.",
+      "key": "mk_3f8k1p0z",
+      "command": "git-upload-pack 'teams/syncteam.git' | cat",
+      "expect": {
+        "code": "commandDenied"
+      }
+    },
+    {
+      "id": "dotDot",
+      "provenance": "computed",
+      "note": "A path that climbs out of teams/ is refused before any repository is looked at.",
+      "key": "mk_3f8k1p0z",
+      "command": "git-upload-pack 'teams/../../home/vm/vibememory/store.git'",
+      "expect": {
+        "code": "commandDenied"
+      }
+    },
+    {
+      "id": "retiredDirectory",
+      "provenance": "computed",
+      "note": "A renamed directory of a deleted team is not a store name, even when its slug belongs to a live team again.",
+      "key": "mk_3f8k1p0z",
+      "command": "git-upload-pack 'teams/syncteam.deleted-2026-08-01.git'",
+      "expect": {
+        "code": "commandDenied"
+      }
+    },
+    {
+      "id": "foreignPath",
+      "provenance": "computed",
+      "note": "The owner's personal store by its own path: not a team store.",
+      "key": "mk_3f8k1p0z",
+      "command": "git-upload-pack '/home/vm/vibememory/store.git'",
+      "expect": {
+        "code": "commandDenied"
+      }
+    },
+    {
+      "id": "personalIsNotAKeysTeam",
+      "provenance": "computed",
+      "note": "personal exists in the snapshot but no machine key opens it: the owner reaches it with the owner's own key.",
+      "key": "mk_6r7s8t9v",
+      "command": "git-upload-pack 'teams/personal.git'",
+      "expect": {
+        "code": "unknownTeam"
+      }
+    },
+    {
+      "id": "deletedTeam",
+      "provenance": "computed",
+      "note": "A deleted team is gone for every key.",
+      "key": "mk_3f8k1p0z",
+      "command": "git-upload-pack 'teams/oldteam.git'",
+      "expect": {
+        "code": "teamGone"
+      }
+    },
+    {
+      "id": "teamNotInSnapshot",
+      "provenance": "computed",
+      "note": "A directory the snapshot does not know is gone as far as a key is concerned.",
+      "key": "mk_3f8k1p0z",
+      "command": "git-upload-pack 'teams/lost.git'",
+      "expect": {
+        "code": "teamGone"
+      }
+    },
+    {
+      "id": "unknownKey",
+      "provenance": "computed",
+      "note": "A key that is not in the snapshot was revoked.",
+      "key": "mk_00000000",
+      "command": "status",
+      "expect": {
+        "code": "unknownKey"
+      }
+    },
+    {
+      "id": "mcpMemoryTeam",
+      "provenance": "computed",
+      "note": "The memory server of a team over ssh, as the key's member, agent named by the client.",
+      "key": "mk_3f8k1p0z",
+      "command": "mcp --team vibebrains --agent claude-code",
+      "expect": {
+        "action": "mcp",
+        "team": "vibebrains",
+        "agent": "claude-code"
+      }
+    },
+    {
+      "id": "mcpSyncTeam",
+      "provenance": "computed",
+      "note": "A sync team has a memory server too.",
+      "key": "mk_3f8k1p0z",
+      "command": "mcp --team syncteam --agent vibeide",
+      "expect": {
+        "action": "mcp",
+        "team": "syncteam",
+        "agent": "vibeide"
+      }
+    },
+    {
+      "id": "mcpBadAgent",
+      "provenance": "computed",
+      "note": "An agent name follows the snapshot's name rule.",
+      "key": "mk_3f8k1p0z",
+      "command": "mcp --team vibebrains --agent Claude",
+      "expect": {
+        "code": "commandDenied"
+      }
+    },
+    {
+      "id": "mcpExtraArgument",
+      "provenance": "computed",
+      "note": "Nothing beyond the two flags: a --git-store would point the server at another store.",
+      "key": "mk_3f8k1p0z",
+      "command": "mcp --team vibebrains --agent claude-code --git-store /home/vm/vibememory/store.git",
+      "expect": {
+        "code": "commandDenied"
+      }
+    },
+    {
+      "id": "mcpForeignTeam",
+      "provenance": "computed",
+      "note": "The memory server of a team the key does not open.",
+      "key": "mk_3f8k1p0z",
+      "command": "mcp --team personal --agent claude-code",
+      "expect": {
+        "code": "unknownTeam"
+      }
+    },
+    {
+      "id": "status",
+      "provenance": "computed",
+      "note": "Any key may ask for its own status.",
+      "key": "mk_5m6n7p8q",
+      "command": "status",
+      "expect": {
+        "action": "status"
+      }
+    },
+    {
+      "id": "interactive",
+      "provenance": "computed",
+      "note": "An ssh session without a command asks for a shell, and there is none.",
+      "key": "mk_3f8k1p0z",
+      "command": "",
+      "expect": {
+        "code": "commandDenied"
+      }
+    },
+    {
+      "id": "otherProgram",
+      "provenance": "computed",
+      "note": "Any other program.",
+      "key": "mk_3f8k1p0z",
+      "command": "bash -c id",
+      "expect": {
+        "code": "commandDenied"
+      }
+    },
+    {
+      "id": "snapshotUnusable",
+      "provenance": "computed",
+      "note": "Without a readable snapshot nobody is let in, whatever the command.",
+      "key": "mk_3f8k1p0z",
+      "command": "status",
+      "snapshotUsable": false,
+      "expect": {
+        "code": "snapshotUnusable"
+      }
+    }
+  ]
+}

@@ -1,0 +1,601 @@
+{
+  "description": "host.json as the status function builds it from the applied snapshot, applied.json and what it finds on the host. The snapshot is the base of fixtures/access/accessSnapshots.json with snapshotPatch applied; facts are what the host measured.",
+  "snapshotPatch": {
+    "teamCount": 5,
+    "teams": {
+      "otherteam": {
+        "mode": "sync",
+        "writable": true,
+        "limits": {
+          "maxRecords": 5000,
+          "maxRecordBytes": 65536,
+          "quotaBytes": 10737418240,
+          "seats": 5
+        },
+        "members": {
+          "bob": "owner"
+        }
+      }
+    },
+    "keys": [
+      {
+        "id": "mk_3f8k1p0z",
+        "member": "alice",
+        "machine": "laptop",
+        "storeName": "alice-laptop",
+        "teams": [
+          "vibebrains",
+          "syncteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+      },
+      {
+        "id": "mk_4g5h6j7k",
+        "member": "alice",
+        "machine": "desk",
+        "storeName": "alice-desk",
+        "teams": [
+          "syncteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz"
+      },
+      {
+        "id": "mk_5m6n7p8q",
+        "member": "bob",
+        "machine": "desk",
+        "storeName": "bob-desk",
+        "teams": [
+          "otherteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "everyKindOfDirectory",
+      "provenance": "computed",
+      "note": "Teams of the snapshot with a repository on the host, the adopted store where the snapshot says it is, a deleted team's renamed directory, an orphan the snapshot does not know, and a directory that is no store at all, which is left out. syncteam has no repository yet and is not listed.",
+      "applied": {
+        "version": 1,
+        "snapshotHash": "9f2c000000000000000000000000000000000000000000000000000000000000",
+        "appliedAt": "2026-09-23T10:00:00Z",
+        "teamCount": 5,
+        "problems": [
+          {
+            "code": "slugRetired",
+            "team": "reborn",
+            "detail": "teams/reborn.deleted-2026-09-01.git exists"
+          }
+        ]
+      },
+      "facts": {
+        "generatedAt": "2026-09-23T11:00:00Z",
+        "repos": {
+          "vibebrains.git": {
+            "sizeBytes": 40960,
+            "projects": [
+              "VibeIDE"
+            ],
+            "lastCommitAt": "2026-09-23T09:12:40Z",
+            "machines": false
+          },
+          "otherteam.git": {
+            "sizeBytes": 8192,
+            "projects": [],
+            "lastCommitAt": "2026-09-22T08:00:00Z",
+            "machines": false
+          },
+          "oldteam.deleted-2026-09-01.git": {
+            "sizeBytes": 20480,
+            "projects": [],
+            "lastCommitAt": null,
+            "machines": false
+          },
+          "lost.git": {
+            "sizeBytes": 81920,
+            "projects": [
+              "Acme"
+            ],
+            "lastCommitAt": "2026-08-30T12:00:00Z",
+            "machines": true
+          },
+          "not-a-store": {
+            "sizeBytes": 4096,
+            "projects": [],
+            "lastCommitAt": null,
+            "machines": false
+          }
+        },
+        "adopted": {
+          "personal": {
+            "sizeBytes": 953221120,
+            "projects": [
+              "VibeIDE",
+              "VibeMemory"
+            ],
+            "lastCommitAt": "2026-09-23T10:58:12Z",
+            "machines": true
+          }
+        },
+        "hostKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm"
+        ],
+        "disk": {
+          "freeBytes": 44987523072,
+          "totalBytes": 52710469632
+        },
+        "services": {
+          "caddy": "active",
+          "vibememory-mcp": "active"
+        },
+        "backup": {
+          "lastAt": "2026-09-23T04:30:00Z"
+        }
+      },
+      "expect": {
+        "version": 1,
+        "generatedAt": "2026-09-23T11:00:00Z",
+        "applied": {
+          "version": 1,
+          "snapshotHash": "9f2c000000000000000000000000000000000000000000000000000000000000",
+          "appliedAt": "2026-09-23T10:00:00Z",
+          "teamCount": 5,
+          "problems": [
+            {
+              "code": "slugRetired",
+              "team": "reborn",
+              "detail": "teams/reborn.deleted-2026-09-01.git exists"
+            }
+          ]
+        },
+        "teams": {
+          "otherteam": {
+            "projects": [],
+            "sizeBytes": 8192,
+            "lastCommitAt": "2026-09-22T08:00:00Z"
+          },
+          "personal": {
+            "projects": [
+              "VibeIDE",
+              "VibeMemory"
+            ],
+            "sizeBytes": 953221120,
+            "lastCommitAt": "2026-09-23T10:58:12Z"
+          },
+          "vibebrains": {
+            "projects": [
+              "VibeIDE"
+            ],
+            "sizeBytes": 40960,
+            "lastCommitAt": "2026-09-23T09:12:40Z"
+          }
+        },
+        "deleted": [
+          {
+            "slug": "oldteam",
+            "date": "2026-09-01",
+            "sizeBytes": 20480
+          }
+        ],
+        "orphans": [
+          {
+            "slug": "lost",
+            "projects": [
+              "Acme"
+            ],
+            "sizeBytes": 81920,
+            "machines": true
+          }
+        ],
+        "hostKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm"
+        ],
+        "disk": {
+          "freeBytes": 44987523072,
+          "totalBytes": 52710469632
+        },
+        "services": {
+          "caddy": "active",
+          "vibememory-mcp": "active"
+        },
+        "backup": {
+          "lastAt": "2026-09-23T04:30:00Z"
+        }
+      }
+    },
+    {
+      "id": "neverApplied",
+      "provenance": "computed",
+      "note": "Before the first application there is nothing to report under applied, and no backup has run yet.",
+      "applied": null,
+      "facts": {
+        "generatedAt": "2026-09-23T11:00:00Z",
+        "repos": {
+          "vibebrains.git": {
+            "sizeBytes": 40960,
+            "projects": [
+              "VibeIDE"
+            ],
+            "lastCommitAt": "2026-09-23T09:12:40Z",
+            "machines": false
+          },
+          "otherteam.git": {
+            "sizeBytes": 8192,
+            "projects": [],
+            "lastCommitAt": "2026-09-22T08:00:00Z",
+            "machines": false
+          },
+          "oldteam.deleted-2026-09-01.git": {
+            "sizeBytes": 20480,
+            "projects": [],
+            "lastCommitAt": null,
+            "machines": false
+          },
+          "lost.git": {
+            "sizeBytes": 81920,
+            "projects": [
+              "Acme"
+            ],
+            "lastCommitAt": "2026-08-30T12:00:00Z",
+            "machines": true
+          },
+          "not-a-store": {
+            "sizeBytes": 4096,
+            "projects": [],
+            "lastCommitAt": null,
+            "machines": false
+          }
+        },
+        "adopted": {
+          "personal": {
+            "sizeBytes": 953221120,
+            "projects": [
+              "VibeIDE",
+              "VibeMemory"
+            ],
+            "lastCommitAt": "2026-09-23T10:58:12Z",
+            "machines": true
+          }
+        },
+        "hostKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm"
+        ],
+        "disk": {
+          "freeBytes": 44987523072,
+          "totalBytes": 52710469632
+        },
+        "services": {
+          "caddy": "active",
+          "vibememory-mcp": "active"
+        },
+        "backup": null
+      },
+      "expect": {
+        "version": 1,
+        "generatedAt": "2026-09-23T11:00:00Z",
+        "applied": null,
+        "teams": {
+          "otherteam": {
+            "projects": [],
+            "sizeBytes": 8192,
+            "lastCommitAt": "2026-09-22T08:00:00Z"
+          },
+          "personal": {
+            "projects": [
+              "VibeIDE",
+              "VibeMemory"
+            ],
+            "sizeBytes": 953221120,
+            "lastCommitAt": "2026-09-23T10:58:12Z"
+          },
+          "vibebrains": {
+            "projects": [
+              "VibeIDE"
+            ],
+            "sizeBytes": 40960,
+            "lastCommitAt": "2026-09-23T09:12:40Z"
+          }
+        },
+        "deleted": [
+          {
+            "slug": "oldteam",
+            "date": "2026-09-01",
+            "sizeBytes": 20480
+          }
+        ],
+        "orphans": [
+          {
+            "slug": "lost",
+            "projects": [
+              "Acme"
+            ],
+            "sizeBytes": 81920,
+            "machines": true
+          }
+        ],
+        "hostKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm"
+        ],
+        "disk": {
+          "freeBytes": 44987523072,
+          "totalBytes": 52710469632
+        },
+        "services": {
+          "caddy": "active",
+          "vibememory-mcp": "active"
+        },
+        "backup": null
+      }
+    },
+    {
+      "id": "deletedNotRenamedYet",
+      "provenance": "computed",
+      "note": "A deleted team whose directory still has its live name is neither a team nor an orphan: the next application renames it, or names in its problems why it could not.",
+      "applied": {
+        "version": 1,
+        "snapshotHash": "9f2c000000000000000000000000000000000000000000000000000000000000",
+        "appliedAt": "2026-09-23T10:00:00Z",
+        "teamCount": 5,
+        "problems": [
+          {
+            "code": "slugRetired",
+            "team": "reborn",
+            "detail": "teams/reborn.deleted-2026-09-01.git exists"
+          }
+        ]
+      },
+      "facts": {
+        "generatedAt": "2026-09-23T11:00:00Z",
+        "repos": {
+          "vibebrains.git": {
+            "sizeBytes": 40960,
+            "projects": [
+              "VibeIDE"
+            ],
+            "lastCommitAt": "2026-09-23T09:12:40Z",
+            "machines": false
+          },
+          "otherteam.git": {
+            "sizeBytes": 8192,
+            "projects": [],
+            "lastCommitAt": "2026-09-22T08:00:00Z",
+            "machines": false
+          },
+          "lost.git": {
+            "sizeBytes": 81920,
+            "projects": [
+              "Acme"
+            ],
+            "lastCommitAt": "2026-08-30T12:00:00Z",
+            "machines": true
+          },
+          "not-a-store": {
+            "sizeBytes": 4096,
+            "projects": [],
+            "lastCommitAt": null,
+            "machines": false
+          },
+          "oldteam.git": {
+            "sizeBytes": 20480,
+            "projects": [],
+            "lastCommitAt": null,
+            "machines": false
+          }
+        },
+        "adopted": {
+          "personal": {
+            "sizeBytes": 953221120,
+            "projects": [
+              "VibeIDE",
+              "VibeMemory"
+            ],
+            "lastCommitAt": "2026-09-23T10:58:12Z",
+            "machines": true
+          }
+        },
+        "hostKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm"
+        ],
+        "disk": {
+          "freeBytes": 44987523072,
+          "totalBytes": 52710469632
+        },
+        "services": {
+          "caddy": "active",
+          "vibememory-mcp": "active"
+        },
+        "backup": {
+          "lastAt": "2026-09-23T04:30:00Z"
+        }
+      },
+      "expect": {
+        "version": 1,
+        "generatedAt": "2026-09-23T11:00:00Z",
+        "applied": {
+          "version": 1,
+          "snapshotHash": "9f2c000000000000000000000000000000000000000000000000000000000000",
+          "appliedAt": "2026-09-23T10:00:00Z",
+          "teamCount": 5,
+          "problems": [
+            {
+              "code": "slugRetired",
+              "team": "reborn",
+              "detail": "teams/reborn.deleted-2026-09-01.git exists"
+            }
+          ]
+        },
+        "teams": {
+          "otherteam": {
+            "projects": [],
+            "sizeBytes": 8192,
+            "lastCommitAt": "2026-09-22T08:00:00Z"
+          },
+          "personal": {
+            "projects": [
+              "VibeIDE",
+              "VibeMemory"
+            ],
+            "sizeBytes": 953221120,
+            "lastCommitAt": "2026-09-23T10:58:12Z"
+          },
+          "vibebrains": {
+            "projects": [
+              "VibeIDE"
+            ],
+            "sizeBytes": 40960,
+            "lastCommitAt": "2026-09-23T09:12:40Z"
+          }
+        },
+        "deleted": [],
+        "orphans": [
+          {
+            "slug": "lost",
+            "projects": [
+              "Acme"
+            ],
+            "sizeBytes": 81920,
+            "machines": true
+          }
+        ],
+        "hostKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm"
+        ],
+        "disk": {
+          "freeBytes": 44987523072,
+          "totalBytes": 52710469632
+        },
+        "services": {
+          "caddy": "active",
+          "vibememory-mcp": "active"
+        },
+        "backup": {
+          "lastAt": "2026-09-23T04:30:00Z"
+        }
+      }
+    },
+    {
+      "id": "snapshotUnusable",
+      "provenance": "computed",
+      "note": "With a broken snapshot the host cannot tell teams from orphans, so it lists neither; deleted directories are known by their names.",
+      "applied": {
+        "version": 1,
+        "snapshotHash": "9f2c000000000000000000000000000000000000000000000000000000000000",
+        "appliedAt": "2026-09-23T10:00:00Z",
+        "teamCount": 5,
+        "problems": [
+          {
+            "code": "slugRetired",
+            "team": "reborn",
+            "detail": "teams/reborn.deleted-2026-09-01.git exists"
+          }
+        ]
+      },
+      "facts": {
+        "generatedAt": "2026-09-23T11:00:00Z",
+        "repos": {
+          "vibebrains.git": {
+            "sizeBytes": 40960,
+            "projects": [
+              "VibeIDE"
+            ],
+            "lastCommitAt": "2026-09-23T09:12:40Z",
+            "machines": false
+          },
+          "otherteam.git": {
+            "sizeBytes": 8192,
+            "projects": [],
+            "lastCommitAt": "2026-09-22T08:00:00Z",
+            "machines": false
+          },
+          "oldteam.deleted-2026-09-01.git": {
+            "sizeBytes": 20480,
+            "projects": [],
+            "lastCommitAt": null,
+            "machines": false
+          },
+          "lost.git": {
+            "sizeBytes": 81920,
+            "projects": [
+              "Acme"
+            ],
+            "lastCommitAt": "2026-08-30T12:00:00Z",
+            "machines": true
+          },
+          "not-a-store": {
+            "sizeBytes": 4096,
+            "projects": [],
+            "lastCommitAt": null,
+            "machines": false
+          }
+        },
+        "adopted": {
+          "personal": {
+            "sizeBytes": 953221120,
+            "projects": [
+              "VibeIDE",
+              "VibeMemory"
+            ],
+            "lastCommitAt": "2026-09-23T10:58:12Z",
+            "machines": true
+          }
+        },
+        "hostKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm"
+        ],
+        "disk": {
+          "freeBytes": 44987523072,
+          "totalBytes": 52710469632
+        },
+        "services": {
+          "caddy": "active",
+          "vibememory-mcp": "active"
+        },
+        "backup": {
+          "lastAt": "2026-09-23T04:30:00Z"
+        }
+      },
+      "snapshotUsable": false,
+      "expect": {
+        "version": 1,
+        "generatedAt": "2026-09-23T11:00:00Z",
+        "applied": {
+          "version": 1,
+          "snapshotHash": "9f2c000000000000000000000000000000000000000000000000000000000000",
+          "appliedAt": "2026-09-23T10:00:00Z",
+          "teamCount": 5,
+          "problems": [
+            {
+              "code": "slugRetired",
+              "team": "reborn",
+              "detail": "teams/reborn.deleted-2026-09-01.git exists"
+            }
+          ]
+        },
+        "teams": {},
+        "deleted": [
+          {
+            "slug": "oldteam",
+            "date": "2026-09-01",
+            "sizeBytes": 20480
+          }
+        ],
+        "orphans": [],
+        "hostKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm"
+        ],
+        "disk": {
+          "freeBytes": 44987523072,
+          "totalBytes": 52710469632
+        },
+        "services": {
+          "caddy": "active",
+          "vibememory-mcp": "active"
+        },
+        "backup": {
+          "lastAt": "2026-09-23T04:30:00Z"
+        }
+      }
+    }
+  ]
+}
