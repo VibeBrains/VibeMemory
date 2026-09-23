@@ -32,8 +32,61 @@ const FORBIDDEN: &[(&str, &str)] = &[
     ("BEGIN OPENSSH", "a private key"),
 ];
 
+/// The ssh key type fixtures may carry, and only in its synthetic form.
+const ED25519: &str = "ssh-ed25519 ";
+
 /// The one session identifier the scrubber writes into transcript fixtures.
 const SYNTHETIC_SESSION_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+/// Standard base64 without line breaks; `None` on anything else.
+fn base64_decode(text: &str) -> Option<Vec<u8>> {
+    let value = |c: u8| match c {
+        b'A'..=b'Z' => Some(c - b'A'),
+        b'a'..=b'z' => Some(c - b'a' + 26),
+        b'0'..=b'9' => Some(c - b'0' + 52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    };
+    let data = text.trim_end_matches('=').as_bytes();
+    let mut out = Vec::new();
+    let mut buffer = 0u32;
+    let mut bits = 0;
+    for &c in data {
+        buffer = (buffer << 6) | u32::from(value(c)?);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(u8::try_from((buffer >> bits) & 0xff).ok()?);
+        }
+    }
+    Some(out)
+}
+
+/// An ssh-ed25519 blob whose key bytes are all one value: the form every fixture key must have.
+fn is_synthetic_ed25519(base64: &str) -> bool {
+    let Some(blob) = base64_decode(base64) else {
+        return false;
+    };
+    let read_len = |at: usize| -> Option<usize> {
+        let bytes: [u8; 4] = blob.get(at..at + 4)?.try_into().ok()?;
+        usize::try_from(u32::from_be_bytes(bytes)).ok()
+    };
+    let Some(type_len) = read_len(0) else {
+        return false;
+    };
+    let key_at = 4 + type_len;
+    let Some(key_len) = read_len(key_at) else {
+        return false;
+    };
+    let Some(key) = blob.get(key_at + 4..key_at + 4 + key_len) else {
+        return false;
+    };
+    blob.get(4..key_at) == Some(b"ssh-ed25519".as_slice())
+        && key
+            .first()
+            .is_some_and(|first| key.iter().all(|byte| byte == first))
+}
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
@@ -77,6 +130,20 @@ fn fixtures_carry_nothing_that_must_stay_on_the_machine() {
                 failures.push(format!("{name}: contains {what} ({needle})"));
             }
         }
+        // An ed25519 public key is not a secret, but a real one names a real machine. Access
+        // fixtures need well-formed keys, so they carry synthetic ones: every one of the key bytes
+        // the same value, which no generated key ever is.
+        for encoded in text.split(ED25519).skip(1) {
+            let body: String = encoded
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '='))
+                .collect();
+            if !is_synthetic_ed25519(&body) {
+                failures.push(format!(
+                    "{name}: ssh-ed25519 key {body:.24}… is not synthetic"
+                ));
+            }
+        }
         // Transcript fixtures are scrubbed, and the scrubber gives every one of them the same
         // synthetic session: a real one would mean an unscrubbed line slipped through.
         if file
@@ -97,6 +164,19 @@ fn fixtures_carry_nothing_that_must_stay_on_the_machine() {
             }
         }
     }
+
+    assert!(
+        is_synthetic_ed25519(
+            "AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+        ),
+        "the synthetic-key rule does not accept its own sample"
+    );
+    assert!(
+        !is_synthetic_ed25519(
+            "AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERES"
+        ),
+        "the synthetic-key rule accepts a key whose last byte differs"
+    );
 
     assert!(
         !failures.is_empty() || !files_under(&fixtures).is_empty(),

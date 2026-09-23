@@ -1,0 +1,131 @@
+# Спека отчёта хоста: `applied.json`, `host.json` и ответ `status`
+
+> Скопируйте этот файл целиком своей LLM, если нужно прочитать или разобрать отчёт хоста VibeMemory.
+> Эти файлы пишет только хост, руками их не собирают. Здесь описаны все поля и кто что пишет.
+> Обратное направление — права, которые кабинет отдаёт хосту, — [accessSnapshotSpec.md](accessSnapshotSpec.md).
+
+## Назначение
+
+Снимок прав идёт от кабинета к хосту. Отчёт идёт обратно: что хост применил, что отказался делать и
+почему, какие каталоги команд у него лежат, сколько места осталось. Кабинет по отчёту показывает
+владельцу расхождения и не публикует права, если его база моложе хоста.
+
+Три файла и один ответ:
+
+| Что | Где | Пишет | Читает |
+|---|---|---|---|
+| `applied.json` | `/srv/vibememory/access/applied.json` | применятель прав на хосте, учётка `vmgit` | функция `status` |
+| `host.json` | `/srv/vibememory/access/host.json` | функция `status` под `vmgit`, раз в час и после каждого применения | кабинет |
+| ответ `status` | stdout команды `ssh … status` | forced-shell `vmgit` | `doctor` на машине участника |
+
+Оба файла пишутся временным файлом и переименованием поверх, режим 0640, группа `vmaccess`.
+Каталог `access/` — со sticky-битом: кабинет не может подменить отчёт хоста, а хост — снимок кабинета.
+
+Моменты времени — UTC в виде `ГГГГ-ММ-ДДTЧЧ:ММ:ССZ`. Размеры — целые байты. Строгий JSON; незнакомые
+поля читатель отвергает — расширение формата поднимает `version`.
+
+## `applied.json` — итог последнего применения
+
+```json
+{
+  "version": 1,
+  "snapshotHash": "9f2c…64 знака",
+  "appliedAt": "2026-09-23T10:00:00Z",
+  "teamCount": 3,
+  "problems": [
+    { "code": "slugRetired", "team": "acme", "detail": "teams/acme.deleted-2026-09-01.git exists" }
+  ]
+}
+```
+
+| Поле | Что значит |
+|---|---|
+| `snapshotHash` | SHA-256 байтов снимка, который применён последним |
+| `appliedAt` | Когда он применён |
+| `teamCount` | `teamCount` из этого снимка. По нему кабинет после восстановления из дампа видит, что хост знает больше команд, чем его база |
+| `problems` | Что применятель не сделал и почему. Пусто — сделано всё |
+
+Если новый снимок не прошёл проверку `access check`, применятель не меняет ничего: `snapshotHash`,
+`appliedAt` и `teamCount` остаются от последнего годного снимка, а в `problems` появляется
+`snapshotRejected` с кодом проверки в `detail`.
+
+Коды `problems`:
+
+| Код | Что случилось | Поля |
+|---|---|---|
+| `snapshotRejected` | Снимок не прошёл `access check`, ничего не применено | `detail` — код проверки |
+| `slugRetired` | Команда в снимке без `deleted`, но на хосте уже есть её каталог `.deleted-*`: слаг не переиспользуется, каталог не создан | `team` |
+| `repoMissing` | У `adopted`-команды нет репозитория по пути `repo` | `team` |
+| `keyInvalid` | Ключ машины не прошёл проверку материала при записи `authorized_keys` и пропущен | `key` |
+
+## `host.json` — отчёт хоста для кабинета
+
+```json
+{
+  "version": 1,
+  "generatedAt": "2026-09-23T11:00:00Z",
+  "applied": { "version": 1, "snapshotHash": "9f2c…", "appliedAt": "2026-09-23T10:00:00Z", "teamCount": 3, "problems": [] },
+  "teams": {
+    "personal": { "projects": ["VibeIDE", "VibeMemory"], "sizeBytes": 953221120, "lastCommitAt": "2026-09-23T10:58:12Z" },
+    "vibebrains": { "projects": ["VibeIDE"], "sizeBytes": 40960, "lastCommitAt": "2026-09-23T09:12:40Z" }
+  },
+  "deleted": [
+    { "slug": "oldteam", "date": "2026-09-30", "sizeBytes": 20480 }
+  ],
+  "orphans": [
+    { "slug": "lost", "projects": ["Acme"], "sizeBytes": 81920, "machines": true }
+  ],
+  "hostKeys": [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz"
+  ],
+  "disk": { "freeBytes": 44987523072, "totalBytes": 52710469632 },
+  "services": { "vibememory-mcp": "active", "postgresql": "active", "caddy": "active" },
+  "backup": { "lastAt": "2026-09-23T04:30:00Z" }
+}
+```
+
+| Поле | Что значит |
+|---|---|
+| `generatedAt` | Когда отчёт собран |
+| `applied` | Содержимое `applied.json` как есть; `null`, если хост ещё не применял ни одного снимка |
+| `teams` | Команды из применённого снимка без `deleted`, чей репозиторий лежит на хосте: `projects` — каталоги `projects/*` в `main`, `sizeBytes` — размер репозитория на диске, `lastCommitAt` — время последнего коммита в `main` или `null` |
+| `deleted` | Каталоги `teams/<слаг>.deleted-<дата>.git`: слаг и дата из имени, размер |
+| `orphans` | Каталоги `teams/<слаг>.git`, которых нет в применённом снимке. Хост их не трогает. `machines` — есть ли в `main` каталог `machines/`: подсказка, что это была `sync`-команда |
+| `hostKeys` | Публичные ключи хоста из `/etc/ssh/ssh_host_*_key.pub`: тип и base64, без комментария. Кабинет отдаёт их участнику, и тот проверяет хост с первого соединения |
+| `disk` | Свободно и всего на разделе с репозиториями |
+| `services` | Ответ `systemctl is-active` для каждой службы: `active`, `inactive`, `failed` и так далее |
+| `backup` | Время последнего ночного бэкапа; `null` — бэкапа ещё не было |
+
+## Ответ `status` — только область ключа
+
+Участник видит состояние хоста через свой ssh-ключ. Ответ — проекция `host.json` и снимка на команды
+этого ключа: ни слагов, ни проектов, ни размеров чужих команд. Полный `host.json` читает только кабинет.
+
+```json
+{
+  "version": 1,
+  "generatedAt": "2026-09-23T11:00:00Z",
+  "key": { "id": "mk_3f8k1p0z", "member": "alice", "machine": "laptop", "storeName": "alice-laptop" },
+  "teams": {
+    "vibebrains": {
+      "mode": "memory",
+      "role": "member",
+      "writable": true,
+      "sizeBytes": 40960,
+      "quotaBytes": 10737418240,
+      "lastCommitAt": "2026-09-23T09:12:40Z"
+    }
+  },
+  "hostKeys": [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz"
+  ],
+  "disk": { "freeBytes": 44987523072 }
+}
+```
+
+| Поле | Что значит |
+|---|---|
+| `key` | Чей это ключ — из снимка |
+| `teams` | Только команды из `keys[].teams` этого ключа, где участник состоит: режим, его роль, открыта ли запись, размер и квота |
+| `hostKeys` | Те же ключи хоста, что в `host.json` |
+| `disk` | Только свободное место: участнику нужно знать, упрётся ли его push в резерв хоста |

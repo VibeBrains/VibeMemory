@@ -1,0 +1,70 @@
+// Образец /srv/vibememory/access/access.json — снимка прав хоста VibeMemory.
+//
+// ВАЖНО: сам access.json — строгий JSON. Комментарии и висячие запятые в нём запрещены;
+// этот файл — образец для чтения, а не для переименования. Полное описание всех полей и правил:
+// docs/manuals/accessSnapshotSpec.md (его можно целиком скормить модели и попросить собрать снимок).
+// Проверить готовый файл: vibememory-mcp access check access.json — первая строка ответа «ok».
+{
+  // Всегда 1.
+  "version": 1,
+
+  // Сколько команд у кабинета в базе, включая удалённые. Не меньше числа команд ниже.
+  "teamCount": 2,
+
+  "teams": {
+    // Личный стор владельца, существовавший до команд. Такая команда одна; у неё есть repo
+    // и нет mode, projects, quotaBytes и seats. Член ровно один — владелец.
+    "personal": {
+      "adopted": true,
+      "repo": "/home/vm/vibememory/store.git",
+      "writable": true,
+      "limits": { "maxRecords": 5000, "maxRecordBytes": 65536 },
+      "members": { "owner-handle": "owner" }
+    },
+
+    // Команда. Слаг — строчные буквы, цифры и дефис, он же имя каталога teams/<слаг>.git.
+    // mode "memory" — только сервер памяти; "sync" — клон стора и транскрипты.
+    "team-slug": {
+      "mode": "memory",
+      // false — запись закрыта (грант истёк), чтение работает.
+      "writable": true,
+      // Только у memory: в какие проекты можно писать. Запись вне списка отвергается.
+      "projects": ["ProjectName"],
+      "limits": { "maxRecords": 5000, "maxRecordBytes": 65536, "quotaBytes": 10737418240, "seats": 5 },
+      // Ровно один owner; всего не больше seats.
+      "members": { "owner-handle": "owner", "member-handle": "member" }
+    }
+  },
+
+  // Токены агентов для HTTPS. Сам токен сюда не пишется — только SHA-256 всей его строки.
+  // Отозванный токен просто удаляется из списка.
+  "tokens": [
+    {
+      "id": "tk_0123abcd",
+      "sha256": "<64 шестнадцатеричных знака нижним регистром>",
+      "team": "team-slug",
+      "member": "member-handle",
+      "agent": "claude-code",
+      // reader — только чтение, writer — ещё и запись.
+      "role": "writer",
+      // Поиск по прошлым сессиям; true только у owner и admin.
+      "history": false,
+      // null — все проекты команды, иначе список.
+      "projects": null,
+      // null — бессрочно, иначе "ГГГГ-ММ-ДДTЧЧ:ММ:ССZ".
+      "expiresAt": null
+    }
+  ],
+
+  // ssh-ключи машин. storeName — ровно <member>-<machine>, уникален во всём снимке.
+  "keys": [
+    {
+      "id": "mk_0123abcd",
+      "member": "member-handle",
+      "machine": "laptop",
+      "storeName": "member-handle-laptop",
+      "teams": ["team-slug"],
+      "publicKey": "ssh-ed25519 <base64 одной строкой, без комментария>"
+    }
+  ]
+}

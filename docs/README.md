@@ -9,9 +9,11 @@ docs/
 │   └── stage6Plan.md       # план этапа 6 (SaaS для команд): проект, ждёт решений владельца
 ├── manuals/                # руководства «как сделать» по шагам
   - [mcpServer.md](manuals/mcpServer.md) — как подключить память VibeMemory к любому агенту по MCP
+│   ├── accessSnapshotSpec.md # спека снимка прав /srv/vibememory/access/access.json для модели: поля, правила, коды access check
 │   ├── configSpec.md       # спека ~/.vibememory/config.json для модели (сейчас: nameOverrides, ignoreCwd)
 │   ├── desktopFixtures.md  # как добавить кейс в fixtures/desktop/, четыре списка кейсов, мутации гейта
 │   ├── exportFixtures.md   # как добавить кейс в fixtures/export/, метки provenance, мутационная проверка гейта
+│   ├── hostStatusSpec.md   # спека отчёта хоста: applied.json, host.json и ответ status участнику
 │   ├── hostSetup.md        # хост стора: ключ (seedKey), bare-репозиторий и зеркало (hostBootstrap), привязка машины (connectStore)
 │   ├── linksFixtures.md    # как добавить кейс в fixtures/links/, два раздела файла, годные подделки
 │   ├── mergeFixtures.md    # как добавить кейс в fixtures/merge/, скраббер транскриптов, грамматика сценариев

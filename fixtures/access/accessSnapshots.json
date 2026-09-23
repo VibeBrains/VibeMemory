@@ -1,0 +1,1597 @@
+{
+  "description": "access.json snapshots and the first code `vibememory-mcp access check` answers for each. `base` is a valid snapshot; each case is a JSON Merge Patch (RFC 7396) of it — `null` deletes a field, arrays are replaced whole — or `raw` text. Format and codes: docs/manuals/accessSnapshotSpec.md.",
+  "base": {
+    "version": 1,
+    "teamCount": 4,
+    "teams": {
+      "personal": {
+        "adopted": true,
+        "repo": "/home/vm/vibememory/store.git",
+        "writable": true,
+        "limits": {
+          "maxRecords": 5000,
+          "maxRecordBytes": 65536
+        },
+        "members": {
+          "borodatych": "owner"
+        }
+      },
+      "vibebrains": {
+        "mode": "memory",
+        "writable": true,
+        "projects": [
+          "VibeIDE",
+          "VibeIDEA"
+        ],
+        "limits": {
+          "maxRecords": 5000,
+          "maxRecordBytes": 65536,
+          "quotaBytes": 10737418240,
+          "seats": 5
+        },
+        "members": {
+          "borodatych": "owner",
+          "alice": "member"
+        }
+      },
+      "syncteam": {
+        "mode": "sync",
+        "writable": false,
+        "limits": {
+          "maxRecords": 5000,
+          "maxRecordBytes": 65536,
+          "quotaBytes": 10737418240,
+          "seats": 5
+        },
+        "members": {
+          "borodatych": "owner",
+          "alice": "admin"
+        }
+      },
+      "oldteam": {
+        "mode": "memory",
+        "deleted": "2026-09-01",
+        "writable": false,
+        "projects": [],
+        "limits": {},
+        "members": {}
+      }
+    },
+    "tokens": [
+      {
+        "id": "tk_7q2m9x4a",
+        "sha256": "76604e2921579085778fb52e006c2b9322aad4232ff162403a3a4818ca8836c5",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "role": "writer",
+        "history": false,
+        "projects": null,
+        "expiresAt": null
+      },
+      {
+        "id": "tk_legacy",
+        "legacy": true,
+        "sha256": "2a1f29c1f4a770fd8bc3b6fac681621584c47fc64cebac9cac9dc57bf463b2a0",
+        "team": "personal",
+        "member": "borodatych",
+        "agent": "claude-code",
+        "role": "writer",
+        "history": true,
+        "projects": null,
+        "expiresAt": null
+      },
+      {
+        "id": "tk_b3c4d5e6",
+        "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+        "team": "syncteam",
+        "member": "alice",
+        "agent": "vibeide",
+        "role": "reader",
+        "history": true,
+        "projects": [
+          "Acme"
+        ],
+        "expiresAt": "2026-12-31T23:59:59Z"
+      }
+    ],
+    "keys": [
+      {
+        "id": "mk_3f8k1p0z",
+        "member": "alice",
+        "machine": "laptop",
+        "storeName": "alice-laptop",
+        "teams": [
+          "vibebrains",
+          "syncteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "baseIsValid",
+      "provenance": "computed",
+      "note": "The base snapshot: an adopted personal store, a memory team, a sync team, a deleted team, a legacy token, a reader token with history for an admin, one machine key.",
+      "patch": {},
+      "expect": {
+        "code": "ok"
+      }
+    },
+    {
+      "id": "emptySnapshotIsValid",
+      "provenance": "computed",
+      "note": "A host with no teams at all is a valid state, not an error: the cabinet may publish before anyone has joined.",
+      "patch": {
+        "teamCount": 0,
+        "teams": {
+          "personal": null,
+          "vibebrains": null,
+          "syncteam": null,
+          "oldteam": null
+        },
+        "tokens": [],
+        "keys": []
+      },
+      "expect": {
+        "code": "ok"
+      }
+    },
+    {
+      "id": "notJson",
+      "provenance": "computed",
+      "note": "A half-written file must never be taken for a snapshot.",
+      "raw": "{\"version\": 1, \"teamCount\": 0,",
+      "expect": {
+        "code": "snapshotMalformed"
+      }
+    },
+    {
+      "id": "unknownTopLevelField",
+      "provenance": "computed",
+      "note": "A field the reader does not know is an error, not an ignored rule.",
+      "patch": {
+        "grants": []
+      },
+      "expect": {
+        "code": "snapshotMalformed"
+      }
+    },
+    {
+      "id": "unknownMode",
+      "provenance": "computed",
+      "note": "An enumeration outside its values is malformed.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "mode": "cache"
+          }
+        }
+      },
+      "expect": {
+        "code": "snapshotMalformed"
+      }
+    },
+    {
+      "id": "unknownRole",
+      "provenance": "computed",
+      "note": "A membership role outside owner, admin and member is malformed.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "members": {
+              "alice": "guest"
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "snapshotMalformed"
+      }
+    },
+    {
+      "id": "wrongType",
+      "provenance": "computed",
+      "note": "writable must be a boolean.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "writable": "yes"
+          }
+        }
+      },
+      "expect": {
+        "code": "snapshotMalformed"
+      }
+    },
+    {
+      "id": "versionTwo",
+      "provenance": "computed",
+      "note": "A newer format is refused, not guessed at.",
+      "patch": {
+        "version": 2
+      },
+      "expect": {
+        "code": "unsupportedVersion"
+      }
+    },
+    {
+      "id": "slugUppercase",
+      "provenance": "computed",
+      "note": "Slugs are lower case: the slug is a directory name and an argument to git.",
+      "patch": {
+        "teamCount": 5,
+        "teams": {
+          "VibeTeam": {
+            "mode": "memory",
+            "writable": true,
+            "projects": [],
+            "limits": {
+              "maxRecords": 5000,
+              "maxRecordBytes": 65536,
+              "quotaBytes": 10737418240,
+              "seats": 5
+            },
+            "members": {
+              "borodatych": "owner"
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "invalidSlug"
+      }
+    },
+    {
+      "id": "slugLeadingHyphen",
+      "provenance": "computed",
+      "note": "A leading hyphen would turn the name into an option of git or ssh.",
+      "patch": {
+        "teamCount": 5,
+        "teams": {
+          "-acme": {
+            "mode": "memory",
+            "writable": true,
+            "projects": [],
+            "limits": {
+              "maxRecords": 5000,
+              "maxRecordBytes": 65536,
+              "quotaBytes": 10737418240,
+              "seats": 5
+            },
+            "members": {
+              "borodatych": "owner"
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "invalidSlug"
+      }
+    },
+    {
+      "id": "slugTooLong",
+      "provenance": "computed",
+      "note": "64 characters is one more than the rule allows.",
+      "patch": {
+        "teamCount": 5,
+        "teams": {
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+            "mode": "memory",
+            "writable": true,
+            "projects": [],
+            "limits": {
+              "maxRecords": 5000,
+              "maxRecordBytes": 65536,
+              "quotaBytes": 10737418240,
+              "seats": 5
+            },
+            "members": {
+              "borodatych": "owner"
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "invalidSlug"
+      }
+    },
+    {
+      "id": "handleUppercase",
+      "provenance": "computed",
+      "note": "A member handle follows the same rule as a slug.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "members": {
+              "alice": null,
+              "Alice": "member"
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "invalidHandle"
+      }
+    },
+    {
+      "id": "machineUppercase",
+      "provenance": "computed",
+      "note": "A machine name follows the same rule as a slug.",
+      "patch": {
+        "keys": [
+          {
+            "id": "mk_3f8k1p0z",
+            "member": "alice",
+            "machine": "Laptop",
+            "storeName": "alice-Laptop",
+            "teams": [
+              "vibebrains",
+              "syncteam"
+            ],
+            "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+          }
+        ]
+      },
+      "expect": {
+        "code": "invalidMachine"
+      }
+    },
+    {
+      "id": "agentWithSpace",
+      "provenance": "computed",
+      "note": "An agent name follows the same rule as a slug.",
+      "patch": {
+        "tokens": [
+          {
+            "id": "tk_7q2m9x4a",
+            "sha256": "76604e2921579085778fb52e006c2b9322aad4232ff162403a3a4818ca8836c5",
+            "team": "vibebrains",
+            "member": "alice",
+            "agent": "claude code",
+            "role": "writer",
+            "history": false,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_legacy",
+            "legacy": true,
+            "sha256": "2a1f29c1f4a770fd8bc3b6fac681621584c47fc64cebac9cac9dc57bf463b2a0",
+            "team": "personal",
+            "member": "borodatych",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_b3c4d5e6",
+            "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+            "team": "syncteam",
+            "member": "alice",
+            "agent": "vibeide",
+            "role": "reader",
+            "history": true,
+            "projects": [
+              "Acme"
+            ],
+            "expiresAt": "2026-12-31T23:59:59Z"
+          }
+        ]
+      },
+      "expect": {
+        "code": "invalidAgent"
+      }
+    },
+    {
+      "id": "projectDotGit",
+      "provenance": "computed",
+      "note": "`.git` in any case would break the store repository.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "projects": [
+              "VibeIDE",
+              ".GIT"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "code": "invalidStoreName"
+      }
+    },
+    {
+      "id": "projectReservedDevice",
+      "provenance": "computed",
+      "note": "A Windows device name, in any case and with any extension, cannot be a directory.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "projects": [
+              "VibeIDE",
+              "com1.notes"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "code": "invalidStoreName"
+      }
+    },
+    {
+      "id": "projectTrailingDot",
+      "provenance": "computed",
+      "note": "A name ending with a dot is changed by Windows on its way to disk.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "projects": [
+              "VibeIDE."
+            ]
+          }
+        }
+      },
+      "expect": {
+        "code": "invalidStoreName"
+      }
+    },
+    {
+      "id": "projectCollision",
+      "provenance": "computed",
+      "note": "Two names equal under NFC and lower case are one directory on APFS and NTFS.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "projects": [
+              "VibeIDE",
+              "vibeide"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "code": "storeNameCollision"
+      }
+    },
+    {
+      "id": "deletedDateNotPadded",
+      "provenance": "computed",
+      "note": "A date is YYYY-MM-DD, zero-padded.",
+      "patch": {
+        "teams": {
+          "oldteam": {
+            "deleted": "2026-9-1"
+          }
+        }
+      },
+      "expect": {
+        "code": "invalidDate"
+      }
+    },
+    {
+      "id": "expiresWithoutTime",
+      "provenance": "computed",
+      "note": "expiresAt is a full UTC moment, not a date.",
+      "patch": {
+        "tokens": [
+          {
+            "id": "tk_7q2m9x4a",
+            "sha256": "76604e2921579085778fb52e006c2b9322aad4232ff162403a3a4818ca8836c5",
+            "team": "vibebrains",
+            "member": "alice",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": false,
+            "projects": null,
+            "expiresAt": "2026-10-01"
+          },
+          {
+            "id": "tk_legacy",
+            "legacy": true,
+            "sha256": "2a1f29c1f4a770fd8bc3b6fac681621584c47fc64cebac9cac9dc57bf463b2a0",
+            "team": "personal",
+            "member": "borodatych",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_b3c4d5e6",
+            "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+            "team": "syncteam",
+            "member": "alice",
+            "agent": "vibeide",
+            "role": "reader",
+            "history": true,
+            "projects": [
+              "Acme"
+            ],
+            "expiresAt": "2026-12-31T23:59:59Z"
+          }
+        ]
+      },
+      "expect": {
+        "code": "invalidDate"
+      }
+    },
+    {
+      "id": "adoptedTwice",
+      "provenance": "computed",
+      "note": "Only the owner's own store existed before teams.",
+      "patch": {
+        "teamCount": 5,
+        "teams": {
+          "second": {
+            "adopted": true,
+            "repo": "/home/vm/other.git",
+            "writable": true,
+            "limits": {
+              "maxRecords": 5000,
+              "maxRecordBytes": 65536
+            },
+            "members": {
+              "borodatych": "owner"
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "adoptedTwice"
+      }
+    },
+    {
+      "id": "adoptedWithMode",
+      "provenance": "computed",
+      "note": "Team rules do not bind the owner's store: it has no mode.",
+      "patch": {
+        "teams": {
+          "personal": {
+            "mode": "sync"
+          }
+        }
+      },
+      "expect": {
+        "code": "adoptedRules"
+      }
+    },
+    {
+      "id": "adoptedRelativeRepo",
+      "provenance": "computed",
+      "note": "The repository of the adopted store is named by an absolute path.",
+      "patch": {
+        "teams": {
+          "personal": {
+            "repo": "vibememory/store.git"
+          }
+        }
+      },
+      "expect": {
+        "code": "adoptedRules"
+      }
+    },
+    {
+      "id": "adoptedWithoutRepo",
+      "provenance": "computed",
+      "note": "The adopted store must say where it lives.",
+      "patch": {
+        "teams": {
+          "personal": {
+            "repo": null
+          }
+        }
+      },
+      "expect": {
+        "code": "adoptedRules"
+      }
+    },
+    {
+      "id": "adoptedWithQuota",
+      "provenance": "computed",
+      "note": "A quota is a team rule and does not apply to the owner's store.",
+      "patch": {
+        "teams": {
+          "personal": {
+            "limits": {
+              "quotaBytes": 1073741824
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "adoptedRules"
+      }
+    },
+    {
+      "id": "adoptedTwoMembers",
+      "provenance": "computed",
+      "note": "The personal store holds the owner's transcripts and is never shared.",
+      "patch": {
+        "teams": {
+          "personal": {
+            "members": {
+              "alice": "member"
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "adoptedMembers"
+      }
+    },
+    {
+      "id": "repoOnTeam",
+      "provenance": "computed",
+      "note": "Team repositories live under /srv/vibememory/teams; only the adopted store names a path.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "repo": "/srv/vibememory/teams/vibebrains.git"
+          }
+        }
+      },
+      "expect": {
+        "code": "repoOutsideAdopted"
+      }
+    },
+    {
+      "id": "modeMissing",
+      "provenance": "computed",
+      "note": "Every team except the adopted one says whether it is memory or sync.",
+      "patch": {
+        "teams": {
+          "syncteam": {
+            "mode": null
+          }
+        }
+      },
+      "expect": {
+        "code": "modeMissing"
+      }
+    },
+    {
+      "id": "projectsOnSync",
+      "provenance": "computed",
+      "note": "A sync team's projects are what its repository holds; a list would be a second source.",
+      "patch": {
+        "teams": {
+          "syncteam": {
+            "projects": [
+              "Acme"
+            ]
+          }
+        }
+      },
+      "expect": {
+        "code": "projectsMisplaced"
+      }
+    },
+    {
+      "id": "projectsMissingOnMemory",
+      "provenance": "computed",
+      "note": "A memory team without a project list could never be written to.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "projects": null
+          }
+        }
+      },
+      "expect": {
+        "code": "projectsMisplaced"
+      }
+    },
+    {
+      "id": "seatsMissing",
+      "provenance": "computed",
+      "note": "An active team has every limit.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "limits": {
+              "seats": null
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "limitsInvalid"
+      }
+    },
+    {
+      "id": "maxRecordsZero",
+      "provenance": "computed",
+      "note": "A limit is a whole number greater than zero.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "limits": {
+              "maxRecords": 0
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "limitsInvalid"
+      }
+    },
+    {
+      "id": "deletedWithMember",
+      "provenance": "computed",
+      "note": "A deleted team has no members left.",
+      "patch": {
+        "teams": {
+          "oldteam": {
+            "members": {
+              "borodatych": "owner"
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "deletedTeamActive"
+      }
+    },
+    {
+      "id": "deletedWritable",
+      "provenance": "computed",
+      "note": "A deleted team is read-only.",
+      "patch": {
+        "teams": {
+          "oldteam": {
+            "writable": true
+          }
+        }
+      },
+      "expect": {
+        "code": "deletedTeamActive"
+      }
+    },
+    {
+      "id": "tokenForDeletedTeam",
+      "provenance": "computed",
+      "note": "Nothing may point at a deleted team.",
+      "patch": {
+        "tokens": [
+          {
+            "id": "tk_7q2m9x4a",
+            "sha256": "76604e2921579085778fb52e006c2b9322aad4232ff162403a3a4818ca8836c5",
+            "team": "oldteam",
+            "member": "alice",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": false,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_legacy",
+            "legacy": true,
+            "sha256": "2a1f29c1f4a770fd8bc3b6fac681621584c47fc64cebac9cac9dc57bf463b2a0",
+            "team": "personal",
+            "member": "borodatych",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_b3c4d5e6",
+            "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+            "team": "syncteam",
+            "member": "alice",
+            "agent": "vibeide",
+            "role": "reader",
+            "history": true,
+            "projects": [
+              "Acme"
+            ],
+            "expiresAt": "2026-12-31T23:59:59Z"
+          }
+        ]
+      },
+      "expect": {
+        "code": "deletedTeamActive"
+      }
+    },
+    {
+      "id": "twoOwners",
+      "provenance": "computed",
+      "note": "An active team has exactly one owner.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "members": {
+              "alice": "owner"
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "ownerCount"
+      }
+    },
+    {
+      "id": "noOwner",
+      "provenance": "computed",
+      "note": "An active team without an owner has nobody to hand it over.",
+      "patch": {
+        "teams": {
+          "syncteam": {
+            "members": {
+              "borodatych": "member"
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "ownerCount"
+      }
+    },
+    {
+      "id": "seatsExceeded",
+      "provenance": "computed",
+      "note": "More members than seats.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "limits": {
+              "seats": 1
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "seatsExceeded"
+      }
+    },
+    {
+      "id": "teamCountLow",
+      "provenance": "computed",
+      "note": "The cabinet cannot know fewer teams than it publishes; a smaller count means a broken writer.",
+      "patch": {
+        "teamCount": 3
+      },
+      "expect": {
+        "code": "teamCountLow"
+      }
+    },
+    {
+      "id": "tokenIdAlphabet",
+      "provenance": "computed",
+      "note": "i, l, o and u are not in the Crockford alphabet, and upper case is not used.",
+      "patch": {
+        "tokens": [
+          {
+            "id": "tk_ILOU1234",
+            "sha256": "76604e2921579085778fb52e006c2b9322aad4232ff162403a3a4818ca8836c5",
+            "team": "vibebrains",
+            "member": "alice",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": false,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_legacy",
+            "legacy": true,
+            "sha256": "2a1f29c1f4a770fd8bc3b6fac681621584c47fc64cebac9cac9dc57bf463b2a0",
+            "team": "personal",
+            "member": "borodatych",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_b3c4d5e6",
+            "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+            "team": "syncteam",
+            "member": "alice",
+            "agent": "vibeide",
+            "role": "reader",
+            "history": true,
+            "projects": [
+              "Acme"
+            ],
+            "expiresAt": "2026-12-31T23:59:59Z"
+          }
+        ]
+      },
+      "expect": {
+        "code": "invalidTokenId"
+      }
+    },
+    {
+      "id": "keyIdShort",
+      "provenance": "computed",
+      "note": "A key id is mk_ and eight characters.",
+      "patch": {
+        "keys": [
+          {
+            "id": "mk_123",
+            "member": "alice",
+            "machine": "laptop",
+            "storeName": "alice-laptop",
+            "teams": [
+              "vibebrains",
+              "syncteam"
+            ],
+            "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+          }
+        ]
+      },
+      "expect": {
+        "code": "invalidKeyId"
+      }
+    },
+    {
+      "id": "duplicateTokenId",
+      "provenance": "computed",
+      "note": "Two tokens with one id cannot both be looked up.",
+      "patch": {
+        "tokens": [
+          {
+            "id": "tk_7q2m9x4a",
+            "sha256": "76604e2921579085778fb52e006c2b9322aad4232ff162403a3a4818ca8836c5",
+            "team": "vibebrains",
+            "member": "alice",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": false,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_legacy",
+            "legacy": true,
+            "sha256": "2a1f29c1f4a770fd8bc3b6fac681621584c47fc64cebac9cac9dc57bf463b2a0",
+            "team": "personal",
+            "member": "borodatych",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_7q2m9x4a",
+            "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+            "team": "syncteam",
+            "member": "alice",
+            "agent": "vibeide",
+            "role": "reader",
+            "history": true,
+            "projects": [
+              "Acme"
+            ],
+            "expiresAt": "2026-12-31T23:59:59Z"
+          }
+        ]
+      },
+      "expect": {
+        "code": "duplicateId"
+      }
+    },
+    {
+      "id": "digestUpperCase",
+      "provenance": "computed",
+      "note": "A digest is 64 lower-case hexadecimal characters.",
+      "patch": {
+        "tokens": [
+          {
+            "id": "tk_7q2m9x4a",
+            "sha256": "76604E2921579085778FB52E006C2B9322AAD4232FF162403A3A4818CA8836C5",
+            "team": "vibebrains",
+            "member": "alice",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": false,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_legacy",
+            "legacy": true,
+            "sha256": "2a1f29c1f4a770fd8bc3b6fac681621584c47fc64cebac9cac9dc57bf463b2a0",
+            "team": "personal",
+            "member": "borodatych",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_b3c4d5e6",
+            "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+            "team": "syncteam",
+            "member": "alice",
+            "agent": "vibeide",
+            "role": "reader",
+            "history": true,
+            "projects": [
+              "Acme"
+            ],
+            "expiresAt": "2026-12-31T23:59:59Z"
+          }
+        ]
+      },
+      "expect": {
+        "code": "invalidDigest"
+      }
+    },
+    {
+      "id": "tokenUnknownTeam",
+      "provenance": "computed",
+      "note": "A token for a team that does not exist.",
+      "patch": {
+        "tokens": [
+          {
+            "id": "tk_7q2m9x4a",
+            "sha256": "76604e2921579085778fb52e006c2b9322aad4232ff162403a3a4818ca8836c5",
+            "team": "ghost",
+            "member": "alice",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": false,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_legacy",
+            "legacy": true,
+            "sha256": "2a1f29c1f4a770fd8bc3b6fac681621584c47fc64cebac9cac9dc57bf463b2a0",
+            "team": "personal",
+            "member": "borodatych",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_b3c4d5e6",
+            "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+            "team": "syncteam",
+            "member": "alice",
+            "agent": "vibeide",
+            "role": "reader",
+            "history": true,
+            "projects": [
+              "Acme"
+            ],
+            "expiresAt": "2026-12-31T23:59:59Z"
+          }
+        ]
+      },
+      "expect": {
+        "code": "unknownTeam"
+      }
+    },
+    {
+      "id": "tokenNotMember",
+      "provenance": "computed",
+      "note": "A token of a person who is not in the team.",
+      "patch": {
+        "tokens": [
+          {
+            "id": "tk_7q2m9x4a",
+            "sha256": "76604e2921579085778fb52e006c2b9322aad4232ff162403a3a4818ca8836c5",
+            "team": "vibebrains",
+            "member": "bob",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": false,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_legacy",
+            "legacy": true,
+            "sha256": "2a1f29c1f4a770fd8bc3b6fac681621584c47fc64cebac9cac9dc57bf463b2a0",
+            "team": "personal",
+            "member": "borodatych",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_b3c4d5e6",
+            "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+            "team": "syncteam",
+            "member": "alice",
+            "agent": "vibeide",
+            "role": "reader",
+            "history": true,
+            "projects": [
+              "Acme"
+            ],
+            "expiresAt": "2026-12-31T23:59:59Z"
+          }
+        ]
+      },
+      "expect": {
+        "code": "notAMember"
+      }
+    },
+    {
+      "id": "historyForMember",
+      "provenance": "computed",
+      "note": "Searching past sessions is for owners and admins.",
+      "patch": {
+        "tokens": [
+          {
+            "id": "tk_7q2m9x4a",
+            "sha256": "76604e2921579085778fb52e006c2b9322aad4232ff162403a3a4818ca8836c5",
+            "team": "vibebrains",
+            "member": "alice",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_legacy",
+            "legacy": true,
+            "sha256": "2a1f29c1f4a770fd8bc3b6fac681621584c47fc64cebac9cac9dc57bf463b2a0",
+            "team": "personal",
+            "member": "borodatych",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_b3c4d5e6",
+            "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+            "team": "syncteam",
+            "member": "alice",
+            "agent": "vibeide",
+            "role": "reader",
+            "history": true,
+            "projects": [
+              "Acme"
+            ],
+            "expiresAt": "2026-12-31T23:59:59Z"
+          }
+        ]
+      },
+      "expect": {
+        "code": "historyNotAllowed"
+      }
+    },
+    {
+      "id": "projectOutsideTeam",
+      "provenance": "computed",
+      "note": "A memory team token may only name projects of that team.",
+      "patch": {
+        "tokens": [
+          {
+            "id": "tk_7q2m9x4a",
+            "sha256": "76604e2921579085778fb52e006c2b9322aad4232ff162403a3a4818ca8836c5",
+            "team": "vibebrains",
+            "member": "alice",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": false,
+            "projects": [
+              "VibeDub"
+            ],
+            "expiresAt": null
+          },
+          {
+            "id": "tk_legacy",
+            "legacy": true,
+            "sha256": "2a1f29c1f4a770fd8bc3b6fac681621584c47fc64cebac9cac9dc57bf463b2a0",
+            "team": "personal",
+            "member": "borodatych",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_b3c4d5e6",
+            "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+            "team": "syncteam",
+            "member": "alice",
+            "agent": "vibeide",
+            "role": "reader",
+            "history": true,
+            "projects": [
+              "Acme"
+            ],
+            "expiresAt": "2026-12-31T23:59:59Z"
+          }
+        ]
+      },
+      "expect": {
+        "code": "projectOutsideTeam"
+      }
+    },
+    {
+      "id": "legacyTwice",
+      "provenance": "computed",
+      "note": "There is one pre-cabinet token, at most.",
+      "patch": {
+        "tokens": [
+          {
+            "id": "tk_7q2m9x4a",
+            "sha256": "76604e2921579085778fb52e006c2b9322aad4232ff162403a3a4818ca8836c5",
+            "team": "vibebrains",
+            "member": "alice",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": false,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_legacy",
+            "legacy": true,
+            "sha256": "2a1f29c1f4a770fd8bc3b6fac681621584c47fc64cebac9cac9dc57bf463b2a0",
+            "team": "personal",
+            "member": "borodatych",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_b3c4d5e6",
+            "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+            "team": "syncteam",
+            "member": "alice",
+            "agent": "vibeide",
+            "role": "reader",
+            "history": true,
+            "projects": [
+              "Acme"
+            ],
+            "expiresAt": "2026-12-31T23:59:59Z"
+          },
+          {
+            "id": "tk_d7e8f9g0",
+            "legacy": true,
+            "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+            "team": "personal",
+            "member": "borodatych",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          }
+        ]
+      },
+      "expect": {
+        "code": "legacyTokenTwice"
+      }
+    },
+    {
+      "id": "legacyOnTeam",
+      "provenance": "computed",
+      "note": "The legacy token belongs to the owner's store only.",
+      "patch": {
+        "tokens": [
+          {
+            "id": "tk_7q2m9x4a",
+            "sha256": "76604e2921579085778fb52e006c2b9322aad4232ff162403a3a4818ca8836c5",
+            "team": "vibebrains",
+            "member": "alice",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": false,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_legacy",
+            "legacy": true,
+            "sha256": "2a1f29c1f4a770fd8bc3b6fac681621584c47fc64cebac9cac9dc57bf463b2a0",
+            "team": "vibebrains",
+            "member": "borodatych",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_b3c4d5e6",
+            "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+            "team": "syncteam",
+            "member": "alice",
+            "agent": "vibeide",
+            "role": "reader",
+            "history": true,
+            "projects": [
+              "Acme"
+            ],
+            "expiresAt": "2026-12-31T23:59:59Z"
+          }
+        ]
+      },
+      "expect": {
+        "code": "legacyTokenMisplaced"
+      }
+    },
+    {
+      "id": "tkLegacyWithoutFlag",
+      "provenance": "computed",
+      "note": "The id tk_legacy is reserved for the legacy token.",
+      "patch": {
+        "tokens": [
+          {
+            "id": "tk_7q2m9x4a",
+            "sha256": "76604e2921579085778fb52e006c2b9322aad4232ff162403a3a4818ca8836c5",
+            "team": "vibebrains",
+            "member": "alice",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": false,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_legacy",
+            "legacy": false,
+            "sha256": "2a1f29c1f4a770fd8bc3b6fac681621584c47fc64cebac9cac9dc57bf463b2a0",
+            "team": "personal",
+            "member": "borodatych",
+            "agent": "claude-code",
+            "role": "writer",
+            "history": true,
+            "projects": null,
+            "expiresAt": null
+          },
+          {
+            "id": "tk_b3c4d5e6",
+            "sha256": "5d0f3f1a9e2b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d",
+            "team": "syncteam",
+            "member": "alice",
+            "agent": "vibeide",
+            "role": "reader",
+            "history": true,
+            "projects": [
+              "Acme"
+            ],
+            "expiresAt": "2026-12-31T23:59:59Z"
+          }
+        ]
+      },
+      "expect": {
+        "code": "legacyTokenMisplaced"
+      }
+    },
+    {
+      "id": "storeNameMismatch",
+      "provenance": "computed",
+      "note": "storeName is exactly member, hyphen, machine.",
+      "patch": {
+        "keys": [
+          {
+            "id": "mk_3f8k1p0z",
+            "member": "alice",
+            "machine": "laptop",
+            "storeName": "alice-desk",
+            "teams": [
+              "vibebrains",
+              "syncteam"
+            ],
+            "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+          }
+        ]
+      },
+      "expect": {
+        "code": "storeNameMismatch"
+      }
+    },
+    {
+      "id": "storeNameTaken",
+      "provenance": "computed",
+      "note": "Two keys would write into one machines/ directory.",
+      "patch": {
+        "keys": [
+          {
+            "id": "mk_3f8k1p0z",
+            "member": "alice",
+            "machine": "laptop",
+            "storeName": "alice-laptop",
+            "teams": [
+              "vibebrains",
+              "syncteam"
+            ],
+            "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+          },
+          {
+            "id": "mk_9h8g7f6e",
+            "member": "alice",
+            "machine": "laptop",
+            "storeName": "alice-laptop",
+            "teams": [
+              "vibebrains",
+              "syncteam"
+            ],
+            "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi"
+          }
+        ]
+      },
+      "expect": {
+        "code": "storeNameTaken"
+      }
+    },
+    {
+      "id": "keyWithoutTeams",
+      "provenance": "computed",
+      "note": "A key that opens nothing is a mistake, not a grant.",
+      "patch": {
+        "keys": [
+          {
+            "id": "mk_3f8k1p0z",
+            "member": "alice",
+            "machine": "laptop",
+            "storeName": "alice-laptop",
+            "teams": [],
+            "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+          }
+        ]
+      },
+      "expect": {
+        "code": "keyWithoutTeams"
+      }
+    },
+    {
+      "id": "keyForAdopted",
+      "provenance": "computed",
+      "note": "The owner reaches the personal store with his own key, not a machine key.",
+      "patch": {
+        "keys": [
+          {
+            "id": "mk_3f8k1p0z",
+            "member": "borodatych",
+            "machine": "mac",
+            "storeName": "borodatych-mac",
+            "teams": [
+              "personal"
+            ],
+            "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+          }
+        ]
+      },
+      "expect": {
+        "code": "keyForAdopted"
+      }
+    },
+    {
+      "id": "keyNotMember",
+      "provenance": "computed",
+      "note": "A key for a team its owner is not in.",
+      "patch": {
+        "keys": [
+          {
+            "id": "mk_3f8k1p0z",
+            "member": "bob",
+            "machine": "laptop",
+            "storeName": "bob-laptop",
+            "teams": [
+              "vibebrains",
+              "syncteam"
+            ],
+            "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+          }
+        ]
+      },
+      "expect": {
+        "code": "notAMember"
+      }
+    },
+    {
+      "id": "publicKeyEcdsa",
+      "provenance": "computed",
+      "note": "Only ed25519 keys are accepted.",
+      "patch": {
+        "keys": [
+          {
+            "id": "mk_3f8k1p0z",
+            "member": "alice",
+            "machine": "laptop",
+            "storeName": "alice-laptop",
+            "teams": [
+              "vibebrains",
+              "syncteam"
+            ],
+            "publicKey": "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY="
+          }
+        ]
+      },
+      "expect": {
+        "code": "invalidPublicKey"
+      }
+    },
+    {
+      "id": "publicKeyShort",
+      "provenance": "computed",
+      "note": "The key material decodes to 32 bytes, not fewer.",
+      "patch": {
+        "keys": [
+          {
+            "id": "mk_3f8k1p0z",
+            "member": "alice",
+            "machine": "laptop",
+            "storeName": "alice-laptop",
+            "teams": [
+              "vibebrains",
+              "syncteam"
+            ],
+            "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAEEREREREREREREREREREREQ="
+          }
+        ]
+      },
+      "expect": {
+        "code": "invalidPublicKey"
+      }
+    },
+    {
+      "id": "publicKeyWithComment",
+      "provenance": "computed",
+      "note": "One line, type and base64 only: a comment is where an authorized_keys option would hide.",
+      "patch": {
+        "keys": [
+          {
+            "id": "mk_3f8k1p0z",
+            "member": "alice",
+            "machine": "laptop",
+            "storeName": "alice-laptop",
+            "teams": [
+              "vibebrains",
+              "syncteam"
+            ],
+            "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER alice@laptop"
+          }
+        ]
+      },
+      "expect": {
+        "code": "invalidPublicKey"
+      }
+    },
+    {
+      "id": "publicKeyNewline",
+      "provenance": "computed",
+      "note": "A newline in the key would write a second line into authorized_keys.",
+      "patch": {
+        "keys": [
+          {
+            "id": "mk_3f8k1p0z",
+            "member": "alice",
+            "machine": "laptop",
+            "storeName": "alice-laptop",
+            "teams": [
+              "vibebrains",
+              "syncteam"
+            ],
+            "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER\ncommand=\"sh\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi"
+          }
+        ]
+      },
+      "expect": {
+        "code": "invalidPublicKey"
+      }
+    }
+  ]
+}
