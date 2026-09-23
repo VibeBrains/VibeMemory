@@ -21,8 +21,6 @@ const TOKEN_ID_PREFIX: &str = "tk_";
 const KEY_ID_PREFIX: &str = "mk_";
 /// The id of the token issued before the cabinet, which has no id of its own.
 pub const LEGACY_TOKEN_ID: &str = "tk_legacy";
-/// Longest team slug, handle, machine or agent name: one DNS label.
-const MAX_NAME_LENGTH: usize = 63;
 /// The only machine key type accepted.
 const ED25519: &str = "ssh-ed25519";
 /// Bytes of an ed25519 public key.
@@ -361,18 +359,9 @@ struct RawKey {
     public_key: String,
 }
 
-/// `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`: a team slug, a handle, a machine, an agent. The name
-/// is a directory and an argument to git and ssh; a leading hyphen would make it an option.
-#[must_use]
-pub fn is_name(name: &str) -> bool {
-    let bytes = name.as_bytes();
-    (1..=MAX_NAME_LENGTH).contains(&bytes.len())
-        && bytes
-            .iter()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
-        && bytes.first() != Some(&b'-')
-        && bytes.last() != Some(&b'-')
-}
+/// A team slug, a handle, a machine, an agent: the rule is the core's, shared with the engine that
+/// makes directories of the same names on a member's machine.
+pub use vibememory_core::naming::is_slug as is_name;
 
 /// `<prefix>` and a public id.
 fn is_public_id(id: &str, prefix: &str) -> bool {

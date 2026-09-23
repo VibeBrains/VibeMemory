@@ -15,6 +15,7 @@ pub mod error;
 pub mod git;
 pub(crate) mod path;
 mod rules;
+pub mod slug;
 pub mod store_name;
 
 pub use canonical::canonical_cwd;
@@ -26,6 +27,7 @@ pub use enc::{
 pub use error::NamingError;
 pub use git::{DotGit, DotGitProbe, GitProbe, NameSource};
 pub use path::PathSyntax;
+pub use slug::{MAX_SLUG_LENGTH, is_slug};
 pub use store_name::{GIT_DIR_NAME, StoreName};
 
 use git::GitLayout;

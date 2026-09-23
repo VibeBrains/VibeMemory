@@ -38,6 +38,7 @@ fn main() -> ExitCode {
             let dry_run = args.any(|arg| arg == "--dry-run");
             install(dry_run)
         }
+        Some("connect") => connect_command(&args.collect::<Vec<String>>()),
         Some("tick") => tick_command(&args.collect::<Vec<String>>()),
         Some("migrate") => migrate_command(&args.collect::<Vec<String>>()),
         Some("switch") => switch_command(&args.collect::<Vec<String>>()),
@@ -96,10 +97,20 @@ fn read_config(layout: &Layout) -> Result<Config, String> {
     Config::parse(&text, PathSyntax::Posix).map_err(|error| error.to_string())
 }
 
+/// Whether the engine is set up on this machine at all: a machine that only connects agents has
+/// no `config.json`, and that is not a fault.
+fn engine_configured(layout: &Layout) -> bool {
+    layout.engine_dir.join("config.json").exists()
+}
+
 /// `status` prints where the machine stands; `doctor` does the same and fails when something is
 /// not as it must be.
 fn report(strict: bool, json: bool) -> ExitCode {
     let layout = layout();
+    let tokens = vibememory_cli::credentials::kept_tokens(&layout);
+    if !engine_configured(&layout) {
+        return report_without_engine(&layout, &tokens, strict, json);
+    }
     let config = match read_config(&layout) {
         Ok(config) => config,
         Err(error) => {
@@ -118,7 +129,14 @@ fn report(strict: bool, json: bool) -> ExitCode {
         None
     };
     if json {
-        return report_json(&config, &actions, mirror.as_ref(), disk.as_ref(), strict);
+        return report_json(
+            &config,
+            &actions,
+            mirror.as_ref(),
+            disk.as_ref(),
+            &tokens,
+            strict,
+        );
     }
     let mut wrong = 0;
     for action in &actions {
@@ -170,24 +188,218 @@ fn report(strict: bool, json: bool) -> ExitCode {
         Some(Err(reason)) => println!("disk     host unknown \u{2014} {reason}"),
         None => {}
     }
+    wrong += print_tokens(&tokens);
     if strict && wrong > 0 {
-        eprintln!("{wrong} of {} steps are not in place", actions.len());
+        eprintln!(
+            "{wrong} of {} steps are not in place",
+            actions.len() + tokens.len()
+        );
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
 }
 
-/// Brings the machine to the planned state, or says what it would do.
-fn install(dry_run: bool) -> ExitCode {
+/// The credentials section: each kept token, and what is wrong with its files. Answers how many
+/// tokens have something wrong.
+fn print_tokens(tokens: &[vibememory_cli::credentials::KeptToken]) -> usize {
+    let mut wrong = 0;
+    for token in tokens {
+        println!(
+            "token    {}/{} {} from {}",
+            token.team, token.agent, token.token_id, token.cabinet
+        );
+        if !token.problems.is_empty() {
+            wrong += 1;
+        }
+        for problem in &token.problems {
+            println!("         {problem}");
+        }
+    }
+    wrong
+}
+
+/// `status` and `doctor` on a machine without the engine: a member of a `memory` team has the two
+/// binaries, curl and tokens, and nothing else — which is a complete machine, not a broken one.
+fn report_without_engine(
+    layout: &Layout,
+    tokens: &[vibememory_cli::credentials::KeptToken],
+    strict: bool,
+    json: bool,
+) -> ExitCode {
+    let actions = vibememory_cli::install::plan_binaries(layout);
+    let wrong_steps = actions
+        .iter()
+        .filter(|action| !matches!(action.state, State::Satisfied))
+        .count();
+    let wrong_tokens = tokens
+        .iter()
+        .filter(|token| !token.problems.is_empty())
+        .count();
+    if json {
+        let report = serde_json::json!({
+            "engine": "notInstalled",
+            "steps": steps_json(&actions),
+            "stepsWrong": wrong_steps,
+            "credentials": tokens_json(tokens),
+        });
+        println!("{report:#}");
+    } else {
+        println!(
+            "engine   not installed \u{2014} no {}: this machine connects agents only",
+            layout.engine_dir.join("config.json").display()
+        );
+        for action in &actions {
+            let mark = if matches!(action.state, State::Satisfied) {
+                "ok      "
+            } else {
+                "missing "
+            };
+            println!("{mark} {}", action.step.describe());
+            match &action.state {
+                State::Conflict { found } => println!("         {found}"),
+                State::Unknown { reason } => println!("         {reason}"),
+                _ => {}
+            }
+        }
+        print_tokens(tokens);
+    }
+    if strict && wrong_steps + wrong_tokens > 0 {
+        return ExitCode::FAILURE;
+    }
+    ExitCode::SUCCESS
+}
+
+/// The steps as `--json` gives them.
+fn steps_json(actions: &[vibememory_cli::install::Action]) -> Vec<serde_json::Value> {
+    actions
+        .iter()
+        .map(|action| {
+            let (state, detail) = match &action.state {
+                State::Satisfied => ("ok", None),
+                State::Missing => ("missing", None),
+                State::Conflict { found } => ("conflict", Some(found.clone())),
+                State::Unknown { reason } => ("unknown", Some(reason.clone())),
+            };
+            serde_json::json!({ "step": action.step.describe(), "state": state, "detail": detail })
+        })
+        .collect()
+}
+
+/// The kept tokens as `--json` gives them: ids and places, never a token.
+fn tokens_json(tokens: &[vibememory_cli::credentials::KeptToken]) -> Vec<serde_json::Value> {
+    tokens
+        .iter()
+        .map(|token| {
+            serde_json::json!({
+                "team": token.team,
+                "agent": token.agent,
+                "tokenId": token.token_id,
+                "cabinet": token.cabinet,
+                "file": token.file.display().to_string(),
+                "problems": token.problems,
+            })
+        })
+        .collect()
+}
+
+/// `connect --code <code> --cabinet <address> [--agent <name>]`: trades a claim code from the
+/// cabinet for a token and keeps it where only its owner reaches it. Prints paths and the line
+/// that registers the server — never the token.
+fn connect_command(args: &[String]) -> ExitCode {
+    let value = |flag: &str| {
+        args.iter()
+            .position(|arg| arg == flag)
+            .and_then(|at| args.get(at + 1))
+            .cloned()
+    };
+    let (Some(code), Some(cabinet)) = (value("--code"), value("--cabinet")) else {
+        eprintln!("usage: vibememory connect --code <code> --cabinet <address> [--agent <name>]");
+        return ExitCode::from(2);
+    };
     let layout = layout();
-    let config = match read_config(&layout) {
-        Ok(config) => config,
+    let reply = match vibememory_cli::connect::ask_cabinet(&cabinet, &code) {
+        Ok(reply) => reply,
         Err(error) => {
-            eprintln!("config: {error}");
-            return ExitCode::from(2);
+            eprintln!("connect: {error}");
+            return ExitCode::FAILURE;
         }
     };
-    let applied = apply(&layout, &plan(&layout, &config, &[]), dry_run);
+    let grant = match vibememory_core::claim::read_answer(reply.exit, &reply.stdout) {
+        Ok(vibememory_core::claim::Claim::Token(grant)) => grant,
+        Ok(vibememory_core::claim::Claim::Key(grant)) => {
+            eprintln!(
+                "connect: the code was for a machine key of team {}, and this engine connects \
+                 tokens only; revoke key {} in the cabinet",
+                grant.team, grant.key_id
+            );
+            return ExitCode::FAILURE;
+        }
+        Err(failure) => {
+            eprintln!("connect: {failure}");
+            // curl's own line, which already names itself
+            if !reply.stderr.is_empty() {
+                eprintln!("{}", reply.stderr);
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Some(agent) = value("--agent")
+        && agent != grant.agent
+    {
+        eprintln!(
+            "note: the code was made for agent {}, not {agent}: the token is kept as {}'s",
+            grant.agent, grant.agent
+        );
+    }
+    let kept = match vibememory_cli::connect::keep_token(&layout, &grant) {
+        Ok(kept) => kept,
+        Err(error) => {
+            eprintln!(
+                "connect: token {} was issued but could not be kept ({error}); revoke it in the \
+                 cabinet and make a new code",
+                grant.token_id
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "connected: team {} as {}, agent {} (token {})",
+        grant.team, grant.member, grant.agent, grant.token_id
+    );
+    println!("token     {}", kept.token.display());
+    println!(
+        "fragment  {} \u{2014} for agents that read a JSON list of MCP servers",
+        kept.fragment.display()
+    );
+    println!("register with Claude Code:");
+    println!(
+        "  {}",
+        vibememory_cli::connect::claude_code_registration(&grant, &kept.token)
+    );
+    ExitCode::SUCCESS
+}
+
+/// Brings the machine to the planned state, or says what it would do. Without a `config.json`
+/// the engine is not set up here, and only its binaries are placed: what a member of a `memory`
+/// team needs, and what the archive's `./vibememory install` promises.
+fn install(dry_run: bool) -> ExitCode {
+    let layout = layout();
+    let actions = if engine_configured(&layout) {
+        match read_config(&layout) {
+            Ok(config) => plan(&layout, &config, &[]),
+            Err(error) => {
+                eprintln!("config: {error}");
+                return ExitCode::from(2);
+            }
+        }
+    } else {
+        println!(
+            "engine not configured (no {}): placing the binaries only",
+            layout.engine_dir.join("config.json").display()
+        );
+        vibememory_cli::install::plan_binaries(&layout)
+    };
+    let applied = apply(&layout, &actions, dry_run);
     let verb = if dry_run { "would do" } else { "did" };
     for what in &applied.performed {
         println!("{verb}: {what}");
@@ -1339,22 +1551,12 @@ fn report_json(
     actions: &[vibememory_cli::install::Action],
     mirror: Option<&vibememory_cli::mirror::Mirror>,
     disk: Option<&Result<vibememory_cli::mirror::Disk, String>>,
+    tokens: &[vibememory_cli::credentials::KeptToken],
     strict: bool,
 ) -> ExitCode {
     use vibememory_cli::mirror::Mirror;
 
-    let steps: Vec<serde_json::Value> = actions
-        .iter()
-        .map(|action| {
-            let (state, detail) = match &action.state {
-                State::Satisfied => ("ok", None),
-                State::Missing => ("missing", None),
-                State::Conflict { found } => ("conflict", Some(found.clone())),
-                State::Unknown { reason } => ("unknown", Some(reason.clone())),
-            };
-            serde_json::json!({ "step": action.step.describe(), "state": state, "detail": detail })
-        })
-        .collect();
+    let steps = steps_json(actions);
     let wrong = actions
         .iter()
         .filter(|action| !matches!(action.state, State::Satisfied))
@@ -1387,7 +1589,8 @@ fn report_json(
         Some(Err(reason)) => serde_json::json!({ "state": "unknown", "reason": reason }),
     };
     let disk_low = matches!(disk, Some(Ok(disk)) if disk.is_low());
-    let failed = wrong > 0 || mirror.is_some_and(Mirror::is_fault) || disk_low;
+    let tokens_wrong = tokens.iter().any(|token| !token.problems.is_empty());
+    let failed = wrong > 0 || mirror.is_some_and(Mirror::is_fault) || disk_low || tokens_wrong;
     let report = serde_json::json!({
         "machineId": config.machine_id,
         "remote": config.remote,
@@ -1395,6 +1598,7 @@ fn report_json(
         "stepsWrong": wrong,
         "mirror": mirror_value,
         "hostDisk": disk_value,
+        "credentials": tokens_json(tokens),
         "ok": !failed,
     });
     match serde_json::to_string_pretty(&report) {
@@ -1415,7 +1619,8 @@ fn report_json(
 fn usage() {
     println!("vibememory {}", env!("CARGO_PKG_VERSION"));
     println!(
-        "commands: status [--json], doctor [--json], install [--dry-run], hook <event>, \
+        "commands: status [--json], doctor [--json], install [--dry-run], \
+         connect --code <code> --cabinet <address> [--agent <name>], hook <event>, \
          merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>, tick [--release-deletions], \
          relink <enc> <name> <cwd>, import <enc> <name> <cwd>, \
          migrate --from <dir> [--apply], switch --from <dir> [--apply|--rollback], --version"

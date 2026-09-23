@@ -196,6 +196,9 @@ pub enum Step {
     /// Git Bash, on Windows: Claude Code runs every shell-form hook with it and, without it, sends
     /// them to PowerShell — where the engine's hook lines, POSIX shell, cannot run.
     GitBash,
+    /// curl, which `connect` trades a claim code with: the machine's own, like git and ssh — there
+    /// is no TLS in this binary.
+    Curl,
     /// No deletions held back by the tick's cap and waiting for a person.
     DeletionsHeld,
     /// No flag in the `env` of `settings.json` that switches the prompt cache off or shortens it.
@@ -249,6 +252,7 @@ impl Step {
             Self::Schedule => "scheduled tick".to_owned(),
             Self::Hooks => "hooks in settings.json".to_owned(),
             Self::GitBash => "Git Bash for the hooks".to_owned(),
+            Self::Curl => "curl for connect".to_owned(),
             Self::PromptCacheEnv => "prompt cache not switched off in settings.json".to_owned(),
             Self::DeletionsHeld => "no deletions waiting for a decision".to_owned(),
             Self::ScaffoldCommitted { .. } => "store scaffolding committed".to_owned(),
@@ -384,6 +388,10 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
             state: git_bash_state(),
         });
     }
+    actions.push(Action {
+        step: Step::Curl,
+        state: curl_state(),
+    });
     actions.push(Action {
         step: Step::Hooks,
         state: hooks_state(layout),
@@ -665,8 +673,8 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
         // Nothing to apply: a flag that switches the cache off is the owner's to remove, and the
         // plan never reports this step as missing — only satisfied or in conflict. The same goes
         // for a held deletion: releasing it is a decision, not a repair. And Git for Windows is
-        // the owner's to install.
-        Step::PromptCacheEnv | Step::DeletionsHeld | Step::GitBash => Ok(()),
+        // the owner's to install, and so is curl.
+        Step::PromptCacheEnv | Step::DeletionsHeld | Step::GitBash | Step::Curl => Ok(()),
         // Missing only while something it proves is about to be put in place by an earlier step of
         // this same run. By now it has been, and the proof is the run itself.
         Step::MergeDriverRuns => probe_merge_drivers(layout),
@@ -1314,6 +1322,36 @@ fn git_bash_state() -> State {
             ),
         },
     }
+}
+
+/// curl on this machine: on macOS always, on Windows 10 and later in `System32`, and in Git for
+/// Windows.
+fn curl_state() -> State {
+    if on_path("curl").is_some() {
+        State::Satisfied
+    } else {
+        State::Conflict {
+            found: "no curl on PATH: connect cannot reach the cabinet — install curl".to_owned(),
+        }
+    }
+}
+
+/// The plan of a machine the engine does not run on: the two binaries in `~/.vibememory/bin` and
+/// curl. A member of a `memory` team needs nothing more — no store, no hooks, no schedule — and
+/// the archive's `./vibememory install` must not refuse such a machine for lacking a
+/// `config.json` it will never have.
+#[must_use]
+pub fn plan_binaries(layout: &Layout) -> Vec<Action> {
+    let mut actions = vec![Action {
+        step: Step::Binary,
+        state: binary_state(layout),
+    }];
+    push_mcp_step(layout, &mut actions);
+    actions.push(Action {
+        step: Step::Curl,
+        state: curl_state(),
+    });
+    actions
 }
 
 /// The first executable called `name` on `PATH`.

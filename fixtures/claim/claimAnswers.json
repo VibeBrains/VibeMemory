@@ -1,0 +1,273 @@
+{
+  "description": "What POST /api/agent/claim answers and how `vibememory connect` reads it: the curl exit code and stdout in, the claim or the reason out. `body` is the JSON the cabinet sends, `raw` the literal stdout. The cabinet's int test checks its answers carry exactly the fields of `token` and `key`. Tokens are synthetic: the secret is one repeated character, as the privacy gate requires.",
+  "cases": [
+    {
+      "id": "token",
+      "provenance": "computed",
+      "note": "The answer the cabinet gives for a token claim; the cabinet's test checks its own answer has exactly these fields.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://vibememory.ru/mcp"
+      },
+      "expect": {
+        "token": {
+          "team": "vibebrains",
+          "member": "alice",
+          "agent": "claude-code",
+          "tokenId": "tk_7q2m9x4a"
+        }
+      }
+    },
+    {
+      "id": "key",
+      "provenance": "computed",
+      "note": "The answer for a machine key claim (sync teams). The engine reads it from phase 5 on; until then connect refuses it by name.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "key",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "syncteam",
+        "mode": "sync",
+        "member": "alice",
+        "machine": "laptop",
+        "storeName": "alice-laptop",
+        "keyId": "mk_3f8k1p0z",
+        "sshHost": "vibememory.ru",
+        "sshUser": "vmgit",
+        "remote": "teams/syncteam.git",
+        "hostKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz"
+        ]
+      },
+      "expect": {
+        "key": {
+          "team": "syncteam",
+          "storeName": "alice-laptop",
+          "keyId": "mk_3f8k1p0z"
+        }
+      }
+    },
+    {
+      "id": "refused",
+      "provenance": "computed",
+      "note": "Every refusal is HTTP 400: curl --fail exits 22 and prints nothing to stdout.",
+      "exit": 22,
+      "raw": "",
+      "expect": {
+        "refused": null
+      }
+    },
+    {
+      "id": "unreachable",
+      "provenance": "computed",
+      "note": "curl could not connect to the cabinet.",
+      "exit": 7,
+      "raw": "",
+      "expect": {
+        "unreachable": null
+      }
+    },
+    {
+      "id": "timedOut",
+      "provenance": "computed",
+      "note": "curl gave up after --max-time.",
+      "exit": 28,
+      "raw": "",
+      "expect": {
+        "unreachable": null
+      }
+    },
+    {
+      "id": "notJson",
+      "provenance": "computed",
+      "exit": 0,
+      "raw": "<html>Bad Gateway</html>",
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "versionTwo",
+      "provenance": "computed",
+      "exit": 0,
+      "body": {
+        "version": 2,
+        "kind": "token",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://vibememory.ru/mcp"
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "unknownKind",
+      "provenance": "computed",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "cookie",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://vibememory.ru/mcp"
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "unknownField",
+      "provenance": "computed",
+      "note": "Strict: a field the engine does not know means an answer it does not understand.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://vibememory.ru/mcp",
+        "grants": []
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "missingToken",
+      "provenance": "computed",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "mcpUrl": "https://vibememory.ru/mcp"
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "tokenWithoutPrefix",
+      "provenance": "computed",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://vibememory.ru/mcp"
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "tokenIdMismatch",
+      "provenance": "computed",
+      "note": "The id the token carries must be the id the answer names.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_b3c4d5e6",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://vibememory.ru/mcp"
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "teamNotAName",
+      "provenance": "computed",
+      "note": "The team and the agent become directory names on the machine: `..` or a slash must never get there.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "../etc",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://vibememory.ru/mcp"
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "agentNotAName",
+      "provenance": "computed",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "Claude Code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://vibememory.ru/mcp"
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "cabinetNotHttp",
+      "provenance": "computed",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "file:///etc/passwd",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://vibememory.ru/mcp"
+      },
+      "expect": {
+        "malformed": null
+      }
+    }
+  ]
+}

@@ -17,6 +17,8 @@
 
 pub mod clock;
 pub mod config;
+pub mod connect;
+pub mod credentials;
 pub mod desktop_store;
 pub mod dir_link;
 pub mod forget;

@@ -1,0 +1,63 @@
+{
+  "description": "`icacls <file>` output after `vibememory connect` wrote a token file on Windows, and what `doctor` makes of it: the file must be reachable by its owner alone. The check compares every grantee with the current user (`whoami`), never with group names — Windows prints them in its own language (Everyone is «Все» on a Russian system). `path` is what connect passed to icacls, `user` what whoami printed. Provenance `unverified`: the format is Microsoft's documented one; the first real output comes from the GPD (phase W).",
+  "cases": [
+    {
+      "id": "ownerOnly",
+      "provenance": "unverified",
+      "path": "C:\\Users\\alice\\.vibememory\\tokens\\vibebrains\\claude-code",
+      "user": "desktop-1\\alice",
+      "output": "C:\\Users\\alice\\.vibememory\\tokens\\vibebrains\\claude-code DESKTOP-1\\alice:(F)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+      "expect": {
+        "others": []
+      }
+    },
+    {
+      "id": "inheritedStill",
+      "provenance": "unverified",
+      "note": "A file as Windows creates it in the profile: inheritance not cut.",
+      "path": "C:\\Users\\alice\\.vibememory\\tokens\\vibebrains\\claude-code",
+      "user": "desktop-1\\alice",
+      "output": "C:\\Users\\alice\\.vibememory\\tokens\\vibebrains\\claude-code NT AUTHORITY\\SYSTEM:(I)(F)\r\n                                                             BUILTIN\\Administrators:(I)(F)\r\n                                                             DESKTOP-1\\alice:(I)(F)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+      "expect": {
+        "others": [
+          "NT AUTHORITY\\SYSTEM",
+          "BUILTIN\\Administrators"
+        ]
+      }
+    },
+    {
+      "id": "everyoneRussian",
+      "provenance": "unverified",
+      "note": "Group names in the system's language: the check does not know them and does not need to.",
+      "path": "C:\\Users\\alice\\.vibememory\\tokens\\vibebrains\\claude-code",
+      "user": "desktop-1\\alice",
+      "output": "C:\\Users\\alice\\.vibememory\\tokens\\vibebrains\\claude-code Все:(R)\r\n                                                             DESKTOP-1\\alice:(F)\r\n\r\nУспешно обработано файлов: 1; не удалось обработать файлов: 0\r\n",
+      "expect": {
+        "others": [
+          "Все"
+        ]
+      }
+    },
+    {
+      "id": "pathWithSpaces",
+      "provenance": "unverified",
+      "path": "C:\\Users\\Alice Smith\\.vibememory\\tokens\\vibebrains\\claude-code",
+      "user": "desktop-1\\alice smith",
+      "output": "C:\\Users\\Alice Smith\\.vibememory\\tokens\\vibebrains\\claude-code DESKTOP-1\\Alice Smith:(F)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n",
+      "expect": {
+        "others": []
+      }
+    },
+    {
+      "id": "noGrantees",
+      "provenance": "unverified",
+      "note": "Nothing parsed is not a pass: a file nobody can read is not what connect wrote either.",
+      "path": "C:\\t\\x",
+      "user": "desktop-1\\alice",
+      "output": "C:\\t\\x: The system cannot find the file specified.\r\nSuccessfully processed 0 files; Failed processing 1 files\r\n",
+      "expect": {
+        "unreadable": null
+      }
+    }
+  ]
+}

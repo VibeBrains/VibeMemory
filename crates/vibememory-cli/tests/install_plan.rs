@@ -60,6 +60,8 @@ fn a_fresh_machine_needs_every_step_it_can_have() {
             Step::ManagedCopy { .. } | Step::PromptCacheEnv | Step::DeletionsHeld => {
                 assert_eq!(action.state, State::Satisfied);
             }
+            // curl is the machine's, like git: found or not, never something install puts there.
+            Step::Curl => assert_ne!(action.state, State::Missing, "{action:?}"),
             _ => assert_eq!(action.state, State::Missing, "{action:?}"),
         }
     }
