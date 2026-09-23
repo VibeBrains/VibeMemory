@@ -31,24 +31,46 @@ ssh-add --apple-use-keychain ~/.ssh/id_ed25519_vibememory
 спросить её некому. Сообщение об этом не говорит ни слова, поэтому проверка встроена в
 `seedKey.sh`, а `AddKeysToAgent`/`UseKeychain` он пишет в `~/.ssh/config` сам.
 
-## 2. Репозиторий — `./infra/hostBootstrap.sh`
+## 2. Хост и репозиторий — `./infra/hostBootstrap.sh`
 
 ```sh
 ./infra/hostBootstrap.sh
 ./infra/hostBootstrap.sh --mirror git@github.com:owner/vibememory-store.git
 ```
 
-Заводит `~/vibememory/store.git` (bare, ветка `main`) и ставит настройки, которые для стора
-транскриптов не косметика:
+Шесть шагов, каждый меняет только то, что отличается, — второй прогон не трогает ни одного файла:
 
-- `core.autocrlf=false` — байты остаются байтами; иначе редактор с CRLF задвоил бы блок состояния
-  каждой строки;
-- `core.filemode=false` — бит исполняемости у машин разный и ничего здесь не значит;
-- `gc.auto=0` — сборка мусора на приёме push'а посреди тика не нужна.
+1. **Учётки и каталоги.** `vmgit` — сервер памяти и репозитории команд: без sudo, без пароля, без
+   терминала. `vmcab` — кабинет: без sudo и без доступа к репозиториям. Группа `vibememory` (`vm`,
+   `vmgit`) делит репозитории, группа `vmaccess` (`vmcab`, `vmgit`) — каталог обмена снимком прав.
+   Каталоги: `/srv/vibememory/bin` (755), `teams` (2770 `vmgit:vibememory`), `access` (3770
+   `root:vmaccess` — sticky, чтобы кабинет и сервер не подменяли файлы друг друга).
+2. **`infra/storeInit.sh` едет на хост** в `/srv/vibememory/bin/` — единственное место настроек
+   голого репозитория: и личного стора, и будущих репозиториев команд.
+3. **Личный стор** — `storeInit.sh <путь> --adopted`: `core.autocrlf=false` (байты остаются
+   байтами), `core.filemode=false`, `gc.auto=0` (сборка мусора не на приёме push), `transfer.unpackLimit=1`
+   (push остаётся пакетом с дельтами), без `core.bigFileThreshold`, `pack.threads=1`,
+   `pack.windowMemory=64m`, `core.sharedRepository=group`. `--adopted` значит без `receive.*`: правила
+   команд владельца не касаются.
+4. **Права стора.** Группа `vibememory` пишет **только** в `objects/` и `refs/` — туда пишет
+   запись памяти. `config`, `hooks/` и сам каталог стора (2750) группе доступны только на чтение:
+   их исполняет git владельца, у которого sudo, и запись в них из учётки сервера была бы исполнением
+   кода от владельца. Путь к стору — `/home/vm` и `~/vibememory` — 710 с группой `vibememory`.
+   `safe.directory` в системном конфиге git — для ручных команд `git -C` из-под `vmgit`; код ходит
+   `--git-dir` и в нём не нуждается.
+5. **Ночная упаковка** `~/vibememory/bin/storeRepack.sh` в 04:17: `repack -d -n --geometric=2`, отказ
+   без места на худший случай, строка в `journalctl -t vibememory-repack`. С `--mirror` — хук
+   `post-receive` с `git push --mirror`; недоступное зеркало push **не** отклоняет.
+6. **sshd** — два drop-in под страховочным таймером: `10-vibememory-hardening.conf` (вход только по
+   ключу, root без пароля, три попытки) и `20-vibememory-vmgit.conf` (`Match User vmgit`: без
+   терминала и без проброса, заканчивается `Match all`). Правила остаются, только если новое
+   соединение по ключу подтвердилось в журнале sshd; иначе через 180 с сервер вернёт прежние файлы сам.
 
-С `--mirror` пишется хук `post-receive`, делающий `git push --mirror` в указанный репозиторий.
-Недоступное зеркало **не** отклоняет push: приняли, о зеркале написали в stderr. Ключ на сервере
-должен уже лежать — но заводить его руками не нужно, это делает шаг 4.
+**Откат прав стора** одной строкой, на хосте:
+
+```sh
+sudo chgrp -R vm ~/vibememory && sudo chgrp vm ~ && sudo chmod -R g-w,g-s ~/vibememory/store.git && chmod 700 ~ ~/vibememory ~/vibememory/store.git && git --git-dir ~/vibememory/store.git config --unset core.sharedRepository
+```
 
 ## 3. Привязка машины — `./infra/connectStore.sh`
 

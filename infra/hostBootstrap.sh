@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# Creates the store's bare repository on the host, and optionally a post-receive hook that
-# mirrors every push to a private repository at any git host.
+# Prepares the store's host: service accounts and their directories, the owner's bare repository
+# with the permissions the memory server needs, nightly repacking, sshd rules, and optionally a
+# post-receive hook that mirrors every push to a private repository at any git host.
 #
-# Runs on the OWNER'S machine over the key seeded by seedKey.sh; the server side is a single
-# ssh session with a here-document, so nothing has to be copied there first.
+# Runs on the OWNER'S machine over the key seeded by seedKey.sh; each server step is one ssh
+# session with a here-document, and infra/storeInit.sh is copied to the host first.
 #
-# Idempotent: an existing repository is left alone, the hook is rewritten only when its text
-# differs. Nothing is ever deleted.
+# Idempotent: accounts, directories and permissions are changed only where they differ, config
+# values and files are rewritten only when their text differs, and sshd rules are applied under a
+# rollback timer only when they change. Nothing is ever deleted.
 set -euo pipefail
 
 readonly DEFAULT_ALIAS=vibememory
 readonly DEFAULT_PATH=vibememory/store.git
 readonly DEFAULT_BRANCH=main
+readonly STORE_INIT_LOCAL="$(dirname "$0")/storeInit.sh"
+readonly STORE_INIT_REMOTE=/srv/vibememory/bin/storeInit.sh
 
 sshAlias="${VIBEMEMORY_SSH_ALIAS:-$DEFAULT_ALIAS}"
 repoPath="${VIBEMEMORY_REPO_PATH:-$DEFAULT_PATH}"
@@ -23,14 +27,18 @@ fail() { printf 'Ошибка: %s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat <<TEXT
-Завести bare-репозиторий стора на сервере.
+Подготовить хост стора: служебные учётки, bare-репозиторий владельца с правами для сервера памяти,
+ночную упаковку и правила sshd.
 
   ./infra/hostBootstrap.sh [--alias vibememory] [--path vibememory/store.git]
                            [--branch main] [--mirror storeMirror:owner/repo.git]
 
   --mirror  необязателен: если задан, ставится хук post-receive, который после каждого push
-            делает `git push --mirror` в этот репозиторий. Ключ и ssh-алиас на сервере заводит
+            делает \`git push --mirror\` в этот репозиторий. Ключ и ssh-алиас на сервере заводит
             ./infra/mirrorSetup.sh — вызывать этот скрипт с --mirror руками обычно не нужно.
+
+Правила sshd меняются под страховкой: если новое соединение по ключу не подтвердится за 180 секунд,
+сервер сам вернёт прежние файлы.
 
 Переменные окружения: VIBEMEMORY_SSH_ALIAS, VIBEMEMORY_REPO_PATH, VIBEMEMORY_BRANCH,
 VIBEMEMORY_MIRROR.
@@ -51,6 +59,7 @@ done
 [ -n "$sshAlias" ] || fail "Пустой алиас"
 [ -n "$repoPath" ] || fail "Пустой путь репозитория"
 [ -n "$branch" ] || fail "Пустая ветка"
+[ -f "$STORE_INIT_LOCAL" ] || fail "Нет $STORE_INIT_LOCAL"
 
 ssh -o BatchMode=yes "$sshAlias" 'echo ok' >/dev/null 2>&1 ||
   fail "Сервер не пускает по ключу. Сначала ./infra/seedKey.sh"
@@ -59,61 +68,119 @@ say "Сервер: $sshAlias, репозиторий: ~/$repoPath, ветка: $
 [ -n "$mirror" ] && say "Зеркало: $mirror" || say "Зеркало: не настраивается (--mirror не задан)"
 say ""
 
-# The whole server side in one session. `bash -s` reads the script from stdin, so the quoting
-# rules are the ordinary ones and nothing needs escaping twice.
-ssh -o BatchMode=yes "$sshAlias" 'bash -s' -- "$repoPath" "$branch" "$mirror" <<'REMOTE'
+# 1. Accounts and directories. `bash -s` reads the script from stdin, so the quoting rules are the
+# ordinary ones and nothing needs escaping twice.
+ssh -o BatchMode=yes "$sshAlias" 'bash -s' <<'REMOTE'
 set -euo pipefail
 # git is not on a fresh Debian by default; the server side says so plainly rather than failing
 # three commands later.
-# `${3:-}` and not `$3`: ssh glues the arguments into one command line, so an empty last
-# argument disappears entirely, and `set -u` then kills the script on the server. Found on the
-# first real run.
-repoPath="${1:?путь репозитория не передан}"
-branch="${2:?ветка не передана}"
-mirror="${3:-}"
-
 command -v git >/dev/null 2>&1 || {
   echo "На сервере нет git. Установите: sudo apt-get install -y git" >&2
   exit 1
 }
 
-if [ -d "$HOME/$repoPath" ]; then
-  echo "1/5 Репозиторий уже есть: ~/$repoPath"
-else
-  echo "1/5 Создаю bare-репозиторий ~/$repoPath"
-  mkdir -p "$HOME/$repoPath"
-  git init --bare --quiet --initial-branch="$branch" "$HOME/$repoPath"
+# Three accounts, each able to do exactly its job:
+#   vm    — the owner: sudo, keys, the personal store;
+#   vmgit — the memory server and the team repositories: no sudo, no password, no terminal;
+#   vmcab — the cabinet: no sudo, no access to any repository.
+# Group `vibememory` shares the repositories (vm, vmgit); group `vmaccess` shares the directory
+# where the cabinet publishes rights and the host reports back (vmcab, vmgit).
+for group in vibememory vmaccess; do
+  getent group "$group" >/dev/null || { sudo groupadd --system "$group"; echo "1/6 Группа $group создана"; }
+done
+if ! id vmgit >/dev/null 2>&1; then
+  sudo useradd --system --create-home --home-dir /home/vmgit --shell /bin/bash --user-group vmgit
+  echo "1/6 Учётка vmgit создана"
 fi
+if ! id vmcab >/dev/null 2>&1; then
+  sudo useradd --system --create-home --home-dir /home/vmcab --shell /usr/sbin/nologin --user-group vmcab
+  echo "1/6 Учётка vmcab создана"
+fi
+# `*` and not a locked `!`: a locked account may be refused by sshd even with a valid key, and
+# vmgit is reached only by key. `*` matches no password at all.
+for user in vmgit vmcab; do
+  [ "$(sudo getent shadow "$user" | cut -d: -f2)" = "*" ] || sudo usermod -p '*' "$user"
+done
+member() { id -nG "$1" | tr ' ' '\n' | grep -qx "$2"; }
+member vm vibememory || sudo usermod -aG vibememory vm
+member vmgit vibememory || sudo usermod -aG vibememory vmgit
+member vmgit vmaccess || sudo usermod -aG vmaccess vmgit
+member vmcab vmaccess || sudo usermod -aG vmaccess vmcab
 
-# Settings that matter for a store of transcripts: bytes stay bytes, and a push of a fresh
-# clone is not rejected for being unrelated.
-git -C "$HOME/$repoPath" config core.autocrlf false
-git -C "$HOME/$repoPath" config core.filemode false
-git -C "$HOME/$repoPath" config gc.auto 0
-# Incoming pushes stay packs. With git's default of 100 a push of fewer objects is unpacked into
-# loose files, and every version of a growing transcript then lands whole, without deltas: on
-# 2026-09-12 that was 1.6 GiB of loose objects in a day, and the 10 GiB disk filled up.
-git -C "$HOME/$repoPath" config transfer.unpackLimit 1
-# No size threshold for delta search. `core.bigFileThreshold=8m` was set once "to save memory" and
-# turned delta compression off for exactly the files the store is made of: a push brings the big
-# versions of a transcript whole, and the host could never compress them. On 2026-09-17 238 such
-# objects held 2.41 GiB of a 2.79 GiB store — the Mac held the same history in 1.08 GiB — and the
-# nightly repack filled the disk a second time. Memory stays bounded by pack.windowMemory and
-# pack.threads below. `--unset-all` exits 5 when nothing is set, which is the normal case.
-git -C "$HOME/$repoPath" config --unset-all core.bigFileThreshold || true
-git -C "$HOME/$repoPath" config pack.threads 1
-git -C "$HOME/$repoPath" config pack.windowMemory 64m
-git -C "$HOME/$repoPath" symbolic-ref HEAD "refs/heads/$branch"
-echo "3/5 HEAD указывает на $branch"
-echo "2/5 Настройки repo проставлены (autocrlf=false, filemode=false, gc.auto=0, unpackLimit=1, без bigFileThreshold)"
+# owner:group:mode for each directory; created when missing, corrected when different.
+place() {
+  local path="$1" owner="$2" group="$3" mode="$4"
+  [ -d "$path" ] || sudo mkdir -p "$path"
+  [ "$(stat -c %U:%G "$path")" = "$owner:$group" ] || sudo chown "$owner:$group" "$path"
+  [ "$(stat -c %a "$path")" = "$mode" ] || sudo chmod "$mode" "$path"
+}
+place /srv/vibememory root root 755
+place /srv/vibememory/bin root root 755
+# setgid: every team repository inherits the group, whoever creates it.
+place /srv/vibememory/teams vmgit vibememory 2770
+# setgid for the group and the sticky bit on top: the cabinet and the memory server both write here,
+# and neither may replace the other's file — the cabinet publishes rights, the host reports back.
+place /srv/vibememory/access root vmaccess 3770
+echo "1/6 Учётки vmgit и vmcab, группы vibememory и vmaccess, каталоги /srv/vibememory на месте"
+REMOTE
 
-# The store holds transcripts of every session: prompts, code, file contents. On a box with one
-# account world-readable changes nothing today, but the day a second account appears it changes
-# everything — and nobody re-checks permissions on that day.
-chmod 700 "$HOME/$repoPath" "$(dirname "$HOME/$repoPath")"
+# 2. The one source of repository settings goes to the host, where the owner's store and, later,
+# every team repository are initialised by it.
+ssh -o BatchMode=yes "$sshAlias" "tmp=\$(mktemp); cat > \"\$tmp\";
+  if sudo cmp -s \"\$tmp\" $STORE_INIT_REMOTE; then echo '2/6 storeInit.sh на хосте совпадает';
+  else sudo install -o root -g root -m 755 \"\$tmp\" $STORE_INIT_REMOTE; echo '2/6 storeInit.sh записан на хост'; fi;
+  rm -f \"\$tmp\"" < "$STORE_INIT_LOCAL"
 
-# Nightly repacking, incremental. `gc.auto=0` above keeps garbage collection out of the push path —
-# a tick must not wait for a repack — but every push lands as its own pack (`unpackLimit=1`), and
+# 3. The personal store: settings from storeInit.sh, then permissions for the memory server.
+# ssh glues its arguments into one command line for the remote shell, so an empty argument
+# disappears and every argument after it moves one place left. Each one is quoted for that shell.
+ssh -o BatchMode=yes "$sshAlias" "bash -s -- $(printf '%q ' "$repoPath" "$branch" "$STORE_INIT_REMOTE" "$mirror")" <<'REMOTE'
+set -euo pipefail
+repoPath="${1:?путь репозитория не передан}"
+branch="${2:?ветка не передана}"
+storeInit="${3:?путь storeInit.sh не передан}"
+mirror="${4:-}"
+repo="$HOME/$repoPath"
+parent="$(dirname "$repo")"
+
+[ -d "$repo" ] && echo "3/6 Репозиторий уже есть: ~/$repoPath" || echo "3/6 Создаю bare-репозиторий ~/$repoPath"
+mkdir -p "$parent"
+# `--adopted`: the owner's own store gets the common settings only; team rules are not his.
+"$storeInit" "$repo" --adopted --branch "$branch"
+
+# The store holds transcripts of every session: prompts, code, file contents. It is shared with
+# the memory server's account through the group `vibememory` and with nobody else.
+#
+# The group may write exactly where the server writes a record — loose objects under `objects/`,
+# the lock and rename that move `refs/heads/main` under `refs/` — and nowhere else. `config` and
+# `hooks/` are executed by the owner's own git (the nightly repack, a push, the mirror hook), and
+# the owner has sudo: group write on them would turn a hole in an internet-facing server into root
+# on the host. The store directory itself stays 2750 for the same reason — write access to it lets
+# a file be replaced by rename. It also means the server cannot delete refs (that locks
+# `packed-refs` in the store directory); it only ever moves `main` forward.
+#
+# `core.sharedRepository` covers only files created from now on, so existing ones are brought over
+# here. Only what differs is touched, so a second run leaves every mode and ctime as it was.
+sudo find "$repo" ! -group vibememory -exec chgrp -h vibememory {} +
+sudo find "$repo" -type d ! -perm -2050 -exec chmod g+rxs {} +
+sudo find "$repo" -type f ! -perm -g+r -exec chmod g+r {} +
+sudo find "$repo/objects" "$repo/refs" -type d ! -perm -g+w -exec chmod g+w {} +
+sudo find "$repo" \( -path "$repo/objects" -o -path "$repo/refs" \) -prune -o -perm -g+w -exec chmod g-w {} +
+# The way down to the store: the group may pass through the owner's home and the store's parent,
+# not list them.
+for dir in "$HOME" "$parent"; do
+  [ "$(stat -c %G "$dir")" = vibememory ] || sudo chgrp vibememory "$dir"
+  [ "$(stat -c %a "$dir")" = 710 ] || sudo chmod 710 "$dir"
+done
+# Hand-typed commands in the manuals use `git -C` under vmgit; git refuses that for a repository
+# owned by another account unless the path is declared safe. Code never needs this: it uses
+# `--git-dir`, which is not checked.
+git config --system --get-all safe.directory 2>/dev/null | grep -Fxq "$repo" ||
+  sudo git config --system --add safe.directory "$repo"
+echo "4/6 Права стора: группа vibememory, запись группе только в objects/ и refs/; путь к нему — 710; safe.directory для $repo"
+
+# Nightly repacking, incremental. `gc.auto=0` keeps garbage collection out of the push path — a
+# tick must not wait for a repack — but every push lands as its own pack (`unpackLimit=1`), and
 # hundreds of small packs slow every read.
 #
 # Not `git gc`. It rewrites the whole store into one new pack, so it needs as much free space as
@@ -127,7 +194,7 @@ chmod 700 "$HOME/$repoPath" "$(dirname "$HOME/$repoPath")"
 #
 # `set -e` kills the script on the first non-zero status, and both `crontab -l` (no crontab yet)
 # and `grep -q` (no match) return one legitimately. Hence `|| true` and an explicit `if`.
-repack="$(dirname "$HOME/$repoPath")/bin/storeRepack.sh"
+repack="$parent/bin/storeRepack.sh"
 mkdir -p "$(dirname "$repack")"
 wantedRepack='#!/usr/bin/env bash
 # Nightly incremental repack of the store. Written by infra/hostBootstrap.sh.
@@ -150,37 +217,42 @@ if [ "$freeBytes" -lt "$needBytes" ]; then
 fi
 leftover=$(find "$packs" -maxdepth 1 -name "tmp_pack_*" | wc -l)
 [ "$leftover" -eq 0 ] || say "warning: $leftover tmp_pack file(s) left by an earlier run"
-if out=$(git -C "$repo" repack -d --geometric=2 --quiet 2>&1); then
-  say "done: $(git -C "$repo" count-objects -v | tr "\n" " ")"
+# --git-dir, not -C: the repository is shared with another account, and -C checks ownership.
+# -n: no `update-server-info`. It rewrites info/refs on every run for the dumb HTTP transport, which
+# this store does not serve, and writes it group-writable outside objects/ and refs/.
+if out=$(git --git-dir="$repo" repack -d -n --geometric=2 --quiet 2>&1); then
+  say "done: $(git --git-dir="$repo" count-objects -v | tr "\n" " ")"
 else
   say "failed: $out"
   exit 1
 fi
 '
-if [ -f "$repack" ] && [ "$(cat "$repack")" = "$wantedRepack" ]; then
-  echo "4/5 Скрипт упаковки уже стоит и совпадает"
+# `cmp` and not `[ "$(cat …)" = … ]`: command substitution drops the trailing newline the text ends
+# with, so that comparison never matched and the file was rewritten on every run.
+if printf '%s' "$wantedRepack" | cmp -s - "$repack"; then
+  echo "5/6 Скрипт упаковки уже стоит и совпадает"
 else
   printf '%s' "$wantedRepack" > "$repack"
   chmod 755 "$repack"
-  echo "4/5 Скрипт упаковки записан: $repack"
+  echo "5/6 Скрипт упаковки записан: $repack"
 fi
 
 if command -v crontab >/dev/null 2>&1; then
-  line="17 4 * * * $repack $HOME/$repoPath"
+  line="17 4 * * * $repack $repo"
   current="$(crontab -l 2>/dev/null || true)"
   if printf '%s\n' "$current" | grep -Fxq "$line"; then
-    echo "4/5 Ночная упаковка уже в cron"
+    echo "5/6 Ночная упаковка уже в cron"
   else
     # Earlier lines are replaced, not left beside the new one: the weekly and nightly `gc` of
     # previous bootstraps, and a repack line pointing elsewhere.
     printf '%s\n%s\n' "$(printf '%s\n' "$current" | grep -Fv "$repoPath gc" | grep -Fv "storeRepack.sh" || true)" "$line" | grep -v '^$' | crontab -
-    echo "4/5 Ночная упаковка поставлена в cron (04:17, частичная, журнал: journalctl -t vibememory-repack)"
+    echo "5/6 Ночная упаковка поставлена в cron (04:17, частичная, журнал: journalctl -t vibememory-repack)"
   fi
 else
-  echo "4/5 crontab не найден — упаковку придётся запускать вручную: $repack ~/$repoPath"
+  echo "5/6 crontab не найден — упаковку придётся запускать вручную: $repack ~/$repoPath"
 fi
 
-hook="$HOME/$repoPath/hooks/post-receive"
+hook="$repo/hooks/post-receive"
 if [ -n "$mirror" ]; then
   # Detached on purpose. A post-receive hook runs while the client still holds the push open, so
   # a synchronous mirror push makes every machine wait for the provider — and a slow or wedged
@@ -200,20 +272,127 @@ log=\"\$HOME/vibememory-mirror.log\"
 ) 9>\"\$HOME/.vibememory-mirror.lock\" &
 disown 2>/dev/null || true
 "
-  if [ -f "$hook" ] && [ "$(cat "$hook")" = "$wanted" ]; then
-    echo "5/5 Хук зеркала уже стоит и совпадает"
+  if printf '%s' "$wanted" | cmp -s - "$hook"; then
+    echo "5/6 Хук зеркала уже стоит и совпадает"
   else
     printf '%s' "$wanted" > "$hook"
     chmod +x "$hook"
-    echo "5/5 Хук зеркала записан"
+    echo "5/6 Хук зеркала записан"
   fi
 else
-  echo "5/5 Зеркало не настраивалось"
+  echo "5/6 Хук зеркала не трогаю (--mirror не задан; его ставит ./infra/mirrorSetup.sh)"
 fi
-
-echo
-echo "Готово. Размер репозитория: $(du -sh "$HOME/$repoPath" | cut -f1)"
 REMOTE
 
+# 4. sshd rules. Two drop-ins: the host-wide hardening, and the rules of the memory server's
+# account. Applied only when their text differs, and then under a rollback timer: the change stays
+# only if a NEW key login is seen by sshd after the timer was armed (serverHardeningPrompt.md, step 2).
+armed=$(ssh -o BatchMode=yes "$sshAlias" 'bash -s' <<'REMOTE'
+set -euo pipefail
+dir=/etc/ssh/sshd_config.d
+bak=/run/vibememory-sshd.bak
+hardening=10-vibememory-hardening.conf
+service=20-vibememory-vmgit.conf
+# The file name must sort before 50-cloud-init.conf: for sshd the first value seen wins, and cloud
+# images ship that file with PasswordAuthentication yes.
+hardeningText='PermitRootLogin prohibit-password
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+MaxAuthTries 3'
+# Ends with `Match all`: drop-ins are included at the top of sshd_config, and without it every
+# directive after the Include would apply to vmgit alone.
+serviceText='# Written by infra/hostBootstrap.sh. The memory server account: keys only, no terminal,
+# no forwarding of any kind.
+Match User vmgit
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    PermitTTY no
+    AllowTcpForwarding no
+    AllowStreamLocalForwarding no
+    AllowAgentForwarding no
+    X11Forwarding no
+    PermitTunnel no
+Match all'
+
+if [ "$(sudo cat "$dir/$hardening" 2>/dev/null || true)" = "$hardeningText" ] &&
+   [ "$(sudo cat "$dir/$service" 2>/dev/null || true)" = "$serviceText" ]; then
+  echo UNCHANGED
+  exit 0
+fi
+if sudo systemctl list-timers ssh-guard.timer --no-pager | grep -q ssh-guard; then
+  echo "Ошибка: висит прошлая страховка ssh-guard — дождитесь её" >&2
+  exit 1
+fi
+[ "$(sudo sshd -T | awk '$1=="loglevel"{print $2}')" != QUIET ] || {
+  echo "Ошибка: LogLevel QUIET — строк Accepted не будет, откат сработал бы всегда" >&2
+  exit 1
+}
+
+sudo rm -rf "$bak"; sudo mkdir -p "$bak"
+for file in "$hardening" "$service"; do
+  [ -f "$dir/$file" ] && sudo cp -p "$dir/$file" "$bak/$file"
+done
+sudo rm -f /run/ssh-ok
+arm=$(date +%s)
+# The guard restores what was there before (or removes what was not) unless /run/ssh-ok names a
+# connection that sshd accepted after arming — something an old session cannot produce.
+printf '%s\n' '#!/bin/sh' \
+  "marker=\$(cat /run/ssh-ok 2>/dev/null)" \
+  "if [ -n \"\$marker\" ] && journalctl -u ssh --since=@$arm -q | grep 'Accepted ' | grep -qF -- \"\$marker\"; then" \
+  "  logger -t ssh-guard 'confirmed, kept'" \
+  "else" \
+  "  for f in $hardening $service; do" \
+  "    if [ -f $bak/\$f ]; then cp -p $bak/\$f $dir/\$f; else rm -f $dir/\$f; fi" \
+  "  done" \
+  "  systemctl reload ssh; logger -t ssh-guard 'rolled back'" \
+  "fi" \
+  "rm -f /run/ssh-ok" | sudo tee "$bak/guard.sh" >/dev/null
+sudo systemd-run --unit=ssh-guard --collect --on-active=180 --timer-property=AccuracySec=1s \
+  sh "$bak/guard.sh" >/dev/null 2>&1
+
+printf '%s\n' "$hardeningText" | sudo tee "$dir/$hardening" >/dev/null
+printf '%s\n' "$serviceText" | sudo tee "$dir/$service" >/dev/null
+if ! sudo sshd -t; then
+  sudo systemctl stop ssh-guard.timer 2>/dev/null || true
+  sudo sh "$bak/guard.sh"
+  echo "Ошибка: sshd -t отверг правила — вернул прежние" >&2
+  exit 1
+fi
+reloaded=$(date +%s)
+sudo systemctl reload ssh
+# `reload` returns once the signal is sent; the journal line may land a moment later.
+sleep 1
+sudo journalctl -u ssh --since=@"$reloaded" --no-pager | grep -q 'Received SIGHUP' ||
+  { echo "Ошибка: sshd не подтвердил reload в журнале — страховка откатит через 180 с" >&2; exit 1; }
+echo "ARMED $arm"
+REMOTE
+)
+
+if [ "$armed" = UNCHANGED ]; then
+  say "6/6 Правила sshd уже стоят и совпадают"
+else
+  arm="${armed#ARMED }"
+  # A new connection, not a multiplexed one: ControlPath=none forces a fresh key login, and only
+  # that login may confirm the change.
+  ssh -o ControlPath=none -o BatchMode=yes "$sshAlias" \
+    'set -- $SSH_CONNECTION; printf "from %s port %s " "$1" "$2" | sudo tee /run/ssh-ok >/dev/null' ||
+    fail "Новое соединение не прошло — страховка вернёт прежние правила sshd через 180 с"
+  say "6/6 Правила sshd применены; новое соединение подтверждено — жду окно страховки (до 3 мин)"
+  ssh -o BatchMode=yes "$sshAlias" 'bash -s' -- "$arm" <<'REMOTE'
+set -euo pipefail
+arm="$1"
+until ! sudo systemctl list-timers ssh-guard.timer --no-pager | grep -q ssh-guard; do sleep 5; done
+if sudo journalctl -t ssh-guard --since=@"$arm" --no-pager -o cat | grep -q 'rolled back'; then
+  echo "Ошибка: страховка откатила правила sshd — новое соединение не подтвердилось" >&2
+  exit 1
+fi
+echo "6/6 Страховка сняла себя сама, правила остались:"
+for user in vm vmgit; do
+  printf '    %-6s %s\n' "$user" "$(sudo sshd -T -C "user=$user,host=x,addr=192.0.2.1" |
+    awk '$1 ~ /^(passwordauthentication|permittty|allowtcpforwarding|permitrootlogin)$/ {printf "%s=%s ", $1, $2}')"
+done
+REMOTE
+fi
+
 say ""
-say "Дальше: ./infra/connectStore.sh — привязать локальный стор к серверу и запушить."
+say "Готово. Дальше: ./infra/connectStore.sh — привязать локальный стор к серверу и запушить."
