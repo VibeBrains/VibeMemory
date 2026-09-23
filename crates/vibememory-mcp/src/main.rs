@@ -109,35 +109,52 @@ fn main() -> ExitCode {
 /// First line of stdout — `ok` or the code of the first rule broken; second — what exactly.
 fn access_command(rest: &[String]) -> ExitCode {
     let [command, file] = rest else {
-        println!("usage\nvibememory-mcp access check <file>");
-        return ExitCode::from(CHECK_UNREADABLE);
+        return say(
+            CHECK_UNREADABLE,
+            "usage",
+            "vibememory-mcp access check <file>",
+        );
     };
     if command != "check" {
-        println!("usage\nvibememory-mcp access check <file>");
-        return ExitCode::from(CHECK_UNREADABLE);
+        return say(
+            CHECK_UNREADABLE,
+            "usage",
+            "vibememory-mcp access check <file>",
+        );
     }
     let bytes = match std::fs::read(file) {
         Ok(bytes) => bytes,
         Err(error) => {
-            println!("snapshotUnreadable\n{file}: {error}");
-            return ExitCode::from(CHECK_UNREADABLE);
+            return say(
+                CHECK_UNREADABLE,
+                "snapshotUnreadable",
+                &format!("{file}: {error}"),
+            );
         }
     };
     match access::check(&bytes) {
-        Ok(snapshot) => {
-            println!(
-                "ok\n{} teams, {} tokens, {} machine keys",
+        Ok(snapshot) => say(
+            0,
+            "ok",
+            &format!(
+                "{} teams, {} tokens, {} machine keys",
                 snapshot.teams.len(),
                 snapshot.tokens.len(),
                 snapshot.keys.len()
-            );
-            ExitCode::SUCCESS
-        }
-        Err(refusal) => {
-            println!("{}\n{}", refusal.code, refusal.detail);
-            ExitCode::from(CHECK_REFUSED)
-        }
+            ),
+        ),
+        Err(refusal) => say(CHECK_REFUSED, refusal.code, &refusal.detail),
     }
+}
+
+/// The two lines of an answer, and its exit code. A reader that stops after the first line —
+/// `| head -n 1` — closes the pipe before the second: that must not turn into a panic, whose exit
+/// code would say something else than the verdict.
+fn say(code: u8, first: &str, second: &str) -> ExitCode {
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{first}").and_then(|()| writeln!(out, "{second}"));
+    let _ = out.flush();
+    ExitCode::from(code)
 }
 
 /// Serves MCP over HTTP behind the TLS proxy, with the rights of the access snapshot.
