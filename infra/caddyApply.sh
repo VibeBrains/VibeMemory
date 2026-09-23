@@ -13,6 +13,9 @@ readonly DEFAULT_APP_DOMAIN=app.vibememory.ru
 readonly DEFAULT_MCP_PORT=8787
 readonly DEFAULT_CABINET_PORT=3000
 readonly RELEASES=/srv/vibememory/releases
+# A lost SYN is retried instead of failing the run: the path to the host drops a connection now and
+# then, and every step here is safe to repeat.
+readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=4)
 
 sshAlias="${VIBEMEMORY_SSH_ALIAS:-$DEFAULT_ALIAS}"
 domain="${VIBEMEMORY_DOMAIN:-$DEFAULT_DOMAIN}"
@@ -50,7 +53,7 @@ rendered=$(sed -e "s|{{DOMAIN}}|$domain|g" -e "s|{{APP_DOMAIN}}|$appDomain|g" \
   -e "s|{{RELEASES}}|$RELEASES|g" "$TEMPLATE")
 case "$rendered" in *'{{'*) fail "в шаблоне осталась неподставленная переменная" ;; esac
 
-printf '%s\n' "$rendered" | ssh -o BatchMode=yes "$sshAlias" "bash -c $(printf '%q' '
+printf '%s\n' "$rendered" | ssh "${SSH_OPTIONS[@]}" "$sshAlias" "bash -c $(printf '%q' '
 set -euo pipefail
 candidate=$(mktemp)
 trap "rm -f \"$candidate\"" EXIT

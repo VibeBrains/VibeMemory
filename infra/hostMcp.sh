@@ -86,7 +86,7 @@ case "$port" in *[!0-9]*|"") fail "порт $port — не число" ;; esac
 case "$owner" in *[!a-z0-9-]*) fail "handle $owner: только строчные латинские буквы, цифры и дефис" ;; esac
 
 say "1/7 Копирую бинарь"
-ssh -o BatchMode=yes "$sshAlias" "mkdir -p \$HOME/$(dirname "$OWNER_BIN")"
+ssh -n -o BatchMode=yes "$sshAlias" "mkdir -p \$HOME/$(dirname "$OWNER_BIN")"
 scp -q "$binary" "$sshAlias:$OWNER_BIN.new"
 
 ssh -o BatchMode=yes "$sshAlias" "bash -s -- $(printf '%q ' "$domain" "$port" "$REPO_PATH" \

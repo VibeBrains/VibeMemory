@@ -42,7 +42,7 @@ $hash = (Get-FileHash -Algorithm SHA256 (Join-Path $out $archive)).Hash.ToLowerI
 Write-Output "Built $archive"
 
 if (-not $NoUpload) {
-  ssh $Alias "mkdir -p releases/incoming/$version"
+  ssh -n $Alias "mkdir -p releases/incoming/$version"
   if ($LASTEXITCODE -ne 0) { throw 'ssh failed' }
   scp (Join-Path $out $archive) (Join-Path $out "$archive.sha256") "${Alias}:releases/incoming/$version/"
   if ($LASTEXITCODE -ne 0) { throw 'scp failed' }

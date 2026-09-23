@@ -39,6 +39,9 @@ readonly JOURNAL_MAX_USE=200M
 # As the memory server's jail: a person mistyping a password is the likelier ban than an attacker.
 readonly JAIL_MAXRETRY=10
 readonly JAIL_FINDTIME=10m
+# A lost SYN is retried instead of failing the run: the path to the host drops a connection now and
+# then, and every step here is safe to repeat.
+readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=4)
 
 sshAlias="${VIBEMEMORY_SSH_ALIAS:-$DEFAULT_ALIAS}"
 domain="${VIBEMEMORY_DOMAIN:-$DEFAULT_DOMAIN}"
@@ -87,7 +90,7 @@ case "$ownerEmail" in
   *) fail "адрес $ownerEmail выглядит не как адрес" ;;
 esac
 command -v bun >/dev/null || fail "нет bun на этой машине: кабинет собирается здесь"
-ssh -o BatchMode=yes "$sshAlias" 'echo ok' >/dev/null 2>&1 || fail "сервер не пускает по ключу"
+ssh -n "${SSH_OPTIONS[@]}" "$sshAlias" 'echo ok' >/dev/null 2>&1 || fail "сервер не пускает по ключу"
 
 # 1. The release: built here, packed with exactly what runs it.
 sourceVersion=$(git -C "$CABINET_LOCAL" rev-parse --short=12 HEAD)
@@ -97,17 +100,26 @@ mkdir -p "$RELEASES_LOCAL"
 release="$RELEASES_LOCAL/cabinet-$sourceVersion.tar.gz"
 if [ "$skipBuild" = 0 ]; then
   say "1/9 Собираю кабинет ($sourceVersion)"
-  (cd "$CABINET_LOCAL" && bun run build:code >/dev/null)
-  tar -czf "$release" -C "$CABINET_LOCAL" dist package.json bun.lock prisma.config.ts \
-    src/modules/prisma/schema.prisma src/modules/prisma/migrations
+  (cd "$CABINET_LOCAL" && bun run build:code >/dev/null 2>&1) || fail "сборка кабинета не прошла: bun run build:code в cabinet/"
+  # the client's source maps stay here, as the pack's Dockerfile drops them: dist/client is served
+  # to anyone, and the server keeps its own maps for readable stack traces in the journal
+  # no macOS extended attributes: GNU tar on the host warns on every one of them
+  COPYFILE_DISABLE=1 tar --no-xattrs -czf "$release" -C "$CABINET_LOCAL" \
+    --exclude='dist/client/*.map' --exclude='dist/client/**/*.map' \
+    dist package.json bun.lock prisma.config.ts src/modules/prisma/schema.prisma src/modules/prisma/migrations
 else
   [ -f "$release" ] || fail "нет сборки $release — запустите без --skip-build"
   say "1/9 Сборка $sourceVersion взята готовой"
 fi
 releaseHash=$(shasum -a 256 "$release" | cut -d ' ' -f 1)
-scp -q "$release" "$sshAlias:cabinet-release.tar.gz"
+# rsync with --partial: a transfer the network cuts resumes where it stopped instead of starting over
+for attempt in 1 2 3 4 5; do
+  rsync -q --partial --timeout=60 -e "ssh ${SSH_OPTIONS[*]}" "$release" "$sshAlias:cabinet-release.tar.gz" && break
+  [ "$attempt" -lt 5 ] || fail "архив сборки не доехал до хоста за пять попыток"
+  say "   передача оборвалась, повтор $((attempt + 1))/5"
+done
 
-ssh -o BatchMode=yes "$sshAlias" "bash -s -- $(printf '%q ' "$domain" "$appDomain" "$sourceVersion" \
+ssh "${SSH_OPTIONS[@]}" "$sshAlias" "bash -s -- $(printf '%q ' "$domain" "$appDomain" "$sourceVersion" \
   "$releaseHash" "${ownerEmail:--}" "$BUN_VERSION" "$PG_VERSION" "$PG_SHARED_BUFFERS" \
   "$PG_MAX_CONNECTIONS" "$JOURNAL_MAX_USE" "$JAIL_MAXRETRY" "$JAIL_FINDTIME" "$CABINET_PORT" \
   "$MCP_PORT")" <<'REMOTE'
@@ -246,6 +258,7 @@ releaseChanged=0
 if [ "$(sudo cat "$app/.release" 2>/dev/null || true)" != "$releaseHash" ]; then
   staging=$(mktemp -d)
   tar -xzf "$HOME/cabinet-release.tar.gz" -C "$staging"
+  sudo -u vmcab mkdir -p "$app/dist" "$app/src/modules/prisma"
   sudo rsync -a --delete --chown=vmcab:vmcab "$staging/dist/" "$app/dist/"
   sudo rsync -a --delete --chown=vmcab:vmcab "$staging/src/modules/prisma/" "$app/src/modules/prisma/"
   for file in package.json bun.lock prisma.config.ts; do

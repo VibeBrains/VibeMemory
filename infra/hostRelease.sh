@@ -9,6 +9,9 @@
 set -euo pipefail
 
 readonly DEFAULT_ALIAS=vibememory
+# A lost SYN is retried instead of failing the run: the path to the host drops a connection now and
+# then, and every step here is safe to repeat.
+readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=4)
 sshAlias="${VIBEMEMORY_SSH_ALIAS:-$DEFAULT_ALIAS}"
 version=""
 
@@ -23,7 +26,7 @@ while [ "$#" -gt 0 ]; do
 done
 case "$version" in ""|*[!0-9A-Za-z.-]*) fail "версия ${version:-не задана} — только цифры, буквы, точки и дефисы" ;; esac
 
-ssh -o BatchMode=yes "$sshAlias" "bash -s -- $(printf '%q' "$version")" <<'REMOTE'
+ssh "${SSH_OPTIONS[@]}" "$sshAlias" "bash -s -- $(printf '%q' "$version")" <<'REMOTE'
 set -euo pipefail
 version="$1"
 incoming="$HOME/releases/incoming/$version"

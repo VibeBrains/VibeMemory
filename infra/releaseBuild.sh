@@ -17,6 +17,9 @@ readonly MAC_TARGETS="aarch64-apple-darwin x86_64-apple-darwin"
 readonly LINUX_TARGET=x86_64-unknown-linux-gnu
 readonly RUST_IMAGE=rust:1.97-bookworm
 readonly PACKAGES="-p vibememory-cli -p vibememory-mcp"
+# A lost SYN is retried instead of failing the run: the path to the host drops a connection now and
+# then, and every step here is safe to repeat.
+readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=4)
 
 sshAlias="${VIBEMEMORY_SSH_ALIAS:-$DEFAULT_ALIAS}"
 upload=1
@@ -71,7 +74,7 @@ docker run --rm --platform linux/arm64 -v "$ROOT":/src:ro -v "$ROOT/target/linux
 pack "$LINUX_TARGET" "$ROOT/target/linux/$LINUX_TARGET/release" ""
 
 if [ "$upload" = 1 ]; then
-  ssh -o BatchMode=yes "$sshAlias" "mkdir -p \$HOME/releases/incoming/$version"
-  scp -q "$out"/*.tar.gz "$out"/*.sha256 "$sshAlias:releases/incoming/$version/"
+  ssh -n "${SSH_OPTIONS[@]}" "$sshAlias" "mkdir -p \$HOME/releases/incoming/$version"
+  scp -q -o ConnectTimeout=15 -o ConnectionAttempts=4 "$out"/*.tar.gz "$out"/*.sha256 "$sshAlias:releases/incoming/$version/"
   say "Отправлено в ~/releases/incoming/$version/ — дальше ./infra/hostRelease.sh $version"
 fi

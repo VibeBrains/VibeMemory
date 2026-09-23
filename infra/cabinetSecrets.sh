@@ -8,6 +8,9 @@
 set -euo pipefail
 
 readonly DEFAULT_ALIAS=vibememory
+# A lost SYN is retried instead of failing the run: the path to the host drops a connection now and
+# then, and every step here is safe to repeat.
+readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=4)
 sshAlias="${VIBEMEMORY_SSH_ALIAS:-$DEFAULT_ALIAS}"
 case "${1:-}" in
   --alias) sshAlias="${2:-}" ;;
@@ -38,7 +41,7 @@ ask TELEGRAM_CHAT_ID "Чат Telegram для тревог (число)" visible
 ask SUPPORT_URL "Ссылка «поддержать» (https://…)" visible
 [ "${#lines[@]}" -gt 0 ] || { printf 'Ничего не введено — .env не тронут\n'; exit 0; }
 
-printf '%s\n' "${lines[@]}" | ssh -o BatchMode=yes "$sshAlias" 'bash -c '"'"'
+printf '%s\n' "${lines[@]}" | ssh "${SSH_OPTIONS[@]}" "$sshAlias" 'bash -c '"'"'
 set -euo pipefail
 env=/home/vmcab/cabinet/.env
 sudo test -f "$env" || { echo "Ошибка: нет $env — сначала hostCabinet.sh" >&2; exit 1; }
