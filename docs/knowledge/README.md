@@ -42,6 +42,10 @@
 
 - [crossPlatformPaths.md](rust/crossPlatformPaths.md) — грабли typed-path 0.12.3 (`derive`-эвристика, UNC без хвоста не absolute, `normalize` съедает ведущие `..`, путь констант), globset 0.4.20 (платформозависимый `backslash_escape`, `foo/**` ≠ `foo`, индексы по возрастанию), serde и serde_json на строках JSONL (`rename_all_fields`; `Cow` не заимствует; struct читается из JSON-массива позиционно — нужен гейт на `{`; что именно делает строку непрозрачной; замеры слияния 28 МБ / 64 МиБ), cargo/clippy 1.97 (пофилдное наследование workspace, глубина `include_str!`, `allow-*-in-tests` не для хелперов, гейт «без I/O» через `disallowed-methods`), `.gitattributes` для паритета на Windows
 
+## toolchain — пак и инструменты кабинета
+
+- [start0InSubdirectory.md](toolchain/start0InSubdirectory.md) — start0 v0.1.29 в подкаталоге `cabinet/` (спайки фазы 0, 2026-09-23): `1gr14 update` работает из подкаталога, но `git apply` там молча пропускает весь дифф с кодом 0 — только `--directory=cabinet`, атомарно дифф не ляжет никогда (хунки на вырезанное); `init.ts` сделал бы вложенный `git init`; husky в подкаталоге не ставит хуков, а не перехватывает `core.hooksPath`, как думал план; плагин `organization` на Prisma 7 работает, но генерат с `@db.Uuid` против text-id пака роняет миграцию и оставляет её применённой наполовину; start0 source-available — кабинет только в закрытом репозитории; сервер ~200–330 МБ, пулы пака по умолчанию до 24 соединений при 17 доступных, серверу хватает `dist` и пустого `node_modules`
+
 ## design — ограничения движка
 
 - [hostMemoryServer.md](design/hostMemoryServer.md) — сервер памяти на хосте (2026-09-13): без рабочей копии, прямо из голого репозитория — запись коммитом и `update-ref` со старым значением; сборка под Linux на Apple Silicon кросс-компиляцией в arm64-контейнере (amd64 — `exec format error`, `/private/tmp` Docker не монтирует); `infra/hostMcp.sh`; живые проверки по ssh и HTTPS; почему токен никогда не печатается
