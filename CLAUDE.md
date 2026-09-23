@@ -70,6 +70,21 @@ Windows: `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc
   doc-комментариях — в бэктиках (`doc_markdown`).
 - Грабли крейтов и тулчейна — [knowledge/rust/crossPlatformPaths.md](docs/knowledge/rust/crossPlatformPaths.md).
 
+## Кабинет (`cabinet/`)
+
+Пак start0 v0.1.29 в подкаталоге, вендорен руками: что вырезано и изменено против пака и как применять
+его обновления — [cabinet/docs/vendoring.md](cabinet/docs/vendoring.md). Прежде чем править кабинет —
+навык `start0`: порядок поднятия, ловушки синтаксиса, дырявые гейты пака.
+
+Проверка перед завершением задачи в `cabinet/`: `bun run check && bun run test`. Тесты идут против
+Postgres 17 в контейнере — `docker compose up -d db` из `cabinet/` (colima; том базы живёт в диске VM,
+а VM — в `/Volumes/Storage/Caches/.colima`). `.env`, `.env.test`, `.env.docker` — локальные, в git не
+едут; образец — `env.example`. Линт пака строгий и ловит настоящее — не ослаблять.
+
+Конвенции пака живут в JSDoc с `@tags rule` и `@related` и в `cabinet/docs/*.md`: перед задачей
+грепнуть `@tags rule` и `tags: rule`, найти соседнюю фичу и повторить её форму. Синтаксис Point0 не
+выдумывать — офлайн-корпус лежит в `node_modules/@point0/docs/content/docs.json`.
+
 ## Ветки
 
 `next` — повседневная; `main` — только выпущенное.
