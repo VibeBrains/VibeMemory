@@ -10,6 +10,7 @@ docs/
 ├── manuals/                # руководства «как сделать» по шагам
   - [mcpServer.md](manuals/mcpServer.md) — как подключить память VibeMemory к любому агенту по MCP
 │   ├── accessSnapshotSpec.md # спека снимка прав /srv/vibememory/access/access.json для модели: поля, правила, коды access check
+│   ├── cabinetSetup.md     # кабинет на хосте: порядок скриптов, пароль и секреты владельца, сторож, восстановление из дампа, релизы
 │   ├── configSpec.md       # спека ~/.vibememory/config.json для модели (сейчас: nameOverrides, ignoreCwd)
 │   ├── desktopFixtures.md  # как добавить кейс в fixtures/desktop/, четыре списка кейсов, мутации гейта
 │   ├── exportFixtures.md   # как добавить кейс в fixtures/export/, метки provenance, мутационная проверка гейта

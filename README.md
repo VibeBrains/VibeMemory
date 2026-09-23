@@ -11,11 +11,10 @@ Codex, Gemini CLI, Cursor, Zed, Cline) читает и пишет ту же па
 
 ## Статус
 
-Этап 1, ядро (2026-09-03): в `crates/vibememory-core` готовы модуль naming (кодировка
-`projects/<enc>` и имя стора) модуль merge (слияние транскриптов JSONL и keep-both для файлов памяти с
-карантином) и модуль memory (память как записи: журнал, проекция в markdown и импорт правок
-обратно) — все на фикстурах; движка (хуки, тик) и MCP-сервера ещё нет. Концепт — [idea.md](idea.md), архитектура —
-[docs/spec/architecture.md](docs/spec/architecture.md), план — [docs/roadmap.md](docs/roadmap.md),
+Движок и MCP-сервер памяти работают у владельца на Mac, стор и сервер памяти — на своём хосте; идёт этап 6 — команды:
+хост с правами по снимку и сторами команд готов, кабинет на start0 выкладывается. Концепт —
+[idea.md](idea.md), архитектура — [docs/spec/architecture.md](docs/spec/architecture.md), что продукт
+умеет — [docs/functional.md](docs/functional.md), план — [docs/roadmap.md](docs/roadmap.md),
 проверенные факты про Claude Code, Desktop и облачные папки — [docs/knowledge/](docs/knowledge/README.md).
 
 ## Из чего состоит
@@ -25,4 +24,6 @@ Codex, Gemini CLI, Cursor, Zed, Cline) читает и пишет ту же па
   миграция, `doctor`.
 - **MCP-сервер памяти** — `memory_search / get / save / update` для любого агента поверх того
   же стора.
-- **SaaS для команд** — позже, на старт-паке start0.
+- **Кабинет для команд** — `app.vibememory.ru` на старт-паке start0: команда по коду-подарку,
+  участники по ссылке-приглашению, токен агенту через одноразовый код — на экране его нет никогда;
+  общая память команды на хосте с правами, которые проверяет тот же бинарь, что их исполняет.
