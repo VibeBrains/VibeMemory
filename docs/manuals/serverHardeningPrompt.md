@@ -357,10 +357,19 @@ sudo journalctl -u ssh --since "1 day ago" | grep -c "maximum authentication att
 ```bash
 sudo fail2ban-client -t                    # только битый INI; значения не проверяет — на хвосте после # скажет OK
 sudo fail2ban-client -d | grep "'add'"     # ['add', 'sshd', 'systemd'] — backend ровно таким уйдёт серверу, хвост будет виден здесь
-sudo fail2ban-client reload                # ответ OK, не NOK
+sudo fail2ban-client reload                # ответ OK, не NOK; если меняли banaction существующего джейла — restart, см. ниже
 sudo fail2ban-client status                # в Jail list есть sshd
 sudo fail2ban-client status sshd | grep 'Journal matches'   # строка есть; у файлового бэкенда вместо неё File list
 for k in maxretry findtime bantime ignoreip actions; do sudo fail2ban-client get sshd $k; done   # эффективные значения: чем перекрылось — видно только так
+```
+
+**`reload` после смены действия у существующего джейла — ловушка fail2ban 1.1** (Debian 13): джейл
+остаётся работать вовсе без действия. `status` показывает забаненных, в nftables — ноль, а
+`fail2ban-client get sshd actions` отвечает `No actions for jail sshd`. Если меняли `banaction` —
+`sudo systemctl restart fail2ban`, баны восстановятся из его базы. Проверка одна:
+
+```bash
+sudo fail2ban-client get sshd actions      # имя действия, не «No actions»
 ```
 
 Дальше — проверка 3.2: список джейла против набора nft.

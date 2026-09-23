@@ -154,6 +154,20 @@ fi
 if [ "$(sudo cat "$jail" 2>/dev/null || true)" != "$jailText" ]; then
   printf '%s\n' "$jailText" | sudo tee "$jail" >/dev/null; changed=1
 fi
-[ "$changed" = 0 ] || sudo /usr/bin/fail2ban-client reload >/dev/null
-echo "5/5 fail2ban: джейл vibememory-mcp $(sudo /usr/bin/fail2ban-client status vibememory-mcp >/dev/null 2>&1 && echo active || echo 'НЕ поднялся')"
+# Restart, not reload: on fail2ban 1.1 a reload that changes the action of an existing jail leaves
+# that jail running with no action at all — it keeps counting and "banning" into its own database
+# while nothing reaches the firewall. A restart rebuilds the actions and restores bans from the
+# database.
+if [ "$changed" = 1 ]; then
+  sudo systemctl restart fail2ban
+  for _ in $(seq 1 20); do sudo /usr/bin/fail2ban-client ping >/dev/null 2>&1 && break; sleep 1; done
+fi
+# "active" is not the claim that matters; an action that can reach the firewall is.
+actions=$(sudo /usr/bin/fail2ban-client get vibememory-mcp actions 2>/dev/null | tail -n +2)
+if [ -n "$actions" ]; then
+  echo "5/5 fail2ban: джейл vibememory-mcp с действием $actions"
+else
+  echo "5/5 fail2ban: джейл vibememory-mcp БЕЗ действия — баны не дойдут до firewall" >&2
+  exit 1
+fi
 REMOTE
