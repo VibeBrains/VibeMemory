@@ -488,6 +488,34 @@
       }
     },
     {
+      "id": "importRejectsTokenInBody",
+      "provenance": "computed",
+      "note": "A person pasted an agent token into a memory file: the edit is refused and stays where it is, because a record is shared and kept in the store's history for good.",
+      "journal": [],
+      "expect": {
+        "records": [],
+        "forgotten": [],
+        "unreadable": 0,
+        "import": {
+          "stamp": "2026-09-03T12:00:00Z",
+          "agent": "claude-code",
+          "documents": [
+            {
+              "name": "mcp-setup.md",
+              "text": "---\nname: mcp-setup\ndescription: how the agent reaches the memory server\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n---\n\nThe env block holds VIBEMEMORY_TOKEN=vmt_7q2m9x4a_1111111111111111111111111111111111111111111 for the server.\n"
+            }
+          ],
+          "events": [],
+          "rejected": [
+            {
+              "name": "mcp-setup.md",
+              "code": "holdsToken"
+            }
+          ]
+        }
+      }
+    },
+    {
       "id": "importIgnoresRivalFile",
       "provenance": "computed",
       "note": "A rival file is a copy of a version the journal already holds: reading it back would write it a second time under a new identity.",

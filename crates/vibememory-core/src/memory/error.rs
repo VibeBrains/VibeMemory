@@ -40,6 +40,13 @@ pub enum MemoryError {
         /// The record.
         id: String,
     },
+    /// The record holds an agent token of a cabinet: a memory is shared and kept in the store's
+    /// history for good, and a token in it would open the team to whoever reads it.
+    #[error("memory {id:?} holds an agent token; save it without the token and revoke the token")]
+    HoldsToken {
+        /// The record.
+        id: String,
+    },
     /// A record could not be written as a journal line.
     #[error("memory {id:?} cannot be written to the journal: {reason}")]
     Unserializable {
@@ -75,6 +82,7 @@ impl MemoryError {
             Self::InvalidTitle { .. } => "invalidTitle",
             Self::InvalidDescription { .. } => "invalidDescription",
             Self::EmptyBody { .. } => "emptyBody",
+            Self::HoldsToken { .. } => "holdsToken",
             Self::Unserializable { .. } => "unserializable",
             Self::MissingFrontmatter { .. } => "missingFrontmatter",
             Self::MissingField { .. } => "missingField",

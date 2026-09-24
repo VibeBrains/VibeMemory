@@ -39,6 +39,9 @@ fn main() -> ExitCode {
             install(dry_run)
         }
         Some("connect") => connect_command(&args.collect::<Vec<String>>()),
+        Some(vibememory_cli::connect::HEADERS_COMMAND) => {
+            headers_command(&args.collect::<Vec<String>>())
+        }
         Some("tick") => tick_command(&args.collect::<Vec<String>>()),
         Some("migrate") => migrate_command(&args.collect::<Vec<String>>()),
         Some("switch") => switch_command(&args.collect::<Vec<String>>()),
@@ -432,8 +435,33 @@ fn print_connected(
     println!("register with Claude Code:");
     println!(
         "  {}",
-        vibememory_cli::connect::claude_code_registration(grant, &kept.token)
+        vibememory_cli::connect::claude_code_registration(
+            grant,
+            &vibememory_cli::install::installed_binary(&layout())
+        )
     );
+}
+
+/// `mcp-headers <team> <agent>`: what Claude Code runs on every connection to the team's memory
+/// server — the authorization header of the kept token, on stdout and nowhere else.
+fn headers_command(args: &[String]) -> ExitCode {
+    let [team, agent] = args else {
+        eprintln!(
+            "usage: vibememory {} <team> <agent>",
+            vibememory_cli::connect::HEADERS_COMMAND
+        );
+        return ExitCode::from(2);
+    };
+    match vibememory_cli::connect::headers_of(&layout(), team, agent) {
+        Ok(headers) => {
+            println!("{headers}");
+            ExitCode::SUCCESS
+        }
+        Err(why) => {
+            eprintln!("vibememory: {why}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// The arguments of `connect`, read strictly: `--cabinet <address>` once, `--agent <name>` at most
@@ -669,7 +697,8 @@ fn session_progress_hook(ended: bool) -> ExitCode {
     let relative = relative.to_string_lossy().replace('\\', "/");
     let stamp = vibememory_cli::clock::now();
 
-    let stopped = match commit_snapshot(&store, &real, &relative, &stamp) {
+    let kept = vibememory_cli::held::Kept::read(&layout.engine_dir);
+    let stopped = match commit_snapshot(&store, &real, &relative, &stamp, &kept) {
         Ok(stopped) => stopped,
         Err(error) => {
             return say(&format!(
@@ -681,7 +710,7 @@ fn session_progress_hook(ended: bool) -> ExitCode {
     let held = if stopped.held.is_empty() {
         vibememory_cli::held::release(&layout.engine_dir, &relative)
     } else {
-        vibememory_cli::held::hold_snapshot(&layout.engine_dir, &relative, stopped.held, &stamp)
+        vibememory_cli::held::hold_found(&layout.engine_dir, &relative, stopped.held, &stamp)
     };
     if let Err(error) = held {
         return say(&format!(

@@ -17,7 +17,7 @@ mod support;
 use std::fs;
 
 use support::TempDir;
-use vibememory_cli::connect::{claude_code_registration, keep_token};
+use vibememory_cli::connect::{claude_code_registration, headers_of, keep_token};
 use vibememory_cli::credentials::kept_tokens;
 use vibememory_cli::install::{Layout, Step, plan_binaries};
 use vibememory_core::claim::{Claim, TokenGrant, read_answer};
@@ -79,16 +79,37 @@ fn the_token_is_kept_for_its_owner_alone_and_printed_nowhere() {
         );
     }
 
-    let line = claude_code_registration(&grant, &kept.token);
-    assert!(
-        line.contains("$(cat "),
-        "the line reads the token when it runs"
-    );
+    let binary = layout.engine_dir.join("bin").join("vibememory");
+    let line = claude_code_registration(&grant, &binary);
     assert!(!line.contains(secret), "the line must not carry the token");
-    assert!(line.contains("vibememory-vibebrains"));
     assert!(
-        line.contains(&format!(" '{}' ", grant.mcp_url)),
-        "the address is one quoted word: {line}"
+        !line.contains("$(cat"),
+        "nor read it into an argument: {line}"
+    );
+    assert!(
+        line.starts_with("claude mcp add-json --scope user vibememory-vibebrains '"),
+        "{line}"
+    );
+    let config = line
+        .strip_prefix("claude mcp add-json --scope user vibememory-vibebrains '")
+        .and_then(|rest| rest.strip_suffix('\''))
+        .expect("one quoted word")
+        // a quote inside the word is closed, escaped and reopened, as a POSIX shell reads it
+        .replace("'\\''", "'");
+    let config: serde_json::Value = serde_json::from_str(&config).expect("JSON");
+    assert_eq!(config["url"], grant.mcp_url.as_str());
+    assert_eq!(
+        config["headersHelper"],
+        format!("'{}' mcp-headers vibebrains claude-code", binary.display())
+    );
+
+    // What the helper prints when Claude Code connects: the header, read from the kept file.
+    let headers = headers_of(&layout, "vibebrains", "claude-code").expect("headers");
+    let headers: serde_json::Value = serde_json::from_str(&headers).expect("JSON");
+    assert_eq!(headers["Authorization"], format!("Bearer {}", grant.token));
+    assert!(
+        headers_of(&layout, "../x", "claude-code").is_err(),
+        "names only"
     );
 }
 

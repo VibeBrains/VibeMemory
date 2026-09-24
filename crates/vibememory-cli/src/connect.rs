@@ -11,7 +11,9 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use vibememory_core::claim::{TokenGrant, client_fragment, server_name, token_sidecar};
+use vibememory_core::claim::{
+    TokenGrant, claude_code_config, client_fragment, server_name, token_sidecar,
+};
 use vibememory_core::naming::PathSyntax;
 
 use crate::install::{Layout, shell_word, shell_word_for};
@@ -284,18 +286,45 @@ fn owner_only(path: &Path, rights: &str) -> Result<(), String> {
     }
 }
 
+/// The subcommand of the engine's binary that Claude Code runs for the authorization header.
+pub const HEADERS_COMMAND: &str = "mcp-headers";
+
 /// The line that registers the team's memory server with Claude Code, in the user's own
-/// `~/.claude.json`. The token is read from its file when the line runs: it never stands in the
-/// terminal, the shell's history or a chat — and never in `settings.json`, whose managed copy the
-/// engine carries between machines. The address is quoted like the path: it came from the cabinet,
-/// and the line is pasted into a shell.
+/// `~/.claude.json`, with `binary` as the helper that prints the authorization header on every
+/// connection (`claude_code_config`). The token stands nowhere but its file: not in the terminal,
+/// the shell's history or a chat, not in the arguments of a process, not in Claude Code's
+/// configuration — and never in `settings.json`, whose managed copy the engine carries between
+/// machines. The configuration is one quoted word: it came from the cabinet, and the line is pasted
+/// into a shell.
 #[must_use]
-pub fn claude_code_registration(grant: &TokenGrant, token: &Path) -> String {
+pub fn claude_code_registration(grant: &TokenGrant, binary: &Path) -> String {
+    // the team and the agent passed the claim's name check: letters, digits and dashes only
+    let helper = format!(
+        "{} {HEADERS_COMMAND} {} {}",
+        shell_word(binary),
+        grant.team,
+        grant.agent
+    );
     format!(
-        "claude mcp add --scope user --transport http {} {} --header \"Authorization: Bearer $(cat {})\"",
+        "claude mcp add-json --scope user {} {}",
         server_name(&grant.team),
-        // an address, not a path: quoted as it is, with no separator turned around
-        shell_word_for(&grant.mcp_url, PathSyntax::Posix),
-        shell_word(token)
+        shell_word_for(&claude_code_config(grant, &helper), PathSyntax::Posix)
     )
+}
+
+/// The authorization header of the token kept for `team` and `agent`, as the helper prints it.
+///
+/// # Errors
+///
+/// A name that is not one, or a token that is not kept here.
+pub fn headers_of(layout: &Layout, team: &str, agent: &str) -> Result<String, String> {
+    if !vibememory_core::naming::is_slug(team) || !vibememory_core::naming::is_slug(agent) {
+        return Err(format!(
+            "{team:?} and {agent:?} are not a team and an agent"
+        ));
+    }
+    let file = token_file(layout, team, agent);
+    let token = std::fs::read_to_string(&file)
+        .map_err(|error| format!("no token kept for {team}/{agent}: {error}"))?;
+    Ok(vibememory_core::claim::authorization_header(token.trim()))
 }

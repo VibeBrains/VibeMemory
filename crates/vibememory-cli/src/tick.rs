@@ -194,7 +194,7 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         Err(problem) => result.problems.push(problem),
     }
 
-    match crate::outbox::publish(config_dir, store, machine_id, roots) {
+    match publish_outbox(config_dir, store, machine_id, roots, stamp) {
         Ok(moved) => result.published = moved,
         Err(problem) => result.problems.push(problem),
     }
@@ -888,6 +888,24 @@ fn clear_stale_heartbeats(
     std::fs::write(&temporary, text.as_bytes()).map_err(|error| error.to_string())?;
     std::fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
     Ok(stale)
+}
+
+/// Copies this machine's live files into its outbox, holding back what holds an agent token.
+fn publish_outbox(
+    config_dir: &Path,
+    store: &Path,
+    machine_id: &str,
+    roots: &Roots,
+    stamp: &str,
+) -> Result<crate::outbox::Moved, String> {
+    let engine_dir = engine_dir_of(store);
+    let kept = crate::held::Kept::read(&engine_dir);
+    let holding = crate::outbox::Holding {
+        engine_dir: &engine_dir,
+        kept: &kept,
+        stamp,
+    };
+    crate::outbox::publish(config_dir, store, machine_id, roots, holding)
 }
 
 /// Commits this machine's outbox: `links.json`, `live.json`, `tails.json`, the cards, the

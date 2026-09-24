@@ -17,7 +17,6 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use vibememory_core::merge::jsonl::{snapshot_boundary, survey};
-use vibememory_core::token::token_ids;
 
 use crate::git;
 
@@ -82,7 +81,7 @@ pub struct Stopped {
 }
 
 /// Puts the current contents of `transcript` into the store's index and commits, if anything
-/// changed.
+/// changed — unless the snapshot holds an agent token, as `kept` recognises one.
 ///
 /// `relative` is the path inside the store, `/`-separated. `stamp` is the moment, from the
 /// caller.
@@ -96,6 +95,7 @@ pub fn commit_snapshot(
     transcript: &Path,
     relative: &str,
     stamp: &str,
+    kept: &crate::held::Kept,
 ) -> Result<Stopped, String> {
     let bytes = match std::fs::read(transcript) {
         Ok(bytes) => bytes,
@@ -113,7 +113,7 @@ pub fn commit_snapshot(
             ..Stopped::default()
         });
     }
-    let held = token_ids(whole);
+    let held = kept.found_in(whole);
     if !held.is_empty() {
         return Ok(Stopped {
             blob: None,

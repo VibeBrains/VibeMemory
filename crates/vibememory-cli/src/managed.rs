@@ -78,8 +78,9 @@ pub enum Verdict {
 pub fn withheld_reason(name: &str) -> String {
     format!(
         "{name} holds a vibememory token (vmt_…), so it is not copied to the store; register the \
-         server with `claude mcp add -s user` — that goes to ~/.claude.json, which the engine never \
-         copies — and take the token out of {name}"
+         server with the line `vibememory connect` prints (`claude mcp add-json --scope user`, the \
+         token read from its file on every connection) — that goes to ~/.claude.json, which the \
+         engine never copies — and take the token out of {name}"
     )
 }
 

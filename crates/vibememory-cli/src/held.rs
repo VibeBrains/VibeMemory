@@ -1,25 +1,104 @@
-//! Session files kept on this machine because they hold an agent token.
+//! Files kept on this machine because they hold an agent token.
 //!
 //! A transcript is the agent's raw output: a settings file a tool read comes back into it whole,
-//! and so does a token a person pasted. Committed, it would sit in the store's history, on the host
-//! and in its mirror for good — in a team's store, in front of every member. So no session file
-//! that holds a token of a cabinet is committed: it stays in the store's working tree on this
-//! machine, the next session hears of it once, and `doctor` names it with the token's public id for
-//! as long as it is held. Only the token's public id is ever written down — never the secret.
+//! and so does a token a person pasted — into the prompt history, a memory file, a hand-off, a
+//! skill. Committed, it would sit in the store's history, on the host and in its mirror for good —
+//! in a team's store, in front of every member. So no such file is committed: it stays in the
+//! store's working tree on this machine, a task file and a line of the prompt history stay out of
+//! the outbox, the next session hears of it once, and `doctor` names it with the token's public id
+//! for as long as it is held. Only the token's public id is ever written down — never the secret.
 //!
-//! Which files are a session's own is `vibememory_core::export::is_session_file`; which text holds
-//! a token is `vibememory_core::token`.
+//! One file is not screened here: a project's memory journal. It only grows, so one held line would
+//! stop the project's memory for good; its records are refused with a token when they are written
+//! (`holdsToken`). A text holds a token when it holds one shaped `vmt_…` (`vibememory_core::token`)
+//! or the very value of a token this machine keeps ([`Kept`]) — the owner's token from before the
+//! cabinet has no shape to recognise.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
-use vibememory_core::export::is_session_file;
 use vibememory_core::token::token_ids;
+
+use crate::connect::{FRAGMENT_SUFFIX, SIDECAR_EXTENSION, TOKENS_DIR};
 
 /// What is held, in the engine's own directory: the list names files of this machine's store.
 const HELD_FILE: &str = "held.json";
+/// A kept value shorter than this is no token of ours, and matching it would hold ordinary text.
+const MIN_KEPT_TOKEN_BYTES: usize = 32;
+
+/// The tokens this machine keeps, by value: `connect`'s files under `tokens/<team>/<agent>` of the
+/// engine's directory, and the owner's token from before the cabinet once it is kept there too.
+/// Each is named by the public id its sidecar gives, or by where it is kept — never by its value.
+#[derive(Default)]
+pub struct Kept(Vec<(String, Vec<u8>)>);
+
+impl Kept {
+    /// The tokens kept under `engine_dir`; a machine without any keeps none.
+    #[must_use]
+    pub fn read(engine_dir: &Path) -> Self {
+        let mut kept = Vec::new();
+        let Ok(teams) = std::fs::read_dir(engine_dir.join(TOKENS_DIR)) else {
+            return Self(kept);
+        };
+        for team in teams
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+        {
+            let Ok(files) = std::fs::read_dir(team.path()) else {
+                continue;
+            };
+            for file in files.filter_map(Result::ok) {
+                let path = file.path();
+                let name = file.file_name().to_string_lossy().into_owned();
+                if name.ends_with(FRAGMENT_SUFFIX)
+                    || path
+                        .extension()
+                        .is_some_and(|extension| extension == SIDECAR_EXTENSION)
+                    || !path.is_file()
+                {
+                    continue;
+                }
+                let Ok(value) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let value = value.trim();
+                if value.len() < MIN_KEPT_TOKEN_BYTES {
+                    continue;
+                }
+                let public = std::fs::read_to_string(crate::connect::sidecar_file(&path))
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                    .and_then(|sidecar| {
+                        sidecar
+                            .get("tokenId")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                    });
+                let label = public
+                    .unwrap_or_else(|| format!("{}/{name}", team.file_name().to_string_lossy()));
+                kept.push((label, value.as_bytes().to_vec()));
+            }
+        }
+        Self(kept)
+    }
+
+    /// The names of the tokens `bytes` holds: shaped `vmt_…`, or the value of one kept here.
+    #[must_use]
+    pub fn found_in(&self, bytes: &[u8]) -> BTreeSet<String> {
+        let mut found = token_ids(bytes);
+        for (label, value) in &self.0 {
+            if bytes
+                .windows(value.len())
+                .any(|window| window == value.as_slice())
+            {
+                found.insert(label.clone());
+            }
+        }
+        found
+    }
+}
 
 /// The session files this machine keeps back.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -89,9 +168,9 @@ impl Held {
 fn note(path: &str, tokens: &BTreeSet<String>) -> String {
     let named: Vec<&str> = tokens.iter().map(String::as_str).collect();
     format!(
-        "VibeMemory: {path} stays on this machine and is not synced: it holds agent token {}. \
-         Revoke it in the cabinet and connect the agent again; `vibememory doctor` lists what is \
-         held.",
+        "VibeMemory: {path} holds agent token {}, and what holds it stays on this machine, not \
+         synced. Revoke it in the cabinet and connect the agent again; `vibememory doctor` lists \
+         what is held.",
         named.join(", ")
     )
 }
@@ -128,9 +207,28 @@ fn hold(
     Ok(())
 }
 
-/// Of `paths` — store-relative, `/`-separated, about to be committed — the ones that may be: a
-/// session file that holds a token is kept back and recorded, one that no longer does is released.
-/// Other files pass as they are.
+/// Whether `path` is a project's memory journal, `projects/<name>/memory.jsonl`.
+fn is_memory_journal(path: &str) -> bool {
+    let mut segments = path.split('/');
+    matches!(
+        (
+            segments.next(),
+            segments.next(),
+            segments.next(),
+            segments.next()
+        ),
+        (
+            Some("projects"),
+            Some(_),
+            Some(crate::memory::JOURNAL_FILE),
+            None
+        )
+    )
+}
+
+/// Of `paths` — store-relative, `/`-separated, about to be committed — the ones that may be: a file
+/// that holds a token is kept back and recorded, one that no longer does is released. A memory
+/// journal passes as it is.
 ///
 /// # Errors
 ///
@@ -143,9 +241,10 @@ pub fn screen(
 ) -> Result<Vec<String>, String> {
     let mut held = Held::read(engine_dir);
     let before = held.clone();
+    let kept = Kept::read(engine_dir);
     let mut passed = Vec::new();
     for path in paths {
-        if !is_session_file(path) {
+        if is_memory_journal(path) {
             passed.push(path.clone());
             continue;
         }
@@ -164,7 +263,7 @@ pub fn screen(
             }
             Err(error) => return Err(format!("{}: {error}", file.display())),
         };
-        let tokens = token_ids(&bytes);
+        let tokens = kept.found_in(&bytes);
         if tokens.is_empty() {
             held.files.remove(path);
             passed.push(path.clone());
@@ -178,13 +277,14 @@ pub fn screen(
     Ok(passed)
 }
 
-/// Records what the `Stop` hook found in a live transcript it did not commit: it read the bytes
-/// itself, cut at the last newline, and they hold `tokens`.
+/// Records that `path` is kept back for `tokens`, found by a caller that read it itself: the `Stop`
+/// hook in a live transcript cut at the last newline, the outbox in the prompt history or a task
+/// file.
 ///
 /// # Errors
 ///
 /// The list cannot be written.
-pub fn hold_snapshot(
+pub fn hold_found(
     engine_dir: &Path,
     path: &str,
     tokens: BTreeSet<String>,
@@ -200,7 +300,7 @@ pub fn hold_snapshot(
     Ok(())
 }
 
-/// Forgets `path`: the `Stop` hook committed it, so whatever held it is gone.
+/// Forgets `path`: it went out as usual, so whatever held it is gone.
 ///
 /// # Errors
 ///

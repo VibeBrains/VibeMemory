@@ -496,6 +496,21 @@ pub fn server_name(team: &str) -> String {
     format!("vibememory-{team}")
 }
 
+/// The Claude Code configuration of the team's memory server: its address, and a helper command
+/// Claude Code runs whenever it connects, which prints the authorization header. The token is read
+/// from its file at that moment: it is never an argument of a process that `ps` shows, nor a line of
+/// Claude Code's own configuration.
+#[must_use]
+pub fn claude_code_config(grant: &TokenGrant, helper: &str) -> String {
+    serde_json::json!({ "type": "http", "url": grant.mcp_url, "headersHelper": helper }).to_string()
+}
+
+/// What the helper prints: a JSON object of the one header, as Claude Code reads it.
+#[must_use]
+pub fn authorization_header(token: &str) -> String {
+    serde_json::json!({ "Authorization": format!("Bearer {token}") }).to_string()
+}
+
 /// The client configuration fragment for agents that read a JSON file of MCP servers: the one file
 /// besides the token's own that holds it, written with the same rights.
 #[must_use]

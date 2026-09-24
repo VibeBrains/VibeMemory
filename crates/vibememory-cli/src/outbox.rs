@@ -31,6 +31,8 @@ const PROJECT_KEY: &str = "project";
 pub struct Moved {
     /// History lines this machine published.
     pub history_out: usize,
+    /// History lines and task files kept out because they hold an agent token (`crate::held`).
+    pub held_back: usize,
     /// History lines taken from other machines and added here.
     pub history_in: usize,
     /// Task files published.
@@ -39,8 +41,21 @@ pub struct Moved {
     pub tasks_in: usize,
 }
 
+/// Where the outbox's copies keep what they hold back: the engine's directory, the tokens this
+/// machine keeps, and the moment.
+#[derive(Clone, Copy)]
+pub struct Holding<'a> {
+    /// The engine's directory, where `held.json` lives.
+    pub engine_dir: &'a Path,
+    /// What a held text is recognised by.
+    pub kept: &'a crate::held::Kept,
+    /// Now, from the caller.
+    pub stamp: &'a str,
+}
+
 /// Copies this machine's live files into its own outbox, translating paths so another machine can
-/// read them.
+/// read them. A prompt that holds an agent token — a person pasted one — stays out of the copy, and
+/// so does a task file that holds one: both are recorded as held.
 ///
 /// # Errors
 ///
@@ -50,22 +65,56 @@ pub fn publish(
     store: &Path,
     machine_id: &str,
     roots: &Roots,
+    holding: Holding<'_>,
 ) -> Result<Moved, String> {
-    let out = store.join("machines").join(machine_id);
+    let own = format!("machines/{machine_id}");
+    let out = store.join(&own);
     std::fs::create_dir_all(&out).map_err(|error| error.to_string())?;
     let mut moved = Moved::default();
 
     if let Some(lines) = read_lines(&config_dir.join(HISTORY_FILE))? {
+        let mut tokens = BTreeSet::new();
         let portable: Vec<String> = lines
             .iter()
+            .filter(|line| {
+                let found = holding.kept.found_in(line.as_bytes());
+                let clean = found.is_empty();
+                tokens.extend(found);
+                clean
+            })
             .map(|line| rewrite_project(line, |path| roots.to_portable(path).ok()))
             .collect();
+        moved.held_back += lines.len() - portable.len();
         moved.history_out = portable.len();
         write_lines(&out.join(HISTORY_FILE), &portable)?;
+        record(holding, &format!("{own}/{HISTORY_FILE}"), tokens)?;
     }
 
-    moved.tasks_out = copy_tree(&config_dir.join(TASKS_DIR), &out.join(TASKS_DIR))?;
+    let tasks = copy_tree(
+        &config_dir.join(TASKS_DIR),
+        &out.join(TASKS_DIR),
+        &format!("{own}/{TASKS_DIR}"),
+        holding,
+    )?;
+    moved.tasks_out = tasks.copied;
+    moved.held_back += tasks.held;
     Ok(moved)
+}
+
+/// Records `path` as held for `tokens`, or releases it when there are none.
+fn record(holding: Holding<'_>, path: &str, tokens: BTreeSet<String>) -> Result<(), String> {
+    if tokens.is_empty() {
+        crate::held::release(holding.engine_dir, path)
+    } else {
+        crate::held::hold_found(holding.engine_dir, path, tokens, holding.stamp)
+    }
+}
+
+/// What copying a tree did.
+#[derive(Debug, Clone, Copy, Default)]
+struct Copied {
+    copied: usize,
+    held: usize,
 }
 
 /// Brings what other machines published into this machine's live files.
@@ -232,7 +281,51 @@ fn write_lines(path: &Path, lines: &[String]) -> Result<(), String> {
 }
 
 /// Copies a directory tree of small files, replacing what is there.
-fn copy_tree(from: &Path, to: &Path) -> Result<usize, String> {
+/// Copies the files under `from` to `to` — `relative` names `to` in the store — except those that
+/// hold an agent token: their copy is not made, an older one is taken away, and they are held.
+fn copy_tree(
+    from: &Path,
+    to: &Path,
+    relative: &str,
+    holding: Holding<'_>,
+) -> Result<Copied, String> {
+    let Ok(entries) = std::fs::read_dir(from) else {
+        return Ok(Copied::default());
+    };
+    let mut done = Copied::default();
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let target = to.join(&name);
+        let path = format!("{relative}/{name}");
+        if entry.path().is_dir() {
+            let below = copy_tree(&entry.path(), &target, &path, holding)?;
+            done.copied += below.copied;
+            done.held += below.held;
+            continue;
+        }
+        let bytes = std::fs::read(entry.path()).map_err(|error| error.to_string())?;
+        let tokens = holding.kept.found_in(&bytes);
+        if tokens.is_empty() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            std::fs::write(&target, &bytes).map_err(|error| error.to_string())?;
+            done.copied += 1;
+        } else {
+            match std::fs::remove_file(&target) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
+            done.held += 1;
+        }
+        record(holding, &path, tokens)?;
+    }
+    Ok(done)
+}
+
+/// Copies every file under `from` to `to`: what comes in from another machine's outbox.
+fn copy_all(from: &Path, to: &Path) -> Result<usize, String> {
     let Ok(entries) = std::fs::read_dir(from) else {
         return Ok(0);
     };
@@ -240,7 +333,7 @@ fn copy_tree(from: &Path, to: &Path) -> Result<usize, String> {
     for entry in entries.filter_map(Result::ok) {
         let target = to.join(entry.file_name());
         if entry.path().is_dir() {
-            copied += copy_tree(&entry.path(), &target)?;
+            copied += copy_all(&entry.path(), &target)?;
         } else {
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -266,7 +359,7 @@ fn import_tasks(from: &Path, to: &Path, live_here: &BTreeSet<String>) -> Result<
         if live_here.contains(&name) {
             continue;
         }
-        copied += copy_tree(&session.path(), &to.join(&name))?;
+        copied += copy_all(&session.path(), &to.join(&name))?;
     }
     Ok(copied)
 }

@@ -245,6 +245,7 @@ impl Record {
 
     /// Rejects a record that could not survive the round trip through a file: a description
     /// spanning lines would break the index it is written into, and an empty body is not a memory.
+    /// A record that holds an agent token is refused too, wherever the token sits in it.
     pub fn validate(&self) -> Result<(), MemoryError> {
         let one_line = |text: &str| !text.trim().is_empty() && !text.contains('\n');
         if !one_line(&self.description) {
@@ -254,6 +255,17 @@ impl Record {
         }
         if self.body.trim().is_empty() {
             return Err(MemoryError::EmptyBody {
+                id: self.id.as_str().to_owned(),
+            });
+        }
+        // Every field at once, the metadata included: the check must not depend on where a token
+        // was put.
+        let whole = serde_json::to_vec(self).map_err(|error| MemoryError::Unserializable {
+            id: self.id.as_str().to_owned(),
+            reason: error.to_string(),
+        })?;
+        if crate::token::holds_token(&whole) {
+            return Err(MemoryError::HoldsToken {
                 id: self.id.as_str().to_owned(),
             });
         }

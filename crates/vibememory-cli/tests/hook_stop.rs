@@ -19,6 +19,7 @@ use std::path::Path;
 use std::time::Duration;
 use support::{TempDir, git, git_repo_with_commit, token_case};
 
+use vibememory_cli::held::Kept;
 use vibememory_cli::hook::stop::{
     Live, Tails, commit_snapshot, push_if_due, record_end, record_live, record_progress,
 };
@@ -61,7 +62,8 @@ fn a_half_written_record_is_never_committed() {
     let transcript = temp.path().join("live.jsonl");
     fs::write(&transcript, live_transcript()).expect("write transcript");
 
-    let stopped = commit_snapshot(&store, &transcript, RELATIVE, STAMP).expect("commit");
+    let stopped =
+        commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default()).expect("commit");
     assert!(stopped.committed);
     assert_eq!(stopped.truncated, 18, "the unfinished record is left out");
 
@@ -90,7 +92,8 @@ fn a_snapshot_holding_an_agent_token_is_not_committed() {
     bytes.extend_from_slice(token_case("transcriptToolResult").as_bytes());
     fs::write(&transcript, bytes).expect("write transcript");
 
-    let stopped = commit_snapshot(&store, &transcript, RELATIVE, STAMP).expect("commit");
+    let stopped =
+        commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default()).expect("commit");
     assert_eq!(
         stopped.held.into_iter().collect::<Vec<_>>(),
         ["tk_7q2m9x4a"],
@@ -127,7 +130,7 @@ fn the_live_file_is_never_staged() {
     let transcript = temp.path().join("live.jsonl");
     fs::write(&transcript, live_transcript()).expect("write transcript");
 
-    commit_snapshot(&store, &transcript, RELATIVE, STAMP).expect("commit");
+    commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default()).expect("commit");
 
     let output = std::process::Command::new("git")
         .args(["ls-tree", "-r", "--name-only", "HEAD"])
@@ -150,11 +153,12 @@ fn a_session_that_added_nothing_makes_no_commit() {
     fs::write(&transcript, live_transcript()).expect("write transcript");
 
     assert!(
-        commit_snapshot(&store, &transcript, RELATIVE, STAMP)
+        commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default())
             .expect("first")
             .committed
     );
-    let second = commit_snapshot(&store, &transcript, RELATIVE, STAMP).expect("second");
+    let second =
+        commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default()).expect("second");
     assert!(
         !second.committed,
         "an unchanged transcript may not produce an empty commit every two minutes"
@@ -165,8 +169,14 @@ fn a_session_that_added_nothing_makes_no_commit() {
 fn a_session_that_never_wrote_anything_is_not_an_error() {
     let temp = TempDir::new("stop-nofile");
     let store = store(&temp);
-    let stopped = commit_snapshot(&store, &temp.path().join("absent.jsonl"), RELATIVE, STAMP)
-        .expect("a missing transcript is normal");
+    let stopped = commit_snapshot(
+        &store,
+        &temp.path().join("absent.jsonl"),
+        RELATIVE,
+        STAMP,
+        &Kept::default(),
+    )
+    .expect("a missing transcript is normal");
     assert!(!stopped.committed && stopped.blob.is_none());
 }
 
@@ -247,7 +257,7 @@ fn the_store_repository_is_left_on_a_clean_index() {
     let store = store(&temp);
     let transcript = temp.path().join("live.jsonl");
     fs::write(&transcript, live_transcript()).expect("write");
-    commit_snapshot(&store, &transcript, RELATIVE, STAMP).expect("commit");
+    commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default()).expect("commit");
 
     // Nothing may be left staged behind us: the next commit of the tick would carry it blindly.
     git(&store, &["diff-index", "--quiet", "--cached", "HEAD", "--"]);
@@ -296,7 +306,7 @@ fn a_push_waits_for_its_debounce_and_reaches_the_remote() {
 
     let transcript = temp.path().join("live.jsonl");
     fs::write(&transcript, live_transcript()).expect("write");
-    commit_snapshot(&store, &transcript, RELATIVE, STAMP).expect("commit");
+    commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default()).expect("commit");
     git(
         &store,
         &["push", "--quiet", "--set-upstream", "origin", "main"],
@@ -328,7 +338,7 @@ fn a_store_without_a_remote_does_not_bother_the_session() {
     let engine = temp.dir("engine");
     let transcript = temp.path().join("live.jsonl");
     fs::write(&transcript, live_transcript()).expect("write");
-    commit_snapshot(&store, &transcript, RELATIVE, STAMP).expect("commit");
+    commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default()).expect("commit");
 
     push_if_due(&store, &engine, 1_000_000, Duration::from_secs(20))
         .expect("a missing remote is not an error the session should hear about");

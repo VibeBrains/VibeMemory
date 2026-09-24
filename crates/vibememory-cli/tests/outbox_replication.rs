@@ -16,8 +16,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use support::TempDir;
-use vibememory_cli::outbox::{HISTORY_FILE, TASKS_DIR, import, publish};
+use support::{TempDir, token_case};
+use vibememory_cli::outbox::{HISTORY_FILE, Holding, TASKS_DIR, import, publish};
 use vibememory_core::desktop::roots::Roots;
 use vibememory_core::naming::PathSyntax;
 
@@ -32,6 +32,21 @@ fn roots(local_root: &Path) -> Roots {
 fn history_line(project: &str, prompt: &str) -> String {
     format!("{{\"display\":\"{prompt}\",\"project\":\"{project}\",\"pastedContents\":{{}}}}")
 }
+
+const STAMP: &str = "2026-09-24T12:00:00Z";
+
+/// Where the test's outbox keeps what it holds back.
+fn holding(engine: &Path) -> Holding<'_> {
+    Holding {
+        engine_dir: engine,
+        kept: &NONE_KEPT,
+        stamp: STAMP,
+    }
+}
+
+/// A machine that keeps no token files.
+static NONE_KEPT: std::sync::LazyLock<vibememory_cli::held::Kept> =
+    std::sync::LazyLock::new(vibememory_cli::held::Kept::default);
 
 fn read_history(dir: &Path) -> Vec<String> {
     fs::read_to_string(dir.join(HISTORY_FILE))
@@ -52,7 +67,14 @@ fn a_published_history_carries_paths_the_other_machine_can_read() {
     )
     .expect("write history");
 
-    let moved = publish(&config, &store, "mac-test", &roots(&projects)).expect("publish");
+    let moved = publish(
+        &config,
+        &store,
+        "mac-test",
+        &roots(&projects),
+        holding(&temp.dir("engine")),
+    )
+    .expect("publish");
     assert_eq!(moved.history_out, 1);
 
     let published = read_history(&store.join("machines").join("mac-test"));
@@ -164,7 +186,14 @@ fn a_line_no_root_covers_travels_unchanged_rather_than_being_dropped() {
     )
     .expect("write");
 
-    publish(&config, &store, "mac-test", &roots(&projects)).expect("publish");
+    publish(
+        &config,
+        &store,
+        "mac-test",
+        &roots(&projects),
+        holding(&temp.dir("engine")),
+    )
+    .expect("publish");
     let published = read_history(&store.join("machines").join("mac-test"));
     assert!(
         published[0].contains("/somewhere/else"),
@@ -232,4 +261,52 @@ fn tasks_travel_but_not_for_a_session_running_here() {
             .join("1.json")
             .exists()
     );
+}
+
+#[test]
+fn a_prompt_or_a_task_holding_an_agent_token_stays_on_this_machine() {
+    let temp = TempDir::new("outbox-held");
+    let config = temp.dir("claude");
+    let store = temp.dir("store");
+    let engine = temp.dir("engine");
+    let projects = temp.dir("Projects");
+    let pasted = token_case("tokenTouchingOtherText");
+    fs::write(
+        config.join(HISTORY_FILE),
+        format!(
+            "{}\n{}\n",
+            history_line("/x", "a plain prompt"),
+            history_line("/x", &pasted)
+        ),
+    )
+    .expect("write history");
+    let tasks = config.join(TASKS_DIR).join(SESSION);
+    fs::create_dir_all(&tasks).expect("dirs");
+    fs::write(tasks.join("1.json"), "{}").expect("write");
+    fs::write(tasks.join("2.json"), &pasted).expect("write");
+    // a copy an older engine published before it screened
+    let out = store.join("machines").join("mac-test");
+    fs::create_dir_all(out.join(TASKS_DIR).join(SESSION)).expect("dirs");
+    fs::write(out.join(TASKS_DIR).join(SESSION).join("2.json"), &pasted).expect("write");
+
+    let moved = publish(
+        &config,
+        &store,
+        "mac-test",
+        &roots(&projects),
+        holding(&engine),
+    )
+    .expect("publish");
+    assert_eq!(
+        (moved.history_out, moved.tasks_out, moved.held_back),
+        (1, 1, 2)
+    );
+    let published = fs::read_to_string(out.join(HISTORY_FILE)).expect("history");
+    assert!(published.contains("a plain prompt"), "{published}");
+    assert!(!published.contains("vmt_"), "{published}");
+    assert!(!out.join(TASKS_DIR).join(SESSION).join("2.json").exists());
+    let held = vibememory_cli::held::Held::read(&engine);
+    let paths: Vec<&str> = held.files.keys().map(String::as_str).collect();
+    let task = format!("machines/mac-test/tasks/{SESSION}/2.json");
+    assert_eq!(paths, ["machines/mac-test/history.jsonl", task.as_str()]);
 }
