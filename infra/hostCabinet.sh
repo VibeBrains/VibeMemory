@@ -352,10 +352,14 @@ if systemctl is-active --quiet vibememory-cabinet; then
   esac
 fi
 
-# 9. The journal's size and the cabinet's jail. The cabinet writes one line per refused password or
-# claim with the address Caddy saw (the last X-Forwarded-For entry); the unit's lines land in a
-# user journal, so the backend needs journalflags=1, and the filter is not anchored at ^ — both
-# measured on the memory server's jail (hostMcp.sh).
+# 9. The journal's size and the cabinet's jail. The cabinet writes one plain line to stderr per
+# refused password, claim code, gift code or invitation link, with the address Caddy saw (the last
+# X-Forwarded-For entry, an IP literal or no line at all). The filter is anchored at the line's end:
+# the JSON lines of the journal carry what a request brought — its user agent, its path — and a
+# match inside one would let a request pick whom to ban; usedns = no keeps a name from being
+# resolved into someone's address. The unit's lines land in a user journal, so the backend needs
+# journalflags=1, and the backend prefixes host and process, so no ^ — both measured on the memory
+# server's jail (hostMcp.sh).
 journald=/etc/systemd/journald.conf.d/vibememory.conf
 journaldText="[Journal]
 SystemMaxUse=$journalMaxUse"
@@ -371,13 +375,14 @@ if ! command -v fail2ban-client >/dev/null && [ ! -x /usr/bin/fail2ban-client ];
 fi
 filter=/etc/fail2ban/filter.d/vibememory-cabinet.conf
 filterText="[Definition]
-failregex = (?:sign-in|claim) refused from <HOST>
+failregex = vibememory-cabinet: (?:sign-in|claim|code|invitation) refused from <HOST>\$
 journalmatch = _SYSTEMD_UNIT=vibememory-cabinet.service"
 jail=/etc/fail2ban/jail.d/vibememory-cabinet.local
 jailText="[vibememory-cabinet]
 enabled = true
 filter = vibememory-cabinet
 backend = systemd[journalflags=1]
+usedns = no
 port = http,https
 maxretry = $jailMaxretry
 findtime = $jailFindtime
