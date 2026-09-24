@@ -319,6 +319,142 @@ fn apply_again_changes_nothing_but_the_engines_text_and_refuses_a_broken_snapsho
     assert_eq!(fs::read(&host.keys).expect("keys"), keys, "keys untouched");
 }
 
+/// The snapshot on disk replaced by `snapshot`, pretty, as the cabinet writes it.
+fn put_snapshot(host: &Host, snapshot: &Value) {
+    fs::write(
+        &host.access,
+        serde_json::to_vec_pretty(snapshot).expect("encode"),
+    )
+    .expect("snapshot");
+}
+
+/// What the forced command answers Alice's laptop for `status`: the exit code and the first line
+/// of stderr.
+fn laptop_status(host: &Host) -> (Option<i32>, String) {
+    let status = run(
+        &["shell", ALICE_LAPTOP],
+        host,
+        &[("SSH_ORIGINAL_COMMAND", "status")],
+        None,
+    );
+    let stderr = String::from_utf8_lossy(&status.stderr);
+    (
+        status.status.code(),
+        stderr.lines().next().unwrap_or_default().to_owned(),
+    )
+}
+
+/// The memory teams the nightly backup would bundle.
+fn backup_teams(host: &Host) -> String {
+    let listed = Command::new(BINARY)
+        .args(["access", "teams"])
+        .arg(&host.access)
+        .args(["--mode", "memory"])
+        .output()
+        .expect("run the binary");
+    assert!(listed.status.success());
+    String::from_utf8_lossy(&listed.stdout).trim().to_owned()
+}
+
+#[test]
+fn an_older_snapshot_is_refused_and_the_one_applied_stays_in_force() {
+    let host = host("serial");
+    assert!(apply(&host).status.success());
+    let bytes = fs::read(&host.access).expect("snapshot");
+    let copy = layout::applied_snapshot_file(&host.access);
+    assert_eq!(
+        fs::read(&copy).expect("copy"),
+        bytes,
+        "the copy is what was applied"
+    );
+    assert_eq!(fs::metadata(&copy).expect("copy").mode() & 0o777, 0o640);
+    let applied = json_file(&layout::applied_file(&host.access));
+    assert_eq!(applied["serial"], 12);
+    assert_eq!(backup_teams(&host), "vibebrains");
+
+    // A publication that lost its turn lands late: serial 11, without the memory team and without
+    // Alice's laptop.
+    let keys = fs::read(&host.keys).expect("keys");
+    let mut stale: Value = serde_json::from_slice(&bytes).expect("JSON");
+    stale["serial"] = json!(11);
+    stale["teams"].as_object_mut().unwrap().remove("vibebrains");
+    stale["tokens"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|token| token["team"] != "vibebrains");
+    stale["keys"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|key| key["id"] != ALICE_LAPTOP);
+    put_snapshot(&host, &stale);
+    assert!(!apply(&host).status.success());
+    let refused = json_file(&layout::applied_file(&host.access));
+    assert_eq!(refused["problems"][0]["code"], "serialBehind");
+    assert_eq!(refused["serial"], 12);
+    assert_eq!(refused["snapshotHash"], applied["snapshotHash"]);
+    assert_eq!(fs::read(&host.keys).expect("keys"), keys, "keys untouched");
+    assert_eq!(fs::read(&copy).expect("copy"), bytes, "the copy stays");
+    assert!(
+        host.teams.join("vibebrains.git").is_dir(),
+        "the store stays"
+    );
+
+    // Everything on the host goes by the snapshot applied, not by the stale file.
+    assert_eq!(laptop_status(&host).0, Some(0), "the key still gets in");
+    assert_eq!(
+        backup_teams(&host),
+        "vibebrains",
+        "and its team is backed up"
+    );
+    let report = json_file(&layout::report_file(&host.access));
+    assert!(report["teams"].get("vibebrains").is_some(), "{report}");
+
+    // Two decisions under one serial: the host keeps the one it took, and only the latest refusal
+    // is listed.
+    stale["serial"] = json!(12);
+    put_snapshot(&host, &stale);
+    assert!(!apply(&host).status.success());
+    let problems = json_file(&layout::applied_file(&host.access))["problems"].clone();
+    assert_eq!(problems[0]["code"], "serialBehind");
+    assert_eq!(
+        problems
+            .as_array()
+            .expect("problems")
+            .iter()
+            .filter(|problem| problem["code"] == "serialBehind")
+            .count(),
+        1
+    );
+
+    // A newer one is applied, and the refusal is gone.
+    stale["serial"] = json!(13);
+    put_snapshot(&host, &stale);
+    assert!(apply(&host).status.success());
+    let applied = json_file(&layout::applied_file(&host.access));
+    assert_eq!(applied["serial"], 13);
+    assert_eq!(applied["problems"], json!([]));
+    assert_eq!(
+        fs::read(&copy).expect("copy"),
+        fs::read(&host.access).expect("snapshot")
+    );
+    assert_eq!(
+        laptop_status(&host),
+        (Some(1), "vibememory: unknownKey".to_owned())
+    );
+    assert_eq!(backup_teams(&host), "");
+
+    // A banned member's key is refused even by a snapshot that lists it.
+    let mut banned: Value = serde_json::from_slice(&bytes).expect("JSON");
+    banned["serial"] = json!(14);
+    banned["bans"] = json!([{"member": "alice", "until": null}]);
+    put_snapshot(&host, &banned);
+    assert!(apply(&host).status.success());
+    assert_eq!(
+        laptop_status(&host),
+        (Some(1), "vibememory: unknownKey".to_owned())
+    );
+}
+
 /// A stand-in for ssh: git runs it with the host and the command, and it runs the forced command
 /// the way sshd would, with the command in `SSH_ORIGINAL_COMMAND`.
 fn fake_ssh(host: &Host) -> PathBuf {
@@ -352,10 +488,10 @@ fn member_git(host: &Host, dir: &Path, key: &str, args: &[&str]) -> Output {
         .expect("run git")
 }
 
-#[test]
-fn a_key_clones_and_pushes_only_what_the_rules_let_through() {
-    let host = host("push");
-    assert!(apply(&host).status.success());
+/// The applied host's `syncteam` store with its hook calling this build, and Alice's laptop's clone
+/// of it; the store and the clone.
+fn alice_clone(host: &Host) -> (PathBuf, PathBuf) {
+    assert!(apply(host).status.success());
     // The hook as installed calls the host's binary; here it calls this build, on this layout, and
     // keeps no disk reserve — the temporary directory's disk is not the host's.
     let sync = host.teams.join("syncteam.git");
@@ -367,9 +503,8 @@ fn a_key_clones_and_pushes_only_what_the_rules_let_through() {
         ),
     )
     .expect("hook");
-
     let clone = member_git(
-        &host,
+        host,
         &host.root,
         ALICE_LAPTOP,
         &["clone", "--quiet", "vmhost:teams/syncteam.git", "work"],
@@ -379,20 +514,36 @@ fn a_key_clones_and_pushes_only_what_the_rules_let_through() {
         "clone: {}",
         String::from_utf8_lossy(&clone.stderr)
     );
-    let work = host.root.join("work");
-    assert!(work.join(".gitattributes").is_file());
+    (sync, host.root.join("work"))
+}
 
-    fs::create_dir_all(work.join("projects/Acme")).expect("project");
-    fs::write(work.join("projects/Acme/s1.jsonl"), "{}\n").expect("transcript");
-    fs::create_dir_all(work.join("machines/alice-laptop")).expect("machine");
-    fs::write(work.join("machines/alice-laptop/live.json"), "{}\n").expect("live");
-    git(&work, &["add", "-A"]);
-    git(&work, &["commit", "--quiet", "-m", "a tick"]);
-    let pushed = member_git(
-        &host,
-        &work,
+/// Alice's laptop writes `files` in its clone, commits them and pushes `main`.
+fn tick(host: &Host, work: &Path, files: &[&str]) -> Output {
+    for path in files {
+        let path = work.join(path);
+        fs::create_dir_all(path.parent().expect("a directory")).expect("directory");
+        fs::write(path, "{}\n").expect("file");
+    }
+    git(work, &["add", "-A"]);
+    git(work, &["commit", "--quiet", "-m", "a tick"]);
+    member_git(
+        host,
+        work,
         ALICE_LAPTOP,
         &["push", "--quiet", "origin", "main"],
+    )
+}
+
+#[test]
+fn a_key_clones_and_pushes_only_what_the_rules_let_through() {
+    let host = host("push");
+    let (sync, work) = alice_clone(&host);
+    assert!(work.join(".gitattributes").is_file());
+
+    let pushed = tick(
+        &host,
+        &work,
+        &["projects/Acme/s1.jsonl", "machines/alice-laptop/live.json"],
     );
     assert!(
         pushed.status.success(),
@@ -458,6 +609,29 @@ fn a_key_clones_and_pushes_only_what_the_rules_let_through() {
         String::from_utf8_lossy(&shell.stderr).starts_with("vibememory: commandDenied\n"),
         "{}",
         String::from_utf8_lossy(&shell.stderr)
+    );
+}
+
+#[test]
+fn a_push_over_a_stale_file_goes_by_the_snapshot_applied() {
+    let host = host("stale-push");
+    let (_, work) = alice_clone(&host);
+
+    // A file without the laptop's key lands after the host applied a newer one: the forced command
+    // and pre-receive both go by the snapshot applied, and the push lands.
+    let mut stale: Value =
+        serde_json::from_slice(&fs::read(&host.access).expect("snapshot")).expect("JSON");
+    stale["serial"] = json!(11);
+    stale["keys"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|key| key["id"] != ALICE_LAPTOP);
+    put_snapshot(&host, &stale);
+    let pushed = tick(&host, &work, &["projects/Acme/s2.jsonl"]);
+    assert!(
+        pushed.status.success(),
+        "push over a stale file: {}",
+        String::from_utf8_lossy(&pushed.stderr)
     );
 }
 

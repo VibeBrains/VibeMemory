@@ -287,6 +287,78 @@ fn a_snapshot_that_breaks_shuts_the_door_until_it_reads_cleanly() {
     assert_eq!(status_of(&stand, LEGACY).0, 200);
 }
 
+/// The snapshot of these tests in the cabinet's format: `serial`, and nobody banned.
+fn cabinet_snapshot(personal: &Path, serial: u64) -> Value {
+    let mut snapshot = snapshot(personal);
+    snapshot["version"] = json!(2);
+    snapshot["serial"] = json!(serial);
+    snapshot["bans"] = json!([]);
+    snapshot
+}
+
+/// The same snapshot without Alice's writing token.
+fn without_alice(mut snapshot: Value) -> Value {
+    snapshot["tokens"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|token| token["id"] != "tk_7q2m9x4a");
+    snapshot
+}
+
+#[test]
+fn an_older_snapshot_does_not_take_the_server_back() {
+    let stand = stand("serial", None);
+    publish(
+        &stand.access,
+        &cabinet_snapshot(&stand.personal, 5).to_string(),
+    );
+    assert_eq!(status_of(&stand, ALICE).0, 200);
+
+    // A publication that lost its turn lands late: the revocation it lacks is not undone, and the
+    // one it carries is not a newer decision either.
+    publish(
+        &stand.access,
+        &without_alice(cabinet_snapshot(&stand.personal, 4)).to_string(),
+    );
+    assert_eq!(status_of(&stand, ALICE).0, 200, "serial 4 is older than 5");
+
+    publish(
+        &stand.access,
+        &without_alice(cabinet_snapshot(&stand.personal, 6)).to_string(),
+    );
+    assert_eq!(status_of(&stand, ALICE), (401, Note::Refused));
+
+    // The host applied serial 7 and a stale serial 6 is on disk: the copy of what was applied is
+    // in force.
+    let copy = vibememory_mcp::layout::applied_snapshot_file(&stand.access);
+    publish(&copy, &cabinet_snapshot(&stand.personal, 7).to_string());
+    assert_eq!(status_of(&stand, ALICE).0, 200, "serial 7 applied");
+
+    // A ban holds even in a snapshot that lists the member's tokens.
+    let mut banned = cabinet_snapshot(&stand.personal, 8);
+    banned["bans"] = json!([{"member": "alice", "until": null}]);
+    publish(&stand.access, &banned.to_string());
+    assert_eq!(status_of(&stand, ALICE), (401, Note::Refused));
+    assert_eq!(status_of(&stand, LEGACY).0, 200, "the others still get in");
+
+    // The copy never stands in for a file that is gone.
+    fs::remove_file(&stand.access).expect("remove");
+    assert_eq!(status_of(&stand, LEGACY).0, 503);
+
+    // Nor does an older file reopen the door the missing one shut, copy or no copy.
+    fs::remove_file(&copy).expect("remove the copy");
+    publish(
+        &stand.access,
+        &cabinet_snapshot(&stand.personal, 6).to_string(),
+    );
+    assert_eq!(status_of(&stand, LEGACY).0, 503, "serial 6 is older than 8");
+    publish(
+        &stand.access,
+        &cabinet_snapshot(&stand.personal, 9).to_string(),
+    );
+    assert_eq!(status_of(&stand, ALICE).0, 200, "serial 9 is newer");
+}
+
 #[test]
 fn a_host_does_not_start_without_rights_it_can_read() {
     let temp = Temp::new("start");

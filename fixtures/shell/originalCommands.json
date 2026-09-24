@@ -1,5 +1,5 @@
 {
-  "description": "What a machine key may run on the host: SSH_ORIGINAL_COMMAND against the access snapshot. The snapshot is the base of fixtures/access/accessSnapshots.json with snapshotPatch applied. Keys are synthetic ed25519: all 32 key bytes equal.",
+  "description": "What a machine key may run on the host: SSH_ORIGINAL_COMMAND against the access snapshot. The snapshot is the base of fixtures/access/accessSnapshots.json with snapshotPatch and then the case's patch applied; every case is decided at `now`. Keys are synthetic ed25519: all 32 key bytes equal.",
   "snapshotPatch": {
     "teamCount": 5,
     "teams": {
@@ -62,6 +62,7 @@
       }
     ]
   },
+  "now": "2026-09-24T12:00:00Z",
   "cases": [
     {
       "id": "syncUploadByAdmin",
@@ -226,6 +227,60 @@
       "command": "status",
       "expect": {
         "code": "unknownKey"
+      }
+    },
+    {
+      "id": "bannedKey",
+      "provenance": "computed",
+      "note": "A banned member's key is refused as one the snapshot does not have, even in a snapshot that lists it.",
+      "patch": {
+        "bans": [
+          {
+            "member": "alice",
+            "until": null
+          }
+        ]
+      },
+      "key": "mk_3f8k1p0z",
+      "command": "status",
+      "expect": {
+        "code": "unknownKey"
+      }
+    },
+    {
+      "id": "banNotOverYet",
+      "provenance": "computed",
+      "note": "A ban holds until its moment, to the second.",
+      "patch": {
+        "bans": [
+          {
+            "member": "alice",
+            "until": "2026-09-24T12:00:01Z"
+          }
+        ]
+      },
+      "key": "mk_3f8k1p0z",
+      "command": "status",
+      "expect": {
+        "code": "unknownKey"
+      }
+    },
+    {
+      "id": "banOver",
+      "provenance": "computed",
+      "note": "A ban ends at its moment: at 12:00:00 a ban until 12:00:00 is over.",
+      "patch": {
+        "bans": [
+          {
+            "member": "alice",
+            "until": "2026-09-24T12:00:00Z"
+          }
+        ]
+      },
+      "key": "mk_3f8k1p0z",
+      "command": "status",
+      "expect": {
+        "action": "status"
       }
     },
     {

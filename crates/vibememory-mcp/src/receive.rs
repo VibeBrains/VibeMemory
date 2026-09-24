@@ -106,6 +106,8 @@ pub struct Push<'a> {
     pub changed: &'a [String],
     /// The sizes.
     pub sizes: Sizes,
+    /// When the push comes, `YYYY-MM-DDTHH:MM:SSZ`: a banned member's key pushes nothing.
+    pub now: &'a str,
 }
 
 /// Why the push is refused.
@@ -138,7 +140,7 @@ fn refuse_paths(code: &'static str, detail: &str, mut paths: Vec<String>) -> Pus
 }
 
 /// Decides whether `push` may land. `snapshot` is `None` when the access snapshot cannot be used:
-/// then nothing lands.
+/// then nothing lands. The key of a banned member is refused as one the snapshot does not have.
 ///
 /// # Errors
 ///
@@ -150,7 +152,11 @@ pub fn decide(push: &Push<'_>, snapshot: Option<&Snapshot>) -> Result<(), PushRe
             "the host cannot read who may push; nothing lands until it can",
         ));
     };
-    let Some(key) = push.key.and_then(|id| snapshot.key(id)) else {
+    let Some(key) = push
+        .key
+        .and_then(|id| snapshot.key(id))
+        .filter(|key| !snapshot.barred(&key.member, push.now))
+    else {
         return Err(refuse(
             "unknownKey",
             "the push did not come through a machine key of the snapshot",

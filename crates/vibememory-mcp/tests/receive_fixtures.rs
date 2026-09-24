@@ -35,6 +35,7 @@ fn every_push_is_answered_as_the_fixture_says() {
         "the pre-receive table was not found in the spec: {codes:?}"
     );
     let defaults = &file["defaults"];
+    let now = file["now"].as_str().expect("now");
 
     let mut failures = Vec::new();
     let mut covered = BTreeSet::new();
@@ -68,6 +69,7 @@ fn every_push_is_answered_as_the_fixture_says() {
                 free_bytes: size(case, defaults, "freeBytes"),
                 reserve_bytes: size(case, defaults, "reserveBytes"),
             },
+            now,
         };
         let answer = receive::decide(&push, usable.then_some(&snapshot));
         let answered = match &answer {

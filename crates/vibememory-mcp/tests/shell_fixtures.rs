@@ -32,7 +32,7 @@ fn action_json(action: &ShellAction) -> Value {
 #[test]
 fn every_command_is_answered_as_the_fixture_says() {
     let file = support::fixture("fixtures/shell/originalCommands.json");
-    let snapshot = support::snapshot(&[&file["snapshotPatch"]]);
+    let now = file["now"].as_str().expect("now");
     let codes = support::spec_codes("docs/manuals/hostShellSpec.md", "Отказ `shell`");
     assert!(
         codes.len() >= 7,
@@ -42,12 +42,14 @@ fn every_command_is_answered_as_the_fixture_says() {
     let mut failures = Vec::new();
     let mut covered = BTreeSet::new();
     for (id, case) in support::cases(&file, &mut failures) {
+        let snapshot = support::snapshot(&[&file["snapshotPatch"], &case["patch"]]);
         let usable = case["snapshotUsable"].as_bool().unwrap_or(true);
         let answer = shell::decide(
             case["command"].as_str().expect("command"),
             case["key"].as_str().expect("key"),
             usable.then_some(&snapshot),
             layout::TEAMS_DIR,
+            now,
         );
         let answered = match &answer {
             Ok(action) => action_json(action),

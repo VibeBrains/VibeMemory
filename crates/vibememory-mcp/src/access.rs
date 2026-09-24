@@ -13,8 +13,10 @@ use serde_json::Number;
 use vibememory_core::naming::StoreName;
 use vibememory_core::token;
 
-/// The only format version there is.
-const VERSION: u64 = 1;
+/// The hand-written snapshot of the host before the cabinet: no serial, no bans.
+const VERSION_HAND_WRITTEN: u64 = 1;
+/// What the cabinet publishes: a serial that grows with every publication, and the bans.
+const VERSION_CABINET: u64 = 2;
 /// Public id of a token in the snapshot: this prefix and the id the token string carries.
 const TOKEN_ID_PREFIX: &str = "tk_";
 /// Public id of a machine key: this prefix and an id of the same alphabet.
@@ -170,6 +172,11 @@ pub struct Key {
 /// A snapshot that passed every rule.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
+    /// The cabinet's number of this snapshot, growing with every publication; 0 for a hand-written
+    /// one. The host never applies a lower one than it has: a stale file is not a newer decision.
+    pub serial: u64,
+    /// Handle to the end of the member's ban, `None` for good.
+    pub bans: BTreeMap<String, Option<String>>,
     /// Teams the cabinet knew of when it wrote this, deleted ones included.
     pub team_count: u64,
     /// Slug to team.
@@ -203,6 +210,17 @@ impl Snapshot {
         self.keys.iter().find(|key| key.id == id)
     }
 
+    /// Whether `member` is banned at `now` (`YYYY-MM-DDTHH:MM:SSZ`). The cabinet leaves a banned
+    /// member's tokens and keys out of the snapshot; the host refuses them all the same, so a ban
+    /// holds even in a snapshot that lists them.
+    #[must_use]
+    pub fn barred(&self, member: &str, now: &str) -> bool {
+        self.bans.get(member).is_some_and(|until| {
+            // Both sides are `YYYY-MM-DDTHH:MM:SSZ`, so the text order is the time order.
+            until.as_deref().is_none_or(|until| now < until)
+        })
+    }
+
     /// Who `presented` is, at `now` (`YYYY-MM-DDTHH:MM:SSZ`).
     ///
     /// A `vmt_<id>_<secret>` string is looked up by its id and compared by digest; anything else
@@ -228,7 +246,9 @@ impl Snapshot {
             return Admission::Unknown;
         };
         let digest = vibememory_cli::sha256::hex(presented.as_bytes());
-        if !same_secret(digest.as_bytes(), token.sha256.as_bytes()) {
+        if !same_secret(digest.as_bytes(), token.sha256.as_bytes())
+            || self.barred(&token.member, now)
+        {
             return Admission::Unknown;
         }
         match &token.expires_at {
@@ -237,6 +257,29 @@ impl Snapshot {
             _ => Admission::Granted(token),
         }
     }
+}
+
+/// Of a usable `access.json` and the copy of the snapshot the host applied last, the one in force.
+///
+/// The file, unless it is not newer than the copy: a lower serial, or the same serial of the
+/// cabinet with other contents — two decisions under one number, and the host keeps the one it
+/// took. A file older than what the host applied — written late by a publication that lost its
+/// turn, or put back by hand — never takes the host back. Hand-written snapshots have no serial
+/// (0) and follow the file. The copy never stands in for a file that is gone or broken: that may
+/// have been a revocation, and the door stays shut until the file reads again.
+#[must_use]
+pub fn in_force<T: std::borrow::Borrow<Snapshot>>(file: T, applied: Option<T>) -> T {
+    match applied {
+        Some(applied) if behind(file.borrow(), applied.borrow()) => applied,
+        _ => file,
+    }
+}
+
+/// Whether `file` is not newer than `applied`, the snapshot the host applied last.
+#[must_use]
+pub fn behind(file: &Snapshot, applied: &Snapshot) -> bool {
+    file.serial < applied.serial
+        || (file.serial > 0 && file.serial == applied.serial && file != applied)
 }
 
 /// Compares in time that does not depend on where the first difference is: an early exit would
@@ -260,12 +303,16 @@ fn same_secret(given: &[u8], expected: &[u8]) -> bool {
 pub fn check(bytes: &[u8]) -> Result<Snapshot, Refusal> {
     let raw: RawSnapshot = serde_json::from_slice(bytes)
         .map_err(|error| refuse("snapshotMalformed", error.to_string()))?;
-    if raw.version != VERSION {
+    if raw.version != VERSION_HAND_WRITTEN && raw.version != VERSION_CABINET {
         return Err(refuse(
             "unsupportedVersion",
-            format!("version is {}, only {VERSION} is known", raw.version),
+            format!(
+                "version is {}, only {VERSION_HAND_WRITTEN} and {VERSION_CABINET} are known",
+                raw.version
+            ),
         ));
     }
+    version_fields(&raw)?;
     names(&raw)?;
     dates(&raw)?;
     adopted(&raw)?;
@@ -282,6 +329,10 @@ pub fn check(bytes: &[u8]) -> Result<Snapshot, Refusal> {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct RawSnapshot {
     version: u64,
+    #[serde(default)]
+    serial: Option<u64>,
+    #[serde(default)]
+    bans: Option<Vec<RawBan>>,
     team_count: u64,
     teams: BTreeMap<String, RawTeam>,
     tokens: Vec<RawToken>,
@@ -350,6 +401,13 @@ struct RawToken {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct RawBan {
+    member: String,
+    until: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct RawKey {
     id: String,
     member: String,
@@ -368,6 +426,27 @@ fn is_public_id(id: &str, prefix: &str) -> bool {
     id.strip_prefix(prefix).is_some_and(token::is_id)
 }
 
+/// A hand-written snapshot has neither a serial nor bans; the cabinet's has both, and its serial
+/// starts at 1.
+fn version_fields(raw: &RawSnapshot) -> Result<(), Refusal> {
+    let fields = (raw.serial, raw.bans.is_some());
+    let fitting = match raw.version {
+        VERSION_HAND_WRITTEN => fields == (None, false),
+        _ => matches!(fields, (Some(serial), true) if serial >= 1),
+    };
+    if fitting {
+        Ok(())
+    } else {
+        Err(refuse(
+            "versionFields",
+            format!(
+                "version {}: serial and bans are the fields of version {VERSION_CABINET}, both there, serial from 1",
+                raw.version
+            ),
+        ))
+    }
+}
+
 fn names(raw: &RawSnapshot) -> Result<(), Refusal> {
     if let Some(slug) = raw.teams.keys().find(|slug| !is_name(slug)) {
         return Err(refuse("invalidSlug", format!("team slug {slug:?}")));
@@ -377,7 +456,8 @@ fn names(raw: &RawSnapshot) -> Result<(), Refusal> {
         .values()
         .flat_map(|team| team.members.keys())
         .chain(raw.tokens.iter().map(|token| &token.member))
-        .chain(raw.keys.iter().map(|key| &key.member));
+        .chain(raw.keys.iter().map(|key| &key.member))
+        .chain(raw.bans.iter().flatten().map(|ban| &ban.member));
     for handle in handles {
         if !is_name(handle) {
             return Err(refuse("invalidHandle", format!("handle {handle:?}")));
@@ -447,6 +527,19 @@ fn dates(raw: &RawSnapshot) -> Result<(), Refusal> {
                 format!(
                     "token {}: expiresAt {moment:?} is not YYYY-MM-DDTHH:MM:SSZ",
                     token.id
+                ),
+            ));
+        }
+    }
+    for ban in raw.bans.iter().flatten() {
+        if let Some(moment) = &ban.until
+            && !is_moment(moment)
+        {
+            return Err(refuse(
+                "invalidDate",
+                format!(
+                    "ban of {}: until {moment:?} is not YYYY-MM-DDTHH:MM:SSZ",
+                    ban.member
                 ),
             ));
         }
@@ -714,6 +807,12 @@ fn token_and_key_ids(raw: &RawSnapshot) -> Result<(), Refusal> {
                 token.id
             ),
         ));
+    }
+    let mut seen = BTreeSet::new();
+    for member in raw.bans.iter().flatten().map(|ban| &ban.member) {
+        if !seen.insert(member) {
+            return Err(refuse("banTwice", format!("two bans of {member}")));
+        }
     }
     Ok(())
 }
@@ -984,6 +1083,13 @@ fn snapshot(raw: RawSnapshot) -> Snapshot {
         .collect();
     let legacy = tokens.iter().position(|token| token.legacy);
     Snapshot {
+        serial: raw.serial.unwrap_or(0),
+        bans: raw
+            .bans
+            .unwrap_or_default()
+            .into_iter()
+            .map(|ban| (ban.member, ban.until))
+            .collect(),
         team_count: raw.team_count,
         teams,
         tokens,

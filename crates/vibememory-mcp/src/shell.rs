@@ -60,10 +60,12 @@ enum Asked {
     Status,
 }
 
-/// Decides what `key` may run for `original`, the command its client sent.
+/// Decides what `key` may run for `original`, the command its client sent, at `now`
+/// (`YYYY-MM-DDTHH:MM:SSZ`).
 ///
 /// `snapshot` is `None` when the access snapshot cannot be used: then nobody is let in. `teams_dir`
-/// is where the host keeps team stores, for the absolute form of a path.
+/// is where the host keeps team stores, for the absolute form of a path. The key of a banned member
+/// is refused as one the snapshot does not have.
 ///
 /// # Errors
 ///
@@ -73,6 +75,7 @@ pub fn decide(
     key: &str,
     snapshot: Option<&Snapshot>,
     teams_dir: &str,
+    now: &str,
 ) -> Result<ShellAction, ShellRefusal> {
     let Some(snapshot) = snapshot else {
         return Err(refuse(
@@ -80,7 +83,10 @@ pub fn decide(
             "the host cannot read who may come in; nobody is let in until it can",
         ));
     };
-    let Some(key) = snapshot.key(key) else {
+    let Some(key) = snapshot
+        .key(key)
+        .filter(|found| !snapshot.barred(&found.member, now))
+    else {
         return Err(refuse(
             "unknownKey",
             format!("key {key} is not in the snapshot"),

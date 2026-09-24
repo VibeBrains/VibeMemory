@@ -1,5 +1,6 @@
 //! Who a presented token is: by id and digest for the cabinet's tokens, as a whole for the one
-//! legacy token, and never by trying every digest in the snapshot.
+//! legacy token, and never by trying every digest in the snapshot; nobody while their ban lasts.
+//! Which of two snapshots is in force: never one older than what the host applied.
 
 #![allow(
     clippy::panic,
@@ -21,8 +22,13 @@ fn digest(token: &str) -> String {
 }
 
 fn snapshot() -> Snapshot {
-    let text = json!({
-        "version": 1, "teamCount": 1,
+    with(&json!({}))
+}
+
+/// The snapshot of these tests in the cabinet's format, its top-level fields replaced by `fields`.
+fn with(fields: &serde_json::Value) -> Snapshot {
+    let mut text = json!({
+        "version": 2, "serial": 5, "bans": [], "teamCount": 1,
         "teams": { "personal": {
             "adopted": true, "repo": "/home/vm/vibememory/store.git", "writable": true,
             "limits": { "maxRecords": 5000, "maxRecordBytes": 65536 },
@@ -41,6 +47,9 @@ fn snapshot() -> Snapshot {
         ],
         "keys": []
     });
+    for (name, value) in fields.as_object().expect("fields") {
+        text[name] = value.clone();
+    }
     access::check(text.to_string().as_bytes()).expect("a valid snapshot")
 }
 
@@ -91,4 +100,65 @@ fn a_token_stops_working_at_the_moment_it_expires() {
         id_of(snapshot.admit(EXPIRES, NOW)).as_deref(),
         Some("expired tk_b3c4d5e6")
     );
+}
+
+#[test]
+fn a_banned_member_is_nobody_until_the_ban_ends() {
+    let for_good = with(&json!({"bans": [{"member": "borodatych", "until": null}]}));
+    assert_eq!(id_of(for_good.admit(ISSUED, NOW)), None);
+    assert_eq!(
+        id_of(for_good.admit(LEGACY, NOW)),
+        None,
+        "the legacy token too"
+    );
+
+    let until_noon = with(&json!({"bans": [{"member": "borodatych", "until": NOW}]}));
+    assert_eq!(
+        id_of(until_noon.admit(ISSUED, "2026-09-23T11:59:59Z")),
+        None
+    );
+    assert_eq!(
+        id_of(until_noon.admit(ISSUED, NOW)).as_deref(),
+        Some("tk_7q2m9x4a"),
+        "the ban is over at its moment"
+    );
+
+    let someone_else = with(&json!({"bans": [{"member": "alice", "until": null}]}));
+    assert_eq!(
+        id_of(someone_else.admit(ISSUED, NOW)).as_deref(),
+        Some("tk_7q2m9x4a")
+    );
+}
+
+#[test]
+fn a_snapshot_older_than_the_one_applied_is_not_in_force() {
+    let applied = with(&json!({"serial": 7}));
+    let older = with(&json!({"serial": 6}));
+    let newer = with(&json!({"serial": 8, "tokens": []}));
+    let rival = with(&json!({"serial": 7, "tokens": []}));
+
+    assert_eq!(access::in_force(&older, Some(&applied)), &applied);
+    assert_eq!(access::in_force(&newer, Some(&applied)), &newer);
+    assert_eq!(
+        access::in_force(&applied.clone(), Some(&applied)),
+        &applied,
+        "the same one again"
+    );
+    assert_eq!(
+        access::in_force(&rival, Some(&applied)),
+        &applied,
+        "two decisions under one serial: the host keeps the one it took"
+    );
+    assert_eq!(
+        access::in_force(&older, None),
+        &older,
+        "nothing applied yet"
+    );
+
+    // Hand-written snapshots have no serial and follow the file; once the cabinet's format was
+    // applied, a hand-written file is older than it.
+    let earlier = with(&json!({"version": 1, "serial": null, "bans": null}));
+    let edited = with(&json!({"version": 1, "serial": null, "bans": null, "tokens": []}));
+    assert_eq!(access::in_force(&edited, Some(&earlier)), &edited);
+    assert_eq!(access::in_force(&edited, Some(&applied)), &applied);
 }

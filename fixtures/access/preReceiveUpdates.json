@@ -1,5 +1,5 @@
 {
-  "description": "What pre-receive decides for a push to a team store: the update lines, the paths changed on main and the sizes, against the access snapshot. The snapshot is the base of accessSnapshots.json with snapshotPatch and then the case's patch applied.",
+  "description": "What pre-receive decides for a push to a team store: the update lines, the paths changed on main and the sizes, against the access snapshot. The snapshot is the base of accessSnapshots.json with snapshotPatch and then the case's patch applied; every push comes at `now`.",
   "snapshotPatch": {
     "teamCount": 5,
     "teams": {
@@ -50,6 +50,7 @@
     "freeBytes": 42949672960,
     "reserveBytes": 2147483648
   },
+  "now": "2026-09-24T12:00:00Z",
   "cases": [
     {
       "id": "projectsAndOwnMachine",
@@ -358,6 +359,62 @@
       ],
       "expect": {
         "code": "unknownKey"
+      }
+    },
+    {
+      "id": "bannedPusher",
+      "provenance": "computed",
+      "note": "A banned member's key pushes nothing, even from a snapshot that lists it.",
+      "patch": {
+        "bans": [
+          {
+            "member": "alice",
+            "until": null
+          }
+        ]
+      },
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "expect": {
+        "code": "unknownKey"
+      }
+    },
+    {
+      "id": "banOverPush",
+      "provenance": "computed",
+      "note": "After the ban's moment the key pushes again.",
+      "patch": {
+        "bans": [
+          {
+            "member": "alice",
+            "until": "2026-09-24T12:00:00Z"
+          }
+        ]
+      },
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "expect": {
+        "code": "ok"
       }
     },
     {

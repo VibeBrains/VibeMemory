@@ -200,8 +200,10 @@ fn check_command(file: &str) -> ExitCode {
 }
 
 /// `access teams <file> [--mode memory|sync]`: the slugs of the live teams with a store under
-/// `teams/`, one per line — the nightly backup bundles the `memory` ones. A snapshot that does not
-/// pass the check lists nothing and fails: a backup of a guessed list would look complete.
+/// `teams/`, one per line — the nightly backup bundles the `memory` ones. The teams are those of the
+/// snapshot in force: `<file>`, unless the copy of the snapshot applied last beside it is newer. A
+/// snapshot that does not pass the check lists nothing and fails: a backup of a guessed list would
+/// look complete.
 fn teams_command(file: &str, options: &[String]) -> ExitCode {
     let mode = match options {
         [] => None,
@@ -209,11 +211,7 @@ fn teams_command(file: &str, options: &[String]) -> ExitCode {
         [flag, value] if flag == "--mode" && value == "sync" => Some(Mode::Sync),
         _ => return say(CHECK_UNREADABLE, "usage", ACCESS_USAGE),
     };
-    let snapshot = match std::fs::read(file)
-        .map_err(|error| format!("{file}: {error}"))
-        .and_then(|bytes| {
-            access::check(&bytes).map_err(|refusal| format!("{}: {}", refusal.code, refusal.detail))
-        }) {
+    let snapshot = match hostops::read_in_force(std::path::Path::new(file), hostops::journal) {
         Ok(snapshot) => snapshot,
         Err(why) => {
             eprintln!("vibememory-mcp: the access snapshot cannot be used: {why}");

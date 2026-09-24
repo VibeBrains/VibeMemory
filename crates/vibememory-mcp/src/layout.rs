@@ -21,6 +21,9 @@ pub const TEAMS_DIR: &str = "/srv/vibememory/teams";
 const APPLIED_NAME: &str = "applied.json";
 /// The host's report for the cabinet, next to the snapshot.
 const REPORT_NAME: &str = "host.json";
+/// The bytes of the snapshot the host applied last, next to the snapshot: what is in force when a
+/// stale `access.json` lands over a newer one.
+const APPLIED_SNAPSHOT_NAME: &str = "applied-snapshot.json";
 /// When the nightly backup last finished, next to the snapshot.
 const BACKUP_NAME: &str = "backup.json";
 /// The keys of `vmgit`, which only the application of a snapshot writes.
@@ -40,6 +43,12 @@ pub const SERVICES: &[&str] = &["vibememory-mcp", "caddy", "postgresql"];
 #[must_use]
 pub fn applied_file(access: &Path) -> PathBuf {
     access.with_file_name(APPLIED_NAME)
+}
+
+/// `applied-snapshot.json` beside the snapshot at `access`.
+#[must_use]
+pub fn applied_snapshot_file(access: &Path) -> PathBuf {
+    access.with_file_name(APPLIED_SNAPSHOT_NAME)
 }
 
 /// `host.json` beside the snapshot at `access`.

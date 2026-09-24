@@ -34,6 +34,10 @@ pub struct Problem {
 pub struct Applied {
     /// Format version.
     pub version: u64,
+    /// `serial` of the snapshot applied last. A hand-written snapshot has none: then the field is
+    /// not written, and a file without it reads as 0.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub serial: u64,
     /// SHA-256 of the bytes of the snapshot applied last.
     pub snapshot_hash: String,
     /// When it was applied.
@@ -42,6 +46,12 @@ pub struct Applied {
     pub team_count: u64,
     /// What was not done, and why.
     pub problems: Vec<Problem>,
+}
+
+/// Whether a serial is the absent one of a hand-written snapshot.
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde's `skip_serializing_if` passes a reference
+const fn is_zero(serial: &u64) -> bool {
+    *serial == 0
 }
 
 /// What the host finds in one repository.

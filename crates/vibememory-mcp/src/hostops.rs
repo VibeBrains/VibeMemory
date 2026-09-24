@@ -50,6 +50,8 @@ const QUOTED_COMMAND_CHARS: usize = 200;
 const REFUSED: u8 = 1;
 /// The problem written when the snapshot itself is refused.
 const SNAPSHOT_REJECTED: &str = "snapshotRejected";
+/// The problem written when the snapshot is not newer than the one the host applied last.
+const SERIAL_BEHIND: &str = "serialBehind";
 /// The problem written when an operation on the host fails.
 const APPLY_FAILED: &str = "applyFailed";
 /// The problem written when the adopted store is not where the snapshot says.
@@ -137,6 +139,34 @@ fn read_checked(access: &Path) -> Result<(Vec<u8>, Result<Snapshot, String>), St
 /// The snapshot at `access`, checked.
 fn read_snapshot(access: &Path) -> Result<Snapshot, String> {
     read_checked(access).and_then(|(_, checked)| checked)
+}
+
+/// The copy of the snapshot the host applied last, checked; `None` when there is none, or it does
+/// not read — then the file alone decides, and `note` says why.
+fn read_applied_snapshot(access: &Path, note: fn(&str)) -> Option<Snapshot> {
+    let copy = layout::applied_snapshot_file(access);
+    match read_checked(&copy) {
+        Ok((_, Ok(snapshot))) => Some(snapshot),
+        Err(_) if copy.symlink_metadata().is_err() => None,
+        Ok((_, Err(why))) | Err(why) => {
+            note(&format!(
+                "the copy of the applied snapshot is passed over: {why}"
+            ));
+            None
+        }
+    }
+}
+
+/// The snapshot in force at `access`: the file, checked, unless it is not newer than the snapshot
+/// the host applied last (`access::in_force`). A file that is gone or broken shuts the door whatever
+/// the copy says: it may have been a revocation.
+///
+/// # Errors
+///
+/// The file cannot be read or breaks a rule.
+pub fn read_in_force(access: &Path, note: fn(&str)) -> Result<Snapshot, String> {
+    let file = read_snapshot(access)?;
+    Ok(access::in_force(file, read_applied_snapshot(access, note)))
 }
 
 /// A JSON file of the host, or `None` when there is none yet. A file that is there and does not
@@ -275,7 +305,7 @@ fn disk(path: &Path) -> Result<Disk, String> {
 /// `shell <key>`: runs what the key's client asked for in `original`, if the snapshot lets it.
 #[must_use]
 pub fn shell(key: &str, original: &str, paths: &HostPaths) -> ExitCode {
-    let snapshot = match read_snapshot(&paths.access) {
+    let snapshot = match read_in_force(&paths.access, journal_quietly) {
         Ok(snapshot) => Some(snapshot),
         Err(why) => {
             journal_quietly(&format!(
@@ -285,7 +315,8 @@ pub fn shell(key: &str, original: &str, paths: &HostPaths) -> ExitCode {
         }
     };
     let teams = paths.teams.to_string_lossy();
-    let action = match shell::decide(original, key, snapshot.as_ref(), &teams) {
+    let now = vibememory_cli::clock::now();
+    let action = match shell::decide(original, key, snapshot.as_ref(), &teams, &now) {
         Ok(action) => action,
         Err(refusal) => {
             journal_quietly(&format!(
@@ -504,13 +535,15 @@ pub fn pre_receive(paths: &HostPaths, reserve_bytes: u64) -> ExitCode {
         free_bytes,
         reserve_bytes,
     };
-    let snapshot = read_snapshot(&paths.access).ok();
+    let snapshot = read_in_force(&paths.access, journal_quietly).ok();
+    let now = vibememory_cli::clock::now();
     let push = Push {
         key: key.as_deref(),
         team: &team,
         updates: &updates,
         changed: &changed,
         sizes,
+        now: &now,
     };
     let who = key.as_deref().unwrap_or("-");
     match receive::decide(&push, snapshot.as_ref()) {
@@ -608,13 +641,25 @@ pub fn access_apply(paths: &HostPaths, apply_paths: &ApplyPaths) -> ExitCode {
 }
 
 /// One application of the snapshot as it is now; returns the bytes it applied or refused.
+///
+/// A snapshot not newer than the one applied last is refused: a publication that lost its turn,
+/// or a file put back by hand, is an older decision and does not take the host back. The copy of
+/// what is applied is written before anything else, so a late older file is out of force from
+/// here on.
 fn apply_once(paths: &HostPaths, apply_paths: &ApplyPaths) -> (ExitCode, Option<Vec<u8>>) {
     let applied_file = layout::applied_file(&paths.access);
     let (bytes, snapshot) = match read_checked(&paths.access) {
         Ok((bytes, Ok(snapshot))) => (bytes, snapshot),
-        Ok((bytes, Err(why))) => return refused(paths, &applied_file, why, Some(bytes)),
-        Err(why) => return refused(paths, &applied_file, why, None),
+        Ok((bytes, Err(why))) => {
+            return refused(paths, &applied_file, SNAPSHOT_REJECTED, why, Some(bytes));
+        }
+        Err(why) => return refused(paths, &applied_file, SNAPSHOT_REJECTED, why, None),
     };
+    if let Err(why) = newer_than_applied(&paths.access, &snapshot) {
+        return refused(paths, &applied_file, SERIAL_BEHIND, why, Some(bytes));
+    }
+    let mut problems = Vec::new();
+    let mut failed = !keep_applied_copy(&paths.access, &bytes, &mut problems);
     let dirs = match directory_names(&paths.teams) {
         Ok(dirs) => dirs,
         Err(why) => {
@@ -625,8 +670,7 @@ fn apply_once(paths: &HostPaths, apply_paths: &ApplyPaths) -> (ExitCode, Option<
         }
     };
     let plan = apply::plan(&snapshot, &dirs);
-    let mut problems = plan.problems;
-    for problem in &problems {
+    for problem in &plan.problems {
         journal(&format!(
             "{APPLY_TAG}: {} {}: {}",
             problem.code,
@@ -634,7 +678,8 @@ fn apply_once(paths: &HostPaths, apply_paths: &ApplyPaths) -> (ExitCode, Option<
             problem.detail
         ));
     }
-    let mut failed = run_steps(&plan.steps, paths, apply_paths, &mut problems);
+    problems.extend(plan.problems);
+    failed |= run_steps(&plan.steps, paths, apply_paths, &mut problems);
     for (slug, team) in snapshot.teams.iter().filter(|(_, team)| team.adopted) {
         let repo = team.repository(slug, &paths.teams);
         if !repo.is_dir() {
@@ -656,6 +701,7 @@ fn apply_once(paths: &HostPaths, apply_paths: &ApplyPaths) -> (ExitCode, Option<
     }
     let applied = Applied {
         version: status::VERSION,
+        serial: snapshot.serial,
         snapshot_hash: vibememory_cli::sha256::hex(&bytes),
         applied_at: vibememory_cli::clock::now(),
         team_count: snapshot.team_count,
@@ -666,8 +712,9 @@ fn apply_once(paths: &HostPaths, apply_paths: &ApplyPaths) -> (ExitCode, Option<
         journal(&format!("{APPLY_TAG}: applied.json: FAILED: {why}"));
     } else {
         journal(&format!(
-            "{APPLY_TAG}: snapshot {} applied: {} teams, {} machine keys, {} problems",
+            "{APPLY_TAG}: snapshot {} of serial {} applied: {} teams, {} machine keys, {} problems",
             applied.snapshot_hash,
+            applied.serial,
             snapshot.teams.len(),
             snapshot.keys.len(),
             applied.problems.len()
@@ -682,17 +729,58 @@ fn apply_once(paths: &HostPaths, apply_paths: &ApplyPaths) -> (ExitCode, Option<
     (code, Some(bytes))
 }
 
-/// A snapshot that cannot be applied: nothing on the host changes, and the reports say so.
+/// Whether `snapshot` is newer than the one the host applied last; why not, when it is not.
+fn newer_than_applied(access: &Path, snapshot: &Snapshot) -> Result<(), String> {
+    let Some(last) = read_applied_snapshot(access, journal) else {
+        return Ok(());
+    };
+    if !access::behind(snapshot, &last) {
+        return Ok(());
+    }
+    Err(if snapshot.serial == last.serial {
+        format!(
+            "serial {} is the one applied, with other contents",
+            snapshot.serial
+        )
+    } else {
+        format!(
+            "serial {} is older than serial {} applied",
+            snapshot.serial, last.serial
+        )
+    })
+}
+
+/// Writes the copy of the snapshot being applied; whether it could. A copy that could not be
+/// written is an `applyFailed` problem and nothing more: a newer decision is never held back by the
+/// guard's bookkeeping.
+fn keep_applied_copy(access: &Path, bytes: &[u8], problems: &mut Vec<Problem>) -> bool {
+    let Err(why) = write_atomic(&layout::applied_snapshot_file(access), bytes, SHARED_FILE) else {
+        return true;
+    };
+    journal(&format!(
+        "{APPLY_TAG}: applied-snapshot.json: FAILED: {why}"
+    ));
+    problems.push(Problem {
+        code: APPLY_FAILED.to_owned(),
+        team: None,
+        detail: why,
+    });
+    false
+}
+
+/// A snapshot that is not applied: nothing on the host changes, and the reports say so under
+/// `code`.
 fn refused(
     paths: &HostPaths,
     applied_file: &Path,
+    code: &str,
     why: String,
     read: Option<Vec<u8>>,
 ) -> (ExitCode, Option<Vec<u8>>) {
     journal(&format!(
-        "{APPLY_TAG}: the snapshot is refused, nothing is applied: {why}"
+        "{APPLY_TAG}: the snapshot is refused ({code}), nothing is applied: {why}"
     ));
-    keep_previous_with_rejection(applied_file, why);
+    keep_previous_with_rejection(applied_file, code, why);
     report_after(paths);
     (ExitCode::FAILURE, read)
 }
@@ -736,9 +824,10 @@ fn run_steps(
 }
 
 /// A refused snapshot changes nothing on the host, and the last application says so: its values
-/// stay, and `snapshotRejected` stands first among its problems. Before the first application
-/// there is nothing to keep, and nothing is written.
-fn keep_previous_with_rejection(applied_file: &Path, why: String) {
+/// stay, and the refusal — `snapshotRejected` or `serialBehind`, the latest one only — stands first
+/// among its problems. Before the first application there is nothing to keep, and nothing is
+/// written.
+fn keep_previous_with_rejection(applied_file: &Path, code: &str, why: String) {
     let previous = match read_json::<Applied>(applied_file) {
         Ok(Some(previous)) => previous,
         Ok(None) => return,
@@ -750,11 +839,11 @@ fn keep_previous_with_rejection(applied_file: &Path, why: String) {
     let mut applied = previous;
     applied
         .problems
-        .retain(|problem| problem.code != SNAPSHOT_REJECTED);
+        .retain(|problem| problem.code != SNAPSHOT_REJECTED && problem.code != SERIAL_BEHIND);
     applied.problems.insert(
         0,
         Problem {
-            code: SNAPSHOT_REJECTED.to_owned(),
+            code: code.to_owned(),
             team: None,
             detail: why,
         },
@@ -845,7 +934,7 @@ fn report_after(paths: &HostPaths) {
 
 /// Builds `host.json` from the snapshot, `applied.json` and what is on disk, and writes it.
 fn write_report(paths: &HostPaths) -> Result<(), String> {
-    let snapshot = match read_snapshot(&paths.access) {
+    let snapshot = match read_in_force(&paths.access, journal) {
         Ok(snapshot) => Some(snapshot),
         Err(why) => {
             journal(&format!(

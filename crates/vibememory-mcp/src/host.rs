@@ -3,7 +3,9 @@
 //!
 //! The snapshot is re-read when its file changes — a revocation takes effect with the next
 //! request, without a restart — and trusted only while it passes every rule: a file that vanished
-//! or broke may have been a revocation, so the door stays shut until it reads cleanly again.
+//! or broke may have been a revocation, so the door stays shut until it reads cleanly again. A file
+//! that reads but is older than what is in force — a lower serial than the snapshot loaded, or than
+//! the copy the host applied last — is not taken: the host never goes back.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -15,6 +17,7 @@ use vibememory_core::memory::journal::{Event, Memory};
 use crate::access::{self, Snapshot, TokenRole};
 use crate::git_memories::GitMemories;
 use crate::http::{Admission, Door, Grant, Visit};
+use crate::layout;
 use crate::memories::{DirectoryProject, Memories, TranscriptRef};
 use crate::tools::{Limits, Writes};
 
@@ -45,10 +48,17 @@ impl Stamp {
     }
 }
 
-/// The snapshot as last read, or why it cannot be used.
+/// The stamps of `access.json` and of the copy of the snapshot applied last; `None` for a file that
+/// is not there.
+type Stamps = (Option<Stamp>, Option<Stamp>);
+
+/// The snapshot as last read, or why it cannot be used, with the stamps of the files it was chosen
+/// from and the highest serial ever taken: a broken file in between does not make the server forget
+/// how far it has come.
 struct Loaded {
-    stamp: Option<Stamp>,
+    stamps: Stamps,
     state: Result<Arc<Snapshot>, String>,
+    serial: u64,
 }
 
 /// The server's host: the snapshot, where the teams' repositories are, and one write lock per
@@ -87,10 +97,41 @@ fn read(path: &Path) -> (Option<Stamp>, Result<Arc<Snapshot>, String>) {
     (stamp, state)
 }
 
+/// The snapshot in force: `access.json` when it reads, unless it is not newer than the copy of
+/// what the host applied last (`access::in_force`). A copy that is there and does not read is
+/// passed over, and the journal says so: the file is checked either way.
+fn read_in_force(access: &Path) -> (Stamps, Result<Arc<Snapshot>, String>) {
+    let (file_stamp, file) = read(access);
+    let copy_path = layout::applied_snapshot_file(access);
+    let (copy_stamp, copy) = read(&copy_path);
+    let copy = match copy {
+        Ok(copy) => Some(copy),
+        Err(why) => {
+            if copy_path.symlink_metadata().is_ok() {
+                eprintln!("vibememory-mcp: the copy of the applied snapshot is passed over: {why}");
+            }
+            None
+        }
+    };
+    let state = file.map(|file| access::in_force(file, copy));
+    ((file_stamp, copy_stamp), state)
+}
+
+/// The stamps of the file and of the applied copy as they are now.
+fn stamps_now(access: &Path) -> Stamps {
+    let stamp = |path: &Path| {
+        std::fs::metadata(path)
+            .ok()
+            .map(|metadata| Stamp::of(&metadata))
+    };
+    (stamp(access), stamp(&layout::applied_snapshot_file(access)))
+}
+
 /// One line about a snapshot that is in force.
 fn summary(snapshot: &Snapshot) -> String {
     format!(
-        "{} teams, {} tokens, {} machine keys",
+        "serial {}, {} teams, {} tokens, {} machine keys",
+        snapshot.serial,
         snapshot.teams.len(),
         snapshot.tokens.len(),
         snapshot.keys.len()
@@ -105,7 +146,7 @@ impl Host {
     /// A snapshot that cannot be read or breaks a rule. A server that cannot tell who may come
     /// in does not start: starting would mean guessing.
     pub fn open(access: PathBuf, teams: PathBuf, cabinet: Option<String>) -> Result<Self, String> {
-        let (stamp, state) = read(&access);
+        let (stamps, state) = read_in_force(&access);
         let snapshot = state?;
         eprintln!(
             "vibememory-mcp: access snapshot {}: {}",
@@ -117,33 +158,47 @@ impl Host {
             teams,
             cabinet,
             loaded: Mutex::new(Loaded {
-                stamp,
+                stamps,
+                serial: snapshot.serial,
                 state: Ok(snapshot),
             }),
             locks: Mutex::new(HashMap::new()),
         })
     }
 
-    /// The snapshot in force: one `stat` per request, and a new read only when the file changed.
+    /// The snapshot in force: two `stat`s per request, and a new read only when a file changed.
     fn snapshot(&self) -> Result<Arc<Snapshot>, String> {
-        let now = std::fs::metadata(&self.access)
-            .ok()
-            .map(|metadata| Stamp::of(&metadata));
+        let now = stamps_now(&self.access);
         let mut loaded = held(&self.loaded);
-        if now.is_none() || now != loaded.stamp {
-            let (stamp, state) = read(&self.access);
-            match (&loaded.state, &state) {
-                (_, Ok(snapshot)) => eprintln!(
-                    "vibememory-mcp: access snapshot re-read: {}",
-                    summary(snapshot)
+        if now.0.is_none() || now != loaded.stamps {
+            let (stamps, state) = read_in_force(&self.access);
+            loaded.stamps = stamps;
+            match state {
+                // An older decision neither replaces a newer one nor reopens a door a broken file
+                // shut.
+                Ok(read) if read.serial < loaded.serial => eprintln!(
+                    "vibememory-mcp: access snapshot of serial {} is older than serial {} taken; \
+                     it is not taken",
+                    read.serial, loaded.serial
                 ),
-                (Ok(_), Err(why)) => eprintln!(
-                    "vibememory-mcp: REFUSING EVERYONE — the access snapshot cannot be used: \
-                     {why}; nobody is let in until it reads cleanly again"
-                ),
-                (Err(_), Err(_)) => {}
+                Ok(read) => {
+                    eprintln!(
+                        "vibememory-mcp: access snapshot re-read: {}",
+                        summary(&read)
+                    );
+                    loaded.serial = read.serial;
+                    loaded.state = Ok(read);
+                }
+                Err(why) => {
+                    if loaded.state.is_ok() {
+                        eprintln!(
+                            "vibememory-mcp: REFUSING EVERYONE — the access snapshot cannot be used: \
+                             {why}; nobody is let in until it reads cleanly again"
+                        );
+                    }
+                    loaded.state = Err(why);
+                }
             }
-            *loaded = Loaded { stamp, state };
         }
         loaded.state.clone()
     }

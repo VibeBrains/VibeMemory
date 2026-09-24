@@ -1,7 +1,8 @@
 {
-  "description": "access.json snapshots and the first code `vibememory-mcp access check` answers for each. `base` is a valid snapshot; each case is a JSON Merge Patch (RFC 7396) of it — `null` deletes a field, arrays are replaced whole — or `raw` text. Format and codes: docs/manuals/accessSnapshotSpec.md.",
+  "description": "access.json snapshots and the first code `vibememory-mcp access check` answers for each. `base` is a valid snapshot of the cabinet's format; each case is a JSON Merge Patch (RFC 7396) of it — `null` deletes a field, arrays are replaced whole — or `raw` text. Format and codes: docs/manuals/accessSnapshotSpec.md.",
   "base": {
-    "version": 1,
+    "version": 2,
+    "serial": 12,
     "teamCount": 4,
     "teams": {
       "personal": {
@@ -107,6 +108,16 @@
         ],
         "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
       }
+    ],
+    "bans": [
+      {
+        "member": "mallory",
+        "until": null
+      },
+      {
+        "member": "trent",
+        "until": "2026-10-01T00:00:00Z"
+      }
     ]
   },
   "cases": [
@@ -206,14 +217,106 @@
       }
     },
     {
-      "id": "versionTwo",
+      "id": "versionThree",
       "provenance": "computed",
       "note": "A newer format is refused, not guessed at.",
       "patch": {
-        "version": 2
+        "version": 3
       },
       "expect": {
         "code": "unsupportedVersion"
+      }
+    },
+    {
+      "id": "handWritten",
+      "provenance": "computed",
+      "note": "The host's hand-written snapshot from before the cabinet: version 1, without a serial and bans.",
+      "patch": {
+        "version": 1,
+        "serial": null,
+        "bans": null
+      },
+      "expect": {
+        "code": "ok"
+      }
+    },
+    {
+      "id": "serialOnVersionOne",
+      "provenance": "computed",
+      "note": "A serial belongs to the cabinet's format: version 1 with one is refused.",
+      "patch": {
+        "version": 1,
+        "bans": null
+      },
+      "expect": {
+        "code": "versionFields"
+      }
+    },
+    {
+      "id": "bansOnVersionOne",
+      "provenance": "computed",
+      "note": "Bans belong to the cabinet's format: version 1 with them is refused.",
+      "patch": {
+        "version": 1,
+        "serial": null
+      },
+      "expect": {
+        "code": "versionFields"
+      }
+    },
+    {
+      "id": "serialMissing",
+      "provenance": "computed",
+      "note": "The cabinet's format without a serial: the host could not tell an older file from a newer one.",
+      "patch": {
+        "serial": null
+      },
+      "expect": {
+        "code": "versionFields"
+      }
+    },
+    {
+      "id": "serialZero",
+      "provenance": "computed",
+      "note": "The cabinet's serial starts at 1; 0 is the hand-written snapshot's.",
+      "patch": {
+        "serial": 0
+      },
+      "expect": {
+        "code": "versionFields"
+      }
+    },
+    {
+      "id": "serialNegative",
+      "provenance": "computed",
+      "note": "A serial is a whole number.",
+      "patch": {
+        "serial": -1
+      },
+      "expect": {
+        "code": "snapshotMalformed"
+      }
+    },
+    {
+      "id": "bansMissing",
+      "provenance": "computed",
+      "note": "The cabinet's format lists its bans, if only as an empty list: a missing list is not 'nobody is banned'.",
+      "patch": {
+        "bans": null
+      },
+      "expect": {
+        "code": "versionFields"
+      }
+    },
+    {
+      "id": "bansEmpty",
+      "provenance": "computed",
+      "note": "Nobody is banned.",
+      "patch": {
+        "bans": []
+      },
+      "expect": {
+        "code": "ok"
       }
     },
     {
@@ -1027,6 +1130,75 @@
       },
       "expect": {
         "code": "invalidDigest"
+      }
+    },
+    {
+      "id": "banHandle",
+      "provenance": "computed",
+      "note": "The banned member's handle follows the rule of names like any other.",
+      "patch": {
+        "bans": [
+          {
+            "member": "Mallory",
+            "until": null
+          }
+        ]
+      },
+      "expect": {
+        "code": "invalidHandle"
+      }
+    },
+    {
+      "id": "banUntilNotAMoment",
+      "provenance": "computed",
+      "note": "The end of a ban is a moment, not a day.",
+      "patch": {
+        "bans": [
+          {
+            "member": "mallory",
+            "until": "2026-10-01"
+          }
+        ]
+      },
+      "expect": {
+        "code": "invalidDate"
+      }
+    },
+    {
+      "id": "banReason",
+      "provenance": "computed",
+      "note": "Why someone is banned stays in the cabinet: the snapshot carries who and until when, and an unknown field is refused.",
+      "patch": {
+        "bans": [
+          {
+            "member": "mallory",
+            "until": null,
+            "reason": "spam"
+          }
+        ]
+      },
+      "expect": {
+        "code": "snapshotMalformed"
+      }
+    },
+    {
+      "id": "banTwice",
+      "provenance": "computed",
+      "note": "One ban per member: two would leave the host to pick an end.",
+      "patch": {
+        "bans": [
+          {
+            "member": "mallory",
+            "until": null
+          },
+          {
+            "member": "mallory",
+            "until": "2026-10-01T00:00:00Z"
+          }
+        ]
+      },
+      "expect": {
+        "code": "banTwice"
       }
     },
     {

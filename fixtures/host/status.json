@@ -58,6 +58,7 @@
       "note": "Teams of the snapshot with a repository on the host, the adopted store where the snapshot says it is, a deleted team's renamed directory, an orphan the snapshot does not know, and a directory that is no store at all, which is left out. syncteam has no repository yet and is not listed.",
       "applied": {
         "version": 1,
+        "serial": 12,
         "snapshotHash": "9f2c000000000000000000000000000000000000000000000000000000000000",
         "appliedAt": "2026-09-23T10:00:00Z",
         "teamCount": 5,
@@ -138,6 +139,7 @@
         "generatedAt": "2026-09-23T11:00:00Z",
         "applied": {
           "version": 1,
+          "serial": 12,
           "snapshotHash": "9f2c000000000000000000000000000000000000000000000000000000000000",
           "appliedAt": "2026-09-23T10:00:00Z",
           "teamCount": 5,
@@ -336,6 +338,7 @@
       "note": "A deleted team whose directory still has its live name is neither a team nor an orphan: it is reported in retiring until the next application renames it, or names in its problems why it could not.",
       "applied": {
         "version": 1,
+        "serial": 12,
         "snapshotHash": "9f2c000000000000000000000000000000000000000000000000000000000000",
         "appliedAt": "2026-09-23T10:00:00Z",
         "teamCount": 5,
@@ -416,6 +419,7 @@
         "generatedAt": "2026-09-23T11:00:00Z",
         "applied": {
           "version": 1,
+          "serial": 12,
           "snapshotHash": "9f2c000000000000000000000000000000000000000000000000000000000000",
           "appliedAt": "2026-09-23T10:00:00Z",
           "teamCount": 5,
@@ -485,7 +489,7 @@
     {
       "id": "snapshotUnusable",
       "provenance": "computed",
-      "note": "With a broken snapshot the host cannot tell teams from orphans, so it lists neither; deleted directories are known by their names.",
+      "note": "With a broken snapshot the host cannot tell teams from orphans, so it lists neither; deleted directories are known by their names. Its applied.json was written before the serial: it reads as 0, and the report writes none.",
       "applied": {
         "version": 1,
         "snapshotHash": "9f2c000000000000000000000000000000000000000000000000000000000000",
