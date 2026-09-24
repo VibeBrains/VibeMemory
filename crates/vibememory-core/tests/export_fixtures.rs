@@ -49,6 +49,9 @@ struct Expect {
     decision: ExpectedDecision,
     #[serde(default)]
     refusal: Option<ExpectedRefusal>,
+    /// Whether the path is a session's own file; checked where a case gives it.
+    #[serde(default)]
+    session_file: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -93,6 +96,11 @@ fn export_scenarios() {
         ids.push(&case.id);
         if case.note.trim().is_empty() {
             failures.push(format!("{label}: empty note"));
+        }
+        if let Some(expected) = case.expect.session_file
+            && export::is_session_file(&case.path) != expected
+        {
+            failures.push(format!("{label}: expected sessionFile {expected}"));
         }
 
         match (export::decide(&case.path, case.size), &case.expect.decision) {

@@ -1,4 +1,5 @@
-//! Whether a managed copy holds a token, case by case from `fixtures/export/settingsWithToken.json`.
+//! Whether a text holds a token, and which, case by case from
+//! `fixtures/export/settingsWithToken.json`.
 
 #![allow(
     clippy::panic,
@@ -8,7 +9,7 @@
 )]
 
 use serde::Deserialize;
-use vibememory_core::token::holds_token;
+use vibememory_core::token::{holds_token, token_ids};
 
 const CASES: &str = include_str!("../../../fixtures/export/settingsWithToken.json");
 
@@ -35,6 +36,7 @@ struct Case {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Expect {
     holds_token: bool,
+    tokens: Vec<String>,
 }
 
 #[test]
@@ -50,6 +52,13 @@ fn a_copy_holding_a_token_is_recognised_and_nothing_else_is() {
             failures.push(format!(
                 "{}: expected holdsToken {}",
                 case.id, case.expect.holds_token
+            ));
+        }
+        let found: Vec<String> = token_ids(case.text.as_bytes()).into_iter().collect();
+        if found != case.expect.tokens {
+            failures.push(format!(
+                "{}: found {found:?}, expected {:?}",
+                case.id, case.expect.tokens
             ));
         }
     }

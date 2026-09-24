@@ -18,7 +18,7 @@ mod support;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use support::{TempDir, git_repo_with_commit};
+use support::{TempDir, git_repo_with_commit, token_case};
 use vibememory_cli::migrate::{Kind, apply, plan};
 
 const STAMP: &str = "2026-09-05T14:00:00Z";
@@ -509,5 +509,44 @@ fn a_file_an_earlier_run_left_uncommitted_is_committed_by_the_next() {
         status.stdout.is_empty(),
         "nothing of the plan may stay uncommitted: {}",
         String::from_utf8_lossy(&status.stdout)
+    );
+}
+
+#[test]
+fn a_session_holding_an_agent_token_is_brought_in_and_not_committed() {
+    let temp = TempDir::new("migrate-held");
+    let source = old_folder(&temp);
+    let session = "11111111-1111-4111-8111-111111111111";
+    write(
+        &source
+            .join("projects")
+            .join("-ALL-")
+            .join("VibeIDE")
+            .join(format!("{session}.jsonl")),
+        &format!("{}{}", record("t"), token_case("transcriptToolResult")),
+    );
+    let store = store(&temp);
+    let engine = temp.dir("engine");
+
+    let applied = apply(
+        &source,
+        &store,
+        &engine,
+        &plan(&source, MACHINE).expect("plan"),
+        STAMP,
+    )
+    .expect("apply");
+    let held = format!("projects/VibeIDE/{session}.jsonl");
+    assert_eq!(applied.held, std::slice::from_ref(&held), "{applied:?}");
+    assert!(applied.committed, "the rest is committed: {applied:?}");
+    assert!(store.join(&held).is_file(), "it is on this machine");
+    let tree = std::process::Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", "HEAD"])
+        .current_dir(&store)
+        .output()
+        .expect("ls-tree");
+    assert!(
+        !String::from_utf8_lossy(&tree.stdout).contains(session),
+        "and nowhere else"
     );
 }

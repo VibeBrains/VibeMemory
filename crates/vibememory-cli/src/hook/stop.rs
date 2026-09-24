@@ -8,14 +8,16 @@
 //! never used at all: it would sweep in everything else the directory happens to contain.
 //!
 //! What is committed is therefore always a whole number of records, and never fresher than the
-//! moment the hook ran — which is exactly what another machine can safely merge.
+//! moment the hook ran — which is exactly what another machine can safely merge. A snapshot that
+//! holds an agent token is not committed at all (`crate::held`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use vibememory_core::merge::jsonl::{snapshot_boundary, survey};
+use vibememory_core::token::token_ids;
 
 use crate::git;
 
@@ -74,6 +76,9 @@ pub struct Stopped {
     pub truncated: usize,
     /// Whether a commit was made. A session that added nothing since the last stop makes none.
     pub committed: bool,
+    /// The public ids of the agent tokens the snapshot holds: then nothing was written, and the
+    /// transcript stays on this machine.
+    pub held: BTreeSet<String>,
 }
 
 /// Puts the current contents of `transcript` into the store's index and commits, if anything
@@ -105,7 +110,16 @@ pub fn commit_snapshot(
         return Ok(Stopped {
             blob: None,
             truncated,
+            ..Stopped::default()
+        });
+    }
+    let held = token_ids(whole);
+    if !held.is_empty() {
+        return Ok(Stopped {
+            blob: None,
+            truncated,
             committed: false,
+            held,
         });
     }
 
@@ -140,6 +154,7 @@ pub fn commit_snapshot(
         blob: Some(blob),
         truncated,
         committed,
+        held: BTreeSet::new(),
     })
 }
 

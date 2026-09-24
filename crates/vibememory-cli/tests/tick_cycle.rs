@@ -16,7 +16,7 @@ mod support;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use support::{TempDir, git, git_repo_with_commit};
+use support::{TempDir, git, git_repo_with_commit, token_case};
 use vibememory_cli::forget::forget;
 use vibememory_cli::hook::stop::{Live, LiveSession};
 use vibememory_cli::tick::{Machine, TickLock, Ticked, run};
@@ -1285,5 +1285,58 @@ fn a_push_the_remote_refuses_is_a_failure_not_silence() {
             .any(|problem| problem.contains("No space left on device")),
         "what the remote said has to reach the report: {:?}",
         ticked.problems
+    );
+}
+
+#[test]
+fn an_ended_session_holding_an_agent_token_stays_on_this_machine() {
+    let temp = TempDir::new("tick-held");
+    let pair = two_machines(&temp);
+    let project = pair.mac.join("projects/Project");
+    // The session ended; since its last commit the agent read a settings file with a token, and a
+    // tool result beside the transcript holds it too.
+    let line = token_case("transcriptToolResult");
+    fs::write(
+        pair.mac.join(relative()),
+        format!("{{\"uuid\":\"one\"}}\n{line}"),
+    )
+    .expect("write");
+    let other = "22222222-2222-4222-8222-222222222222";
+    fs::create_dir_all(project.join(other).join("tool-results")).expect("dirs");
+    fs::write(project.join(other).join("tool-results/r1.txt"), &line).expect("write");
+    // Memory is not a session's raw output and is not screened here.
+    fs::write(project.join(".keep"), b"").expect("write");
+
+    let ticked = tick(&pair.mac, &temp);
+    assert_eq!(ticked.shared_files_committed, 1, "{ticked:?}");
+    let head_version = std::process::Command::new("git")
+        .args(["show", &format!("HEAD:{}", relative())])
+        .current_dir(&pair.mac)
+        .output()
+        .expect("git show");
+    assert_eq!(
+        String::from_utf8_lossy(&head_version.stdout),
+        "{\"uuid\":\"one\"}\n",
+        "the transcript with the token is not committed"
+    );
+    let output = std::process::Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", "HEAD"])
+        .current_dir(&pair.mac)
+        .output()
+        .expect("ls-tree");
+    let tree = String::from_utf8_lossy(&output.stdout);
+    assert!(!tree.contains(other), "nor its side file: {tree}");
+    assert!(tree.contains("projects/Project/.keep"), "{tree}");
+
+    let held = vibememory_cli::held::Held::read(pair.mac.parent().expect("engine dir"));
+    let paths: Vec<&str> = held.files.keys().map(String::as_str).collect();
+    let side = format!("projects/Project/{other}/tool-results/r1.txt");
+    assert_eq!(paths, [relative().as_str(), side.as_str()]);
+    let written = fs::read_to_string(pair.mac.parent().expect("engine dir").join("held.json"))
+        .expect("held.json");
+    assert!(written.contains("tk_7q2m9x4a"), "{written}");
+    assert!(
+        !written.contains("vmt_"),
+        "the secret is never written down: {written}"
     );
 }

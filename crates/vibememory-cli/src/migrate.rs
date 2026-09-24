@@ -275,6 +275,9 @@ pub struct Applied {
     pub committed: bool,
     /// Store paths this run wrote or merged — what the commit holds.
     pub written: Vec<String>,
+    /// Session files written into the store and not committed: they hold an agent token
+    /// (`crate::held`).
+    pub held: Vec<String>,
 }
 
 /// The manifest: the hash of every source file at the moment it was read.
@@ -329,11 +332,17 @@ pub fn apply(
     // is on disk, it is ours, and leaving it uncommitted for ever would be a migration that
     // silently never finished.
     let pending = pending_destinations(store, plan)?;
-    if !pending.is_empty() {
-        commit(store, &pending, stamp)?;
+    let passed = crate::held::screen(engine_dir, store, &pending, stamp)?;
+    run.applied.held = pending
+        .iter()
+        .filter(|path| !passed.contains(path))
+        .cloned()
+        .collect();
+    if !passed.is_empty() {
+        commit(store, &passed, stamp)?;
         run.applied.committed = true;
     }
-    run.applied.written = pending;
+    run.applied.written = passed;
     Ok(run.applied)
 }
 

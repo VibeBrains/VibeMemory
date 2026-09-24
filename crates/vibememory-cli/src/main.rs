@@ -131,6 +131,7 @@ fn report(strict: bool, json: bool) -> ExitCode {
     if json {
         return report_json(
             &config,
+            &layout.engine_dir,
             &actions,
             mirror.as_ref(),
             disk.as_ref(),
@@ -170,6 +171,16 @@ fn report(strict: bool, json: bool) -> ExitCode {
         println!(
             "left alone {} ({}) — {} transcript(s) stay on this machine only",
             directory.enc, directory.reason, directory.transcripts
+        );
+    }
+    // Not a failure either: a session file that holds an agent token stays here by design, and
+    // what the person does is revoke the token.
+    for (path, file) in &vibememory_cli::held::Held::read(&layout.engine_dir).files {
+        println!(
+            "held     {} — holds agent token {}; stays on this machine since {}",
+            vibememory_core::terminal::printable(path),
+            file.tokens.iter().cloned().collect::<Vec<_>>().join(", "),
+            file.since
         );
     }
     if let Some(mirror) = &mirror {
@@ -658,9 +669,23 @@ fn session_progress_hook(ended: bool) -> ExitCode {
     let relative = relative.to_string_lossy().replace('\\', "/");
     let stamp = vibememory_cli::clock::now();
 
-    if let Err(error) = commit_snapshot(&store, &real, &relative, &stamp) {
+    let stopped = match commit_snapshot(&store, &real, &relative, &stamp) {
+        Ok(stopped) => stopped,
+        Err(error) => {
+            return say(&format!(
+                "VibeMemory could not commit this session: {error}"
+            ));
+        }
+    };
+    // Kept back when it holds an agent token; the next session hears of it, `doctor` lists it.
+    let held = if stopped.held.is_empty() {
+        vibememory_cli::held::release(&layout.engine_dir, &relative)
+    } else {
+        vibememory_cli::held::hold_snapshot(&layout.engine_dir, &relative, stopped.held, &stamp)
+    };
+    if let Err(error) = held {
         return say(&format!(
-            "VibeMemory could not commit this session: {error}"
+            "VibeMemory could not record what it keeps back: {error}"
         ));
     }
     let cwd = portable_cwd(&config, &input.cwd);
@@ -1366,6 +1391,9 @@ fn migrate_command(args: &[String]) -> ExitCode {
             for path in &applied.quarantined {
                 println!("  set aside: {path}");
             }
+            for path in &applied.held {
+                println!("  held on this machine, it holds an agent token: {path}");
+            }
             if applied.mismatched.is_empty() {
                 ExitCode::SUCCESS
             } else {
@@ -1618,6 +1646,18 @@ impl MirrorState {
     }
 }
 
+/// The session files this machine keeps back, as `--json` gives them: the path, the public ids of
+/// the tokens they hold, and since when.
+fn held_json(engine_dir: &std::path::Path) -> Vec<serde_json::Value> {
+    vibememory_cli::held::Held::read(engine_dir)
+        .files
+        .into_iter()
+        .map(|(path, file)| {
+            serde_json::json!({ "path": path, "tokens": file.tokens, "since": file.since })
+        })
+        .collect()
+}
+
 /// Whether the caller wants the machine-readable form.
 fn wants_json(args: &[String]) -> bool {
     args.iter().any(|arg| arg == "--json")
@@ -1628,6 +1668,7 @@ fn wants_json(args: &[String]) -> bool {
 /// The exit code is the same as the human form's, so a check can use either.
 fn report_json(
     config: &Config,
+    engine_dir: &std::path::Path,
     actions: &[vibememory_cli::install::Action],
     mirror: Option<&vibememory_cli::mirror::Mirror>,
     disk: Option<&Result<vibememory_cli::mirror::Disk, String>>,
@@ -1679,6 +1720,7 @@ fn report_json(
         "mirror": mirror_value,
         "hostDisk": disk_value,
         "credentials": tokens_json(tokens),
+        "held": held_json(engine_dir),
         "ok": !failed,
     });
     match serde_json::to_string_pretty(&report) {

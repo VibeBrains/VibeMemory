@@ -235,7 +235,7 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         Err(problem) => result.problems.push(problem),
     }
 
-    match commit_shared_files(store, &live, stamp) {
+    match commit_shared_files(store, &engine_dir_of(store), &live, stamp) {
         Ok(files) => result.shared_files_committed = files,
         Err(problem) => result.problems.push(problem),
     }
@@ -923,6 +923,7 @@ fn commit_own_outbox(store: &Path, machine_id: &str, stamp: &str) -> Result<usiz
 /// stay on one machine for ever.
 fn commit_shared_files(
     store: &Path,
+    engine_dir: &Path,
     live: &BTreeSet<String>,
     stamp: &str,
 ) -> Result<usize, String> {
@@ -931,11 +932,13 @@ fn commit_shared_files(
     // looked only at `projects/`.
     let mut changed = git::changed_paths(store, "projects", TIMEOUT)?;
     changed.extend(git::changed_paths(store, "config", TIMEOUT)?);
-    let ours: Vec<&str> = changed
-        .iter()
-        .map(String::as_str)
+    let candidates: Vec<String> = changed
+        .into_iter()
         .filter(|path| !belongs_to_live_session(path, live))
         .collect();
+    // A session file that holds an agent token stays on this machine (`crate::held`).
+    let passed = crate::held::screen(engine_dir, store, &candidates, stamp)?;
+    let ours: Vec<&str> = passed.iter().map(String::as_str).collect();
     if ours.is_empty() {
         return Ok(0);
     }

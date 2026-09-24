@@ -105,3 +105,20 @@ pub fn link_dir(target: &Path, link: &Path) {
     vibememory_cli::dir_link::create(target, link)
         .unwrap_or_else(|e| panic!("link {} -> {}: {e}", link.display(), target.display()));
 }
+
+/// The text of one case of `fixtures/export/settingsWithToken.json`: a synthetic agent token where
+/// a real one would stand — a transcript line, a settings file.
+pub fn token_case(id: &str) -> String {
+    let file: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../fixtures/export/settingsWithToken.json"
+    ))
+    .expect("settingsWithToken.json");
+    file["cases"]
+        .as_array()
+        .expect("cases")
+        .iter()
+        .find(|case| case["id"] == id)
+        .and_then(|case| case["text"].as_str())
+        .unwrap_or_else(|| panic!("no case {id}"))
+        .to_owned()
+}

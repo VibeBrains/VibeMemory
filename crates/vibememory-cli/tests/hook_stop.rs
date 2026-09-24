@@ -17,7 +17,7 @@ use std::fs;
 use std::path::Path;
 
 use std::time::Duration;
-use support::{TempDir, git, git_repo_with_commit};
+use support::{TempDir, git, git_repo_with_commit, token_case};
 
 use vibememory_cli::hook::stop::{
     Live, Tails, commit_snapshot, push_if_due, record_end, record_live, record_progress,
@@ -71,6 +71,50 @@ fn a_half_written_record_is_never_committed() {
         !committed.contains("\"uu\""),
         "half of a record must never reach another machine: {committed}"
     );
+}
+
+#[test]
+fn a_snapshot_holding_an_agent_token_is_not_committed() {
+    let temp = TempDir::new("stop-token");
+    let store = store(&temp);
+    let head = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&store)
+        .output()
+        .expect("rev-parse")
+        .stdout;
+    let transcript = temp.path().join("live.jsonl");
+    let mut bytes = live_transcript();
+    let cut = bytes.len() - 18;
+    bytes.truncate(cut);
+    bytes.extend_from_slice(token_case("transcriptToolResult").as_bytes());
+    fs::write(&transcript, bytes).expect("write transcript");
+
+    let stopped = commit_snapshot(&store, &transcript, RELATIVE, STAMP).expect("commit");
+    assert_eq!(
+        stopped.held.into_iter().collect::<Vec<_>>(),
+        ["tk_7q2m9x4a"],
+        "the public id, never the secret"
+    );
+    assert!(!stopped.committed);
+    assert!(
+        stopped.blob.is_none(),
+        "nothing reaches the object database"
+    );
+    let after = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&store)
+        .output()
+        .expect("rev-parse")
+        .stdout;
+    assert_eq!(after, head, "no commit");
+    let staged = std::process::Command::new("git")
+        .args(["ls-files", "--", RELATIVE])
+        .current_dir(&store)
+        .output()
+        .expect("ls-files")
+        .stdout;
+    assert!(staged.is_empty(), "nor is it in the index");
 }
 
 #[test]
