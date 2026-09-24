@@ -107,6 +107,47 @@
       "expect": {
         "refused": null
       }
+    },
+    {
+      "id": "defaultPortHttps",
+      "provenance": "computed",
+      "note": "The scheme’s own port names the same address as none: the answer names the cabinet without it.",
+      "input": "https://app.vibememory.ru:443",
+      "expect": {
+        "address": "https://app.vibememory.ru"
+      }
+    },
+    {
+      "id": "defaultPortHttp",
+      "provenance": "computed",
+      "input": "http://localhost:80",
+      "expect": {
+        "address": "http://localhost"
+      }
+    },
+    {
+      "id": "portTooLarge",
+      "provenance": "computed",
+      "input": "https://app.vibememory.ru:65536",
+      "expect": {
+        "refused": null
+      }
+    },
+    {
+      "id": "portZero",
+      "provenance": "computed",
+      "input": "https://app.vibememory.ru:0",
+      "expect": {
+        "refused": null
+      }
+    },
+    {
+      "id": "afterIpv6NotAPort",
+      "provenance": "computed",
+      "input": "http://[::1]tail",
+      "expect": {
+        "refused": null
+      }
     }
   ]
 }

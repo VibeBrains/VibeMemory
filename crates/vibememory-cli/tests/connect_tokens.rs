@@ -41,7 +41,7 @@ fn grant() -> TokenGrant {
         .find(|case| case["id"] == "token")
         .unwrap();
     let asked = file["asked"].as_str().unwrap();
-    let Ok(Claim::Token(grant)) = read_answer(0, &case["body"].to_string(), asked) else {
+    let Ok(Claim::Token(grant)) = read_answer(0, 200, &case["body"].to_string(), asked) else {
         panic!("the fixture's token case must read")
     };
     grant
@@ -158,4 +158,36 @@ fn a_machine_without_the_engine_plans_the_binaries_and_curl_only() {
             .iter()
             .all(|step| matches!(step, Step::Binary | Step::McpBinary | Step::Curl))
     );
+}
+
+#[test]
+fn connect_takes_no_code_and_no_stray_word_from_the_command_line() {
+    let cabinet = "https://app.vibememory.ru";
+    let cases: [(&[&str], &str); 5] = [
+        (
+            &["--code", "ABCD-EFGH-JKMN", "--cabinet", cabinet],
+            "not taken from the command line",
+        ),
+        (
+            &["--code=ABCD-EFGH-JKMN", "--cabinet", cabinet],
+            "not taken from the command line",
+        ),
+        (
+            &["--cabinet", cabinet, "ABCD-EFGH-JKMN"],
+            "is not an argument of connect",
+        ),
+        (&["--cabinet", "http://app.vibememory.ru"], "is not https"),
+        (&[], "--cabinet is required"),
+    ];
+    for (args, said) in cases {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_vibememory"))
+            .arg("connect")
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("the engine binary runs");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {stderr}");
+        assert!(stderr.contains(said), "{args:?}: {stderr}");
+    }
 }

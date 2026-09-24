@@ -12,6 +12,7 @@ use std::process::{Command, ExitCode, Stdio};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use vibememory_core::terminal::printable;
 
 use crate::access::{self, Key, Snapshot};
 use crate::apply::{self, Step};
@@ -122,20 +123,6 @@ fn refuse(code: &str, lines: &[&str]) -> ExitCode {
         let _ = writeln!(err, "{}", printable(line));
     }
     ExitCode::from(REFUSED)
-}
-
-/// A line for a person on the other end, with no control character that could break the lines
-/// a client reads.
-fn printable(text: &str) -> String {
-    text.chars()
-        .flat_map(|character| {
-            if character.is_control() {
-                character.escape_default().collect::<Vec<_>>()
-            } else {
-                vec![character]
-            }
-        })
-        .collect()
 }
 
 /// The bytes of the snapshot at `access`, and the snapshot they hold, checked; the outer error is

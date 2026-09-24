@@ -13,12 +13,13 @@
 use serde::Deserialize;
 use vibememory_core::claim::{
     AccessList, Claim, ClaimFailure, access_list, cabinet_address, client_fragment, read_answer,
-    token_sidecar,
+    sid_of, token_sidecar,
 };
 
 const ANSWERS: &str = include_str!("../../../fixtures/claim/claimAnswers.json");
 const ADDRESSES: &str = include_str!("../../../fixtures/claim/cabinetAddresses.json");
 const ICACLS: &str = include_str!("../../../fixtures/claim/icaclsOutput.json");
+const WHOAMI: &str = include_str!("../../../fixtures/claim/whoamiUser.json");
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +49,9 @@ struct AnswerCase {
     #[allow(dead_code)]
     note: Option<String>,
     exit: i32,
+    /// The HTTP status; a case that omits it was answered 200.
+    #[serde(default = "answered")]
+    status: u16,
     #[serde(default)]
     body: Option<serde_json::Value>,
     #[serde(default)]
@@ -92,8 +96,14 @@ enum AnswerExpect {
     Token(serde_json::Map<String, serde_json::Value>),
     Key(serde_json::Map<String, serde_json::Value>),
     Refused(Option<()>),
+    Unavailable(Option<()>),
+    Unexpected(Option<()>),
     Unreachable(Option<()>),
     Malformed(Option<()>),
+}
+
+const fn answered() -> u16 {
+    200
 }
 
 #[derive(Deserialize)]
@@ -152,7 +162,7 @@ fn every_claim_answer_reads_as_the_fixture_says() {
     assert!(!file.cases.is_empty(), "no claim answers were checked");
     for case in &file.cases {
         let asked = case.asked.as_deref().unwrap_or(&file.asked);
-        let answer = read_answer(case.exit, &stdout_of(case), asked);
+        let answer = read_answer(case.exit, case.status, &stdout_of(case), asked);
         if let Err(failure) = &answer {
             assert!(
                 !failure.to_string().chars().any(char::is_control),
@@ -176,6 +186,8 @@ fn every_claim_answer_reads_as_the_fixture_says() {
                 assert_fields(&case.id, &as_json, pinned);
             }
             (AnswerExpect::Refused(nothing), Err(ClaimFailure::Refused))
+            | (AnswerExpect::Unavailable(nothing), Err(ClaimFailure::Unavailable))
+            | (AnswerExpect::Unexpected(nothing), Err(ClaimFailure::Unexpected { .. }))
             | (AnswerExpect::Unreachable(nothing), Err(ClaimFailure::Unreachable { .. }))
             | (AnswerExpect::Malformed(nothing), Err(ClaimFailure::Malformed(_))) => {
                 assert!(
@@ -193,7 +205,9 @@ fn every_claim_answer_reads_as_the_fixture_says() {
 fn a_grant_never_prints_its_token() {
     let file: AnswerFile = serde_json::from_str(ANSWERS).unwrap();
     let case = file.cases.iter().find(|case| case.id == "token").unwrap();
-    let Ok(Claim::Token(grant)) = read_answer(case.exit, &stdout_of(case), &file.asked) else {
+    let Ok(Claim::Token(grant)) =
+        read_answer(case.exit, case.status, &stdout_of(case), &file.asked)
+    else {
         panic!("the token case must read")
     };
     let secret = grant.token.split('_').nth(2).unwrap();
@@ -242,5 +256,49 @@ fn a_token_file_is_reached_by_its_owner_alone() {
             }
         };
         assert_eq!(verdict, expected, "{}", case.id);
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WhoamiFile {
+    #[allow(dead_code)]
+    description: String,
+    cases: Vec<WhoamiCase>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WhoamiCase {
+    id: String,
+    #[allow(dead_code)]
+    provenance: Provenance,
+    #[serde(default)]
+    #[allow(dead_code)]
+    note: Option<String>,
+    output: String,
+    expect: WhoamiExpect,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+enum WhoamiExpect {
+    Sid(String),
+    None(Option<()>),
+}
+
+#[test]
+fn a_token_file_is_granted_to_the_sid_whoami_names() {
+    let file: WhoamiFile = serde_json::from_str(WHOAMI).unwrap();
+    assert!(!file.cases.is_empty(), "no whoami outputs were checked");
+    for case in &file.cases {
+        let expected = match &case.expect {
+            WhoamiExpect::Sid(sid) => Some(sid.clone()),
+            WhoamiExpect::None(nothing) => {
+                assert!(nothing.is_none(), "{}: write null", case.id);
+                None
+            }
+        };
+        assert_eq!(sid_of(&case.output), expected, "{}", case.id);
     }
 }

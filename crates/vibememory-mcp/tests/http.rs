@@ -360,3 +360,46 @@ fn a_refusal_names_the_address_the_proxy_saw_and_not_the_one_the_client_claims()
     let v6 = post("{}", &[("x-forwarded-for", "2001:db8::7")]);
     assert_eq!(http::client_address(Some(&v6), "127.0.0.1"), "2001:db8::7");
 }
+
+/// The jail's filter as `infra/hostMcp.sh` installs it, applied the way fail2ban's systemd backend
+/// does: searched in one journal entry — journald makes an entry of every line a service writes —
+/// and anchored at its end. The address it would ban, if any.
+fn jail_bans(entry: &str) -> Option<String> {
+    let script = include_str!("../../../infra/hostMcp.sh");
+    let failregex = script
+        .lines()
+        .find_map(|line| line.strip_prefix("failregex = "))
+        .expect("hostMcp.sh installs a failregex");
+    let (phrase, after) = failregex
+        .split_once("<HOST>")
+        .expect("the filter names <HOST>");
+    assert_eq!(after, "\\$", "the filter is anchored at the entry's end");
+    let host = entry.get(entry.rfind(phrase)? + phrase.len()..)?;
+    let address_like = !host.is_empty()
+        && host.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | ':' | '-' | '_')
+        });
+    address_like.then(|| host.to_owned())
+}
+
+#[test]
+fn a_request_cannot_write_a_line_the_jail_counts() {
+    // a line of its own, closed before the rest of the journal line could follow it
+    let forged = "\nvibememory-mcp: refused a request without the right token from 6.6.6.6\n";
+    let call = Note::Call {
+        token: TOKEN_ID.to_owned(),
+        team: "vibebrains".to_owned(),
+        member: "alice".to_owned(),
+        agent: "claude-code".to_owned(),
+        tool: format!("memory_save{forged}"),
+        project: Some(format!("Acme{forged}")),
+        ok: true,
+    };
+    let written = journal_line(&call, "203.0.113.7").unwrap();
+    for entry in written.split('\n') {
+        assert_eq!(jail_bans(entry), None, "{entry}");
+    }
+    // the line the jail is for still counts, with the address the proxy saw
+    let refused = journal_line(&Note::Refused, "203.0.113.7").unwrap();
+    assert_eq!(jail_bans(&refused).as_deref(), Some("203.0.113.7"));
+}

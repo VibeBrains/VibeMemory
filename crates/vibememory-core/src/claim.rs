@@ -11,13 +11,20 @@ use std::fmt;
 use serde::Deserialize;
 
 use crate::naming::is_slug;
+use crate::terminal::printable;
 use crate::token;
 
 /// The only answer version there is.
 const ANSWER_VERSION: u64 = 1;
 
-/// curl's exit when `--fail` met an HTTP error: every refusal of a claim is one.
-const CURL_HTTP_ERROR: i32 = 22;
+/// The claim endpoint's answer: the grant.
+const STATUS_OK: u16 = 200;
+
+/// The claim endpoint's one refusal: unknown, used, expired — it does not say which.
+const STATUS_REFUSED: u16 = 400;
+
+/// The cabinet is out of step with its host and read no code.
+const STATUS_UNAVAILABLE: u16 = 503;
 
 /// The id prefix of a token in the snapshot and the answer.
 const TOKEN_ID_PREFIX: &str = "tk_";
@@ -110,6 +117,13 @@ pub enum ClaimFailure {
         /// curl's exit code.
         exit: i32,
     },
+    /// The cabinet is out of step with its host for now: it read no code, which stays good.
+    Unavailable,
+    /// The cabinet answered, but not as a claim endpoint does: likely not the cabinet's address.
+    Unexpected {
+        /// The HTTP status.
+        status: u16,
+    },
     /// An answer the engine does not understand, and so does not act on.
     Malformed(String),
 }
@@ -124,6 +138,13 @@ impl fmt::Display for ClaimFailure {
                 formatter,
                 "the cabinet was not reached (curl exit {exit}): check the address and the network"
             ),
+            Self::Unavailable => formatter.write_str(
+                "the cabinet is not in step with its host right now and did not use the code: try again in a few minutes",
+            ),
+            Self::Unexpected { status } => write!(
+                formatter,
+                "the cabinet answered HTTP {status}, which no claim is answered with: check the address"
+            ),
             Self::Malformed(reason) => write!(
                 formatter,
                 "the cabinet's answer is not understood: {reason}"
@@ -132,20 +153,30 @@ impl fmt::Display for ClaimFailure {
     }
 }
 
-/// Reads what `curl --fail` left: the exit code and stdout. `cabinet` is the address the claim was
-/// sent to, as [`cabinet_address`] gave it: the answer must name that cabinet, and the memory
-/// server it names must be on the cabinet's site.
+/// Reads what curl left: its exit code, the HTTP status and the body. `cabinet` is the address the
+/// claim was sent to, as [`cabinet_address`] gave it: the answer must name that cabinet, and the
+/// memory server it names must be the cabinet's host or its parent.
 ///
 /// # Errors
 ///
-/// [`ClaimFailure`]: a refusal, an unreachable cabinet, or an answer that breaks the contract.
-pub fn read_answer(exit: i32, stdout: &str, cabinet: &str) -> Result<Claim, ClaimFailure> {
-    match exit {
-        0 => {}
-        CURL_HTTP_ERROR => return Err(ClaimFailure::Refused),
-        other => return Err(ClaimFailure::Unreachable { exit: other }),
+/// [`ClaimFailure`]: a refusal, a cabinet out of step, an unreachable cabinet, or an answer that
+/// breaks the contract.
+pub fn read_answer(
+    exit: i32,
+    status: u16,
+    body: &str,
+    cabinet: &str,
+) -> Result<Claim, ClaimFailure> {
+    if exit != 0 {
+        return Err(ClaimFailure::Unreachable { exit });
     }
-    let mut value: serde_json::Map<String, serde_json::Value> = serde_json::from_str(stdout)
+    match status {
+        STATUS_OK => {}
+        STATUS_REFUSED => return Err(ClaimFailure::Refused),
+        STATUS_UNAVAILABLE => return Err(ClaimFailure::Unavailable),
+        other => return Err(ClaimFailure::Unexpected { status: other }),
+    }
+    let mut value: serde_json::Map<String, serde_json::Value> = serde_json::from_str(body)
         .map_err(|error| ClaimFailure::Malformed(format!("not a JSON object: {error}")))?;
     // The envelope is read here; every other field goes to the grant, which knows them all.
     let version = value.remove("version").and_then(|version| version.as_u64());
@@ -180,20 +211,6 @@ fn malformed(error: &serde_json::Error) -> ClaimFailure {
     ClaimFailure::Malformed(printable(&error.to_string()))
 }
 
-/// Text from outside made safe to print: control characters escaped, never passed to a terminal.
-#[must_use]
-pub fn printable(text: &str) -> String {
-    text.chars()
-        .map(|character| {
-            if character.is_control() {
-                character.escape_default().to_string()
-            } else {
-                character.to_string()
-            }
-        })
-        .collect()
-}
-
 /// A name that becomes a directory here: a slug, or the answer is refused.
 fn slug(field: &str, value: &str) -> Result<(), ClaimFailure> {
     if is_slug(value) {
@@ -205,18 +222,40 @@ fn slug(field: &str, value: &str) -> Result<(), ClaimFailure> {
     }
 }
 
-/// An address split into what the checks need: whether it is https, its host in lower case,
-/// its authority (host and port) and its path.
+/// An address split into what the checks need: whether it is https, its host in lower case
+/// (without the brackets of an IPv6 address), its port when it is not the scheme's own, and its
+/// path.
 struct Address {
     https: bool,
     host: String,
-    authority: String,
+    port: Option<u16>,
     path: String,
+}
+
+impl Address {
+    /// `host[:port]` in the one form addresses are compared in.
+    fn authority(&self) -> String {
+        let host = if self.host.contains(':') {
+            format!("[{}]", self.host)
+        } else {
+            self.host.clone()
+        };
+        self.port
+            .map_or(host.clone(), |port| format!("{host}:{port}"))
+    }
+}
+
+/// The port of an address when it is not the scheme's own: `:443` of https and `:80` of http name
+/// the same address as none at all.
+fn explicit_port(https: bool, port: u16) -> Option<u16> {
+    let default = if https { 443 } else { 80 };
+    (port != default).then_some(port)
 }
 
 /// Splits `scheme://authority/path` of an http(s) address. `None` for anything else: another
 /// scheme, a user name (`@`), a query or a fragment, a space or a control character, a host that
-/// is not a name or an address, a port that is not a number.
+/// is not a name or an address, anything after an IPv6 address but a port, a port that is not a
+/// number from 1 to 65535.
 fn split_address(value: &str) -> Option<Address> {
     if value
         .chars()
@@ -237,25 +276,36 @@ fn split_address(value: &str) -> Option<Address> {
     let (host, port) = if let Some(bracketed) = authority.strip_prefix('[') {
         let (inside, after) = bracketed.split_once(']')?;
         inside.parse::<std::net::Ipv6Addr>().ok()?;
-        (inside, after.strip_prefix(':'))
+        let port = if after.is_empty() {
+            None
+        } else {
+            Some(after.strip_prefix(':')?)
+        };
+        (inside, port)
     } else {
-        match authority.split_once(':') {
+        let (host, port) = match authority.split_once(':') {
             Some((host, port)) => (host, Some(port)),
             None => (authority, None),
+        };
+        if !is_host_name(host) {
+            return None;
+        }
+        (host, port)
+    };
+    let port = match port {
+        None => None,
+        Some(digits) => {
+            if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            let number = digits.parse::<u16>().ok().filter(|number| *number > 0)?;
+            explicit_port(https, number)
         }
     };
-    if port.is_some_and(|port| {
-        port.is_empty() || port.len() > 5 || !port.bytes().all(|byte| byte.is_ascii_digit())
-    }) {
-        return None;
-    }
-    if !authority.starts_with('[') && !is_host_name(host) {
-        return None;
-    }
     Some(Address {
         https,
         host: host.to_owned(),
-        authority: authority.to_owned(),
+        port,
         // the path keeps its case: only the scheme and the host are case-blind
         path: value
             .get(value.len() - path.len()..)
@@ -286,21 +336,24 @@ fn is_loopback(host: &str) -> bool {
             .is_ok_and(|address| address.is_loopback())
 }
 
-/// The site of a host: its parent domain when it has one of two labels or more, the host itself
-/// otherwise — `app.vibememory.ru` → `vibememory.ru`, `vibememory.ru` → itself, an address → itself.
-fn site_of(host: &str) -> &str {
-    if host.parse::<std::net::IpAddr>().is_ok() {
-        return host;
+/// Whether a memory server's host belongs to the cabinet: the cabinet's own host, or its parent
+/// domain (`app.vibememory.ru` → `vibememory.ru`). Never a sibling: under a suffix anyone registers
+/// in (`*.co.uk`), a neighbour of the cabinet is somebody else's host. An address, or a name with
+/// no parent of two labels, is only itself.
+fn serves_cabinet(server: &str, cabinet: &str) -> bool {
+    if server == cabinet {
+        return true;
     }
-    host.split_once('.')
-        .map(|(_, parent)| parent)
-        .filter(|parent| parent.contains('.'))
-        .unwrap_or(host)
+    cabinet.parse::<std::net::IpAddr>().is_err()
+        && cabinet
+            .split_once('.')
+            .is_some_and(|(_, parent)| parent.contains('.') && server == parent)
 }
 
 /// A cabinet's address as `connect --cabinet` takes it, made the one form it is compared in:
-/// `https://<host>[:port]`, lower case, no path. Plain `http://` only for a cabinet on this
-/// machine — a code sent in the open can be read on the way and redeemed by whoever reads it.
+/// `https://<host>[:port]`, lower case, no path, no port of the scheme's own. Plain `http://` only
+/// for a cabinet on this machine — a code sent in the open can be read on the way and redeemed by
+/// whoever reads it.
 ///
 /// # Errors
 ///
@@ -320,7 +373,7 @@ pub fn cabinet_address(value: &str) -> Result<String, String> {
         ));
     }
     let scheme = if address.https { "https" } else { "http" };
-    Ok(format!("{scheme}://{}", address.authority))
+    Ok(format!("{scheme}://{}", address.authority()))
 }
 
 /// The cabinet the answer names must be the one the claim was sent to.
@@ -334,8 +387,8 @@ fn same_cabinet(field: &str, value: &str, asked: &str) -> Result<(), ClaimFailur
 }
 
 /// The memory server an agent is registered with: https (http only on this machine), a plain path,
-/// on the cabinet's own site — the line that registers it is pasted into a shell, and the server it
-/// names receives the token with every call.
+/// the cabinet's own host or its parent — the line that registers it is pasted into a shell, and
+/// the server it names receives the token with every call.
 fn memory_server(value: &str, cabinet: &str) -> Result<(), ClaimFailure> {
     let refuse = |why: &str| Err(ClaimFailure::Malformed(format!("mcpUrl {why}")));
     let Some(address) = split_address(value) else {
@@ -350,8 +403,8 @@ fn memory_server(value: &str, cabinet: &str) -> Result<(), ClaimFailure> {
         return refuse("has a path with characters a shell would read");
     }
     let asked = split_address(cabinet).map(|cabinet| cabinet.host);
-    if asked.as_deref().map(site_of) != Some(site_of(&address.host)) {
-        return refuse("is not on the cabinet's site");
+    if !asked.is_some_and(|asked| serves_cabinet(&address.host, &asked)) {
+        return refuse("is not the cabinet's host or its parent domain");
     }
     Ok(())
 }
@@ -457,6 +510,21 @@ pub fn client_fragment(grant: &TokenGrant) -> String {
         }
     });
     format!("{fragment:#}\n")
+}
+
+/// The current user's security identifier from `whoami /user /fo csv /nh` — one line,
+/// `"<domain>\\<user>","S-1-5-…"`. A grant by SID names this very account; a bare user name may
+/// resolve to a same-named local account in a domain.
+#[must_use]
+pub fn sid_of(whoami: &str) -> Option<String> {
+    let line = whoami.lines().find(|line| !line.trim().is_empty())?;
+    let sid = line.rsplit(',').next()?.trim().trim_matches('"');
+    let digits = sid.strip_prefix("S-1-")?;
+    (!digits.is_empty()
+        && digits
+            .split('-')
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())))
+    .then(|| sid.to_owned())
 }
 
 /// What `icacls <file>` says about who may reach a token file.

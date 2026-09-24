@@ -207,16 +207,16 @@ fn print_tokens(tokens: &[vibememory_cli::credentials::KeptToken]) -> usize {
         // the sidecar is a file on this machine anyone with its rights could have edited
         println!(
             "token    {}/{} {} from {}",
-            vibememory_core::claim::printable(&token.team),
-            vibememory_core::claim::printable(&token.agent),
-            vibememory_core::claim::printable(&token.token_id),
-            vibememory_core::claim::printable(&token.cabinet)
+            vibememory_core::terminal::printable(&token.team),
+            vibememory_core::terminal::printable(&token.agent),
+            vibememory_core::terminal::printable(&token.token_id),
+            vibememory_core::terminal::printable(&token.cabinet)
         );
         if !token.problems.is_empty() {
             wrong += 1;
         }
         for problem in &token.problems {
-            println!("         {}", vibememory_core::claim::printable(problem));
+            println!("         {}", vibememory_core::terminal::printable(problem));
         }
     }
     wrong
@@ -310,23 +310,15 @@ fn tokens_json(tokens: &[vibememory_cli::credentials::KeptToken]) -> Vec<serde_j
 /// at the prompt or piped in — for a token and keeps it where only its owner reaches it. Prints
 /// paths and the line that registers the server — never the token.
 fn connect_command(args: &[String]) -> ExitCode {
-    const USAGE: &str = "usage: vibememory connect --cabinet <address> [--agent <name>], and the code at the prompt";
-    let value = |flag: &str| {
-        args.iter()
-            .position(|arg| arg == flag)
-            .and_then(|at| args.get(at + 1))
-            .cloned()
-    };
-    if args.iter().any(|arg| arg == "--code") {
-        eprintln!(
-            "connect: the code is not taken from the command line, where every user of this \
-             machine can read it: run the command without --code and paste the code when asked"
-        );
-        return ExitCode::from(2);
-    }
-    let Some(asked) = value("--cabinet") else {
-        eprintln!("{USAGE}");
-        return ExitCode::from(2);
+    let (asked, agent) = match connect_arguments(args) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            eprintln!("connect: {error}");
+            eprintln!(
+                "usage: vibememory connect --cabinet <address> [--agent <name>], and the code at the prompt"
+            );
+            return ExitCode::from(2);
+        }
     };
     let cabinet = match vibememory_core::claim::cabinet_address(&asked) {
         Ok(cabinet) => cabinet,
@@ -354,7 +346,12 @@ fn connect_command(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let grant = match vibememory_core::claim::read_answer(reply.exit, &reply.stdout, &cabinet) {
+    let grant = match vibememory_core::claim::read_answer(
+        reply.exit,
+        reply.status,
+        &reply.body,
+        &cabinet,
+    ) {
         Ok(vibememory_core::claim::Claim::Token(grant)) => grant,
         Ok(vibememory_core::claim::Claim::Key(grant)) => {
             eprintln!(
@@ -368,12 +365,22 @@ fn connect_command(args: &[String]) -> ExitCode {
             eprintln!("connect: {failure}");
             // curl's own line, which already names itself
             if !reply.stderr.is_empty() {
-                eprintln!("{}", vibememory_core::claim::printable(&reply.stderr));
+                eprintln!("{}", vibememory_core::terminal::printable(&reply.stderr));
+            }
+            // an answer the engine refused after the cabinet had said yes: the code is spent, and a
+            // token or a key may have been issued that nothing here keeps
+            if matches!(failure, vibememory_core::claim::ClaimFailure::Malformed(_))
+                && reply.status == 200
+            {
+                eprintln!(
+                    "connect: the cabinet may have issued a token or a key for this code: look at the \
+                     team's page and revoke the ones you do not recognise"
+                );
             }
             return ExitCode::FAILURE;
         }
     };
-    if let Some(agent) = value("--agent")
+    if let Some(agent) = agent
         && agent != grant.agent
     {
         eprintln!(
@@ -392,6 +399,16 @@ fn connect_command(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    print_connected(&grant, &kept);
+    ExitCode::SUCCESS
+}
+
+/// What `connect` says once the token is kept: where it lies and the line that registers it —
+/// never the token.
+fn print_connected(
+    grant: &vibememory_core::claim::TokenGrant,
+    kept: &vibememory_cli::connect::KeptToken,
+) {
     println!(
         "connected: team {} as {}, agent {} (token {})",
         grant.team, grant.member, grant.agent, grant.token_id
@@ -404,9 +421,42 @@ fn connect_command(args: &[String]) -> ExitCode {
     println!("register with Claude Code:");
     println!(
         "  {}",
-        vibememory_cli::connect::claude_code_registration(&grant, &kept.token)
+        vibememory_cli::connect::claude_code_registration(grant, &kept.token)
     );
-    ExitCode::SUCCESS
+}
+
+/// The arguments of `connect`, read strictly: `--cabinet <address>` once, `--agent <name>` at most
+/// once, and nothing else. A code is never taken from the command line — `--code`, `--code=…` and
+/// a bare word alike are refused, so that nobody learns only later that `ps` showed it.
+fn connect_arguments(args: &[String]) -> Result<(String, Option<String>), String> {
+    let mut cabinet = None;
+    let mut agent = None;
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        let slot = match arg.as_str() {
+            "--cabinet" => &mut cabinet,
+            "--agent" => &mut agent,
+            code if code.starts_with("--code") => {
+                return Err(
+                    "the code is not taken from the command line, where every user of this machine \
+                     can read it: run the command without it and paste the code when asked"
+                        .to_owned(),
+                );
+            }
+            other => {
+                return Err(format!(
+                    "{:?} is not an argument of connect",
+                    vibememory_core::terminal::printable(other)
+                ));
+            }
+        };
+        let value = rest.next().ok_or_else(|| format!("{arg} needs a value"))?;
+        if slot.replace(value.clone()).is_some() {
+            return Err(format!("{arg} is given twice"));
+        }
+    }
+    let cabinet = cabinet.ok_or_else(|| "--cabinet is required".to_owned())?;
+    Ok((cabinet, agent))
 }
 
 /// Brings the machine to the planned state, or says what it would do. Without a `config.json`

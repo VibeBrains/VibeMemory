@@ -1,5 +1,5 @@
 {
-  "description": "What POST /api/agent/claim answers and how `vibememory connect` reads it: the curl exit code and stdout in, the claim or the reason out. `body` is the JSON the cabinet sends, `raw` the literal stdout. The cabinet's int test checks its answers carry exactly the fields of `token` and `key`. Tokens are synthetic: the secret is one repeated character, as the privacy gate requires. `asked` is the cabinet the code was sent to, as `connect --cabinet` took it; a case may ask another.",
+  "description": "What POST /api/agent/claim answers and how `vibememory connect` reads it: curl's exit code, the HTTP status (200 when omitted) and the body in, the claim or the reason out. `body` is the JSON the cabinet sends, `raw` the literal stdout. The cabinet's int test checks its answers carry exactly the fields of `token` and `key`. Tokens are synthetic: the secret is one repeated character, as the privacy gate requires. `asked` is the cabinet the code was sent to, as `connect --cabinet` took it; a case may ask another.",
   "asked": "https://app.vibememory.ru",
   "cases": [
     {
@@ -60,11 +60,38 @@
     {
       "id": "refused",
       "provenance": "computed",
-      "note": "Every refusal is HTTP 400: curl --fail exits 22 and prints nothing to stdout.",
-      "exit": 22,
-      "raw": "",
+      "note": "Every refusal of the claim endpoint is the one 400 with the one body: unknown, used and expired codes alike.",
+      "exit": 0,
       "expect": {
         "refused": null
+      },
+      "status": 400,
+      "body": {
+        "error": "claimRefused"
+      }
+    },
+    {
+      "id": "unavailable",
+      "provenance": "computed",
+      "note": "The cabinet out of step with its host reads no code and answers 503: the code stays good for a later try.",
+      "exit": 0,
+      "status": 503,
+      "body": {
+        "error": "unavailable"
+      },
+      "expect": {
+        "unavailable": null
+      }
+    },
+    {
+      "id": "notTheClaimEndpoint",
+      "provenance": "computed",
+      "note": "An address that is not a cabinet: a 404 page instead of a claim answer.",
+      "exit": 0,
+      "status": 404,
+      "raw": "Not Found",
+      "expect": {
+        "unexpected": null
       }
     },
     {
@@ -309,6 +336,70 @@
       "expect": {
         "malformed": null
       }
+    },
+    {
+      "id": "mcpUrlSibling",
+      "provenance": "computed",
+      "note": "A sibling of the cabinet under the same parent is not the cabinet’s: only its own host or its parent domain is.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://mcp.vibememory.ru/mcp"
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "mcpUrlPublicSuffixNeighbour",
+      "provenance": "computed",
+      "note": "Under a suffix anyone registers in, the neighbour of the cabinet is somebody else’s host.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://cabinet.example.co.uk",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://evil.co.uk/mcp"
+      },
+      "expect": {
+        "malformed": null
+      },
+      "asked": "https://cabinet.example.co.uk"
+    },
+    {
+      "id": "mcpUrlParentOfCabinet",
+      "provenance": "computed",
+      "note": "The cabinet’s parent domain serves the memory, as app.vibememory.ru and vibememory.ru do.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://cabinet.example.co.uk",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://example.co.uk/mcp"
+      },
+      "expect": {
+        "token": {
+          "team": "vibebrains"
+        }
+      },
+      "asked": "https://cabinet.example.co.uk"
     },
     {
       "id": "mcpUrlPlainHttp",

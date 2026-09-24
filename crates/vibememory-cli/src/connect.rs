@@ -59,8 +59,10 @@ pub fn read_code(mut input: impl std::io::BufRead) -> Result<String, String> {
 /// # Errors
 ///
 /// When curl cannot be started or its output read. An answer, a refusal or an unreachable cabinet
-/// is not an error here: they are the exit code and stdout, for
-/// [`vibememory_core::claim::read_answer`], and curl's own words on stderr for a person.
+/// is not an error here: they are the exit code, the HTTP status and the body, for
+/// [`vibememory_core::claim::read_answer`], and curl's own words on stderr for a person. The status
+/// comes after the body on a line of its own (`--write-out`): a refusal (400) and a cabinet out of
+/// step with its host (503) mean different things, and `--fail` would make both one exit code.
 pub fn ask_cabinet(cabinet: &str, code: &str) -> Result<CabinetReply, String> {
     let url = format!("{cabinet}{CLAIM_PATH}");
     let protocol = if cabinet.starts_with("https://") {
@@ -74,7 +76,8 @@ pub fn ask_cabinet(cabinet: &str, code: &str) -> Result<CabinetReply, String> {
             "-q",
             "--proto",
             protocol,
-            "--fail",
+            "--write-out",
+            "\n%{http_code}",
             "--silent",
             "--show-error",
             "--max-time",
@@ -100,9 +103,12 @@ pub fn ask_cabinet(cabinet: &str, code: &str) -> Result<CabinetReply, String> {
     let output = child
         .wait_with_output()
         .map_err(|error| format!("curl did not finish: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let (body, status) = stdout.rsplit_once('\n').unwrap_or(("", &stdout));
     Ok(CabinetReply {
         exit: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        status: status.trim().parse().unwrap_or(0),
+        body: body.to_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
     })
 }
@@ -110,10 +116,12 @@ pub fn ask_cabinet(cabinet: &str, code: &str) -> Result<CabinetReply, String> {
 /// What curl left of a claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CabinetReply {
-    /// curl's exit code: 0, 22 for a refusal, anything else for a cabinet not reached.
+    /// curl's exit code: 0 when the cabinet answered at all, anything else when it was not reached.
     pub exit: i32,
+    /// The HTTP status of the answer; 0 when there was none.
+    pub status: u16,
     /// The answer.
-    pub stdout: String,
+    pub body: String,
     /// curl's own words on what went wrong; never the code, which went through stdin.
     pub stderr: String,
 }
@@ -248,12 +256,20 @@ fn restrict_directory(path: &Path) -> Result<(), String> {
     owner_only(path, "(OI)(CI)F")
 }
 
+/// The rights go to the account by its SID (`*S-1-5-…`), as `whoami` names it: a bare user name
+/// can resolve to a same-named local account in a domain.
 #[cfg(not(unix))]
 fn owner_only(path: &Path, rights: &str) -> Result<(), String> {
-    let user = std::env::var("USERNAME").map_err(|_| "USERNAME is not set".to_owned())?;
+    let whoami = Command::new("whoami")
+        .args(["/user", "/fo", "csv", "/nh"])
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|error| format!("whoami could not be started: {error}"))?;
+    let sid = vibememory_core::claim::sid_of(&String::from_utf8_lossy(&whoami.stdout))
+        .ok_or_else(|| "whoami named no security identifier for this account".to_owned())?;
     let status = Command::new("icacls")
         .arg(path)
-        .args(["/inheritance:r", "/grant:r", &format!("{user}:{rights}")])
+        .args(["/inheritance:r", "/grant:r", &format!("*{sid}:{rights}")])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()

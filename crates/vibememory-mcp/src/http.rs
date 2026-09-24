@@ -13,6 +13,7 @@ use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use serde_json::Value;
+use vibememory_core::terminal::printable;
 
 use crate::memories::Memories;
 use crate::tools::{Caller, Limits, Writes};
@@ -389,6 +390,10 @@ pub fn client_address(request: Option<&HttpRequest>, peer: &str) -> String {
 }
 
 /// The journal line a note becomes, if any. Where fail2ban or a person can see it; never a token.
+///
+/// The tool and the project are what the request named, so their control characters are escaped:
+/// a line break in either would start a journal line of its own, one the jail reads as a refusal
+/// from any address the request chose.
 #[must_use]
 pub fn journal_line(note: &Note, address: &str) -> Option<String> {
     match note {
@@ -408,8 +413,9 @@ pub fn journal_line(note: &Note, address: &str) -> Option<String> {
             project,
             ok,
         } => Some(format!(
-            "vibememory-mcp: {tool} in {team}/{} by {member} ({agent}, {token}): {}",
-            project.as_deref().unwrap_or("-"),
+            "vibememory-mcp: {} in {team}/{} by {member} ({agent}, {token}): {}",
+            printable(tool),
+            project.as_deref().map_or_else(|| "-".to_owned(), printable),
             if *ok { "done" } else { "refused" }
         )),
     }

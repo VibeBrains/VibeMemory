@@ -1,0 +1,47 @@
+{
+  "description": "What `whoami /user /fo csv /nh` prints on Windows, and the security identifier `connect` grants a token file's rights to (`claim::sid_of`). The account part is whatever the machine calls it, in any language; only the SID is taken.",
+  "cases": [
+    {
+      "id": "localAccount",
+      "provenance": "unverified",
+      "note": "The format of Windows 10 and 11; to be confirmed on the GPD.",
+      "output": "\"gpd\\\\borodatych\",\"S-1-5-21-3623811015-3361044348-30300820-1013\"\r\n",
+      "expect": {
+        "sid": "S-1-5-21-3623811015-3361044348-30300820-1013"
+      }
+    },
+    {
+      "id": "domainAccountWithComma",
+      "provenance": "computed",
+      "note": "A comma inside the quoted account name does not move the SID: it is the last field.",
+      "output": "\"corp\\\\Иванов, Пётр\",\"S-1-5-21-1-2-3-500\"\r\n",
+      "expect": {
+        "sid": "S-1-5-21-1-2-3-500"
+      }
+    },
+    {
+      "id": "noSid",
+      "provenance": "computed",
+      "output": "\"gpd\\\\borodatych\"\r\n",
+      "expect": {
+        "none": null
+      }
+    },
+    {
+      "id": "empty",
+      "provenance": "computed",
+      "output": "",
+      "expect": {
+        "none": null
+      }
+    },
+    {
+      "id": "notASid",
+      "provenance": "computed",
+      "output": "\"gpd\\\\borodatych\",\"S-1-5-21-x\"\r\n",
+      "expect": {
+        "none": null
+      }
+    }
+  ]
+}
