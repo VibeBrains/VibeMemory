@@ -279,13 +279,15 @@ if [ "$(psqlAdmin -c "select pg_has_role('vmdump', 'pg_read_all_data', 'member')
   psqlAdmin -c "grant pg_read_all_data to vmdump" >/dev/null
   rolesChanged=1
 fi
-if [ "$(psqlAdmin -c "select has_database_privilege('vmdump', 'cabinet', 'connect')")" != t ]; then
-  psqlAdmin -c "grant connect on database cabinet to vmdump" >/dev/null
-  rolesChanged=1
-fi
-# Postgres lets every role connect to a new database; here only the owner and vmdump do.
+# Postgres lets every role connect to a new database; here only the owner and vmdump do. PUBLIC's
+# right goes first: has_database_privilege counts it for every role, and a check made before would
+# find vmdump already let in and grant it nothing of its own.
 if [ "$(psqlAdmin -c "select has_database_privilege('public', 'cabinet', 'connect')")" = t ]; then
   psqlAdmin -c "revoke connect on database cabinet from public" >/dev/null
+  rolesChanged=1
+fi
+if [ "$(psqlAdmin -c "select has_database_privilege('vmdump', 'cabinet', 'connect')")" != t ]; then
+  psqlAdmin -c "grant connect on database cabinet to vmdump" >/dev/null
   rolesChanged=1
 fi
 if [ "$rolesChanged" = 1 ]; then

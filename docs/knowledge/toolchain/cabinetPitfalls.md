@@ -30,6 +30,10 @@ Query-расширения — гарды — внутри такой транз
 Для журнала публикаций порядок — смысл, поэтому миграция написана руками: номера по `row_number() OVER (ORDER BY "publishedAt")`, потом последовательность с продолжением, `OWNED BY` и `NOT NULL`.
 Дрейфа нет — `migrate diff --exit-code` видит ту же `autoincrement()`.
 
+**`has_database_privilege` считает право `PUBLIC` правом каждой роли.**
+Первая выкладка дампа проверяла `has_database_privilege('vmdump', 'cabinet', 'connect')` до того, как снять `CONNECT` у `PUBLIC`: проверка ответила «есть», своего гранта `vmdump` не получил, а следом право `PUBLIC` ушло — и `pg_dump` под `vmdump` получил «User does not have CONNECT privilege».
+Поймал живой гейт, не тест: сначала снимать `PUBLIC`, потом проверять и выдавать роли её собственное право.
+
 ## better-auth и Point0
 
 **`hooks.before` better-auth срабатывает и на прямой вызов `auth.api.*`.**
