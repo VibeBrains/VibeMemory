@@ -120,6 +120,17 @@ pub struct Deleted {
     pub size_bytes: u64,
 }
 
+/// A deleted team's directory still under its live name: the application has not renamed it —
+/// it will, or its problems say why it could not. Reported so that nobody takes the team for gone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Retiring {
+    /// The slug, from the name.
+    pub slug: String,
+    /// Size on disk.
+    pub size_bytes: u64,
+}
+
 /// A team directory the snapshot does not know.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -148,6 +159,10 @@ pub struct HostReport {
     pub teams: BTreeMap<String, TeamReport>,
     /// Renamed directories of deleted teams.
     pub deleted: Vec<Deleted>,
+    /// Deleted teams whose directory is not renamed yet. A report written before the field was
+    /// added reads as none.
+    #[serde(default)]
+    pub retiring: Vec<Retiring>,
     /// Team directories the snapshot does not know.
     pub orphans: Vec<Orphan>,
     /// The host's public keys.
@@ -171,6 +186,7 @@ pub fn host_report(
 ) -> HostReport {
     let mut teams = BTreeMap::new();
     let mut deleted = Vec::new();
+    let mut retiring = Vec::new();
     let mut orphans = Vec::new();
     for (dir, repo) in facts.repos {
         match team_dir(&dir) {
@@ -203,6 +219,11 @@ pub fn host_report(
                     }
                     // A deleted team whose directory is not renamed yet: the application renames
                     // it, or says in its problems why it could not.
+                    Some(team) if team.deleted.is_some() => retiring.push(Retiring {
+                        slug,
+                        size_bytes: repo.size_bytes,
+                    }),
+                    // The adopted store lives where the snapshot says, not under `teams/`.
                     Some(_) => {}
                 }
             }
@@ -227,6 +248,7 @@ pub fn host_report(
         }
     }
     deleted.sort_by(|a, b| (&a.slug, &a.date).cmp(&(&b.slug, &b.date)));
+    retiring.sort_by(|a, b| a.slug.cmp(&b.slug));
     orphans.sort_by(|a, b| a.slug.cmp(&b.slug));
     HostReport {
         version: VERSION,
@@ -234,6 +256,7 @@ pub fn host_report(
         applied,
         teams,
         deleted,
+        retiring,
         orphans,
         host_keys: facts.host_keys,
         disk: facts.disk,

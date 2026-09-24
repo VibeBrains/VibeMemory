@@ -345,4 +345,18 @@ fn a_refusal_names_the_address_the_proxy_saw_and_not_the_one_the_client_claims()
         http::client_address(Some(&empty), "198.51.100.2"),
         "198.51.100.2"
     );
+    // a name, or anything else that is not an address, never reaches the line fail2ban resolves
+    for forged in [
+        "6.6.6.6, victim.example",
+        "203.0.113.7 from 6.6.6.6",
+        "::ffff:6.6.6.6 x",
+    ] {
+        let request = post("{}", &[("x-forwarded-for", forged)]);
+        assert_eq!(
+            http::client_address(Some(&request), "127.0.0.1"),
+            "127.0.0.1"
+        );
+    }
+    let v6 = post("{}", &[("x-forwarded-for", "2001:db8::7")]);
+    assert_eq!(http::client_address(Some(&v6), "127.0.0.1"), "2001:db8::7");
 }

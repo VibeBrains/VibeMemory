@@ -1,0 +1,112 @@
+{
+  "description": "The cabinet's address as `vibememory connect --cabinet` takes it (`claim::cabinet_address`): the one form it is compared in, or a refusal. Plain http only for a cabinet on this machine.",
+  "cases": [
+    {
+      "id": "https",
+      "provenance": "computed",
+      "input": "https://app.vibememory.ru",
+      "expect": {
+        "address": "https://app.vibememory.ru"
+      }
+    },
+    {
+      "id": "trailingSlashAndCase",
+      "provenance": "computed",
+      "note": "The form a person copies: a slash at the end, capitals in the host.",
+      "input": "HTTPS://App.VibeMemory.ru/",
+      "expect": {
+        "address": "https://app.vibememory.ru"
+      }
+    },
+    {
+      "id": "port",
+      "provenance": "computed",
+      "input": "https://app.vibememory.ru:8443",
+      "expect": {
+        "address": "https://app.vibememory.ru:8443"
+      }
+    },
+    {
+      "id": "loopbackHttp",
+      "provenance": "computed",
+      "input": "http://localhost:3000",
+      "expect": {
+        "address": "http://localhost:3000"
+      }
+    },
+    {
+      "id": "loopbackIpv6",
+      "provenance": "computed",
+      "input": "http://[::1]:3000",
+      "expect": {
+        "address": "http://[::1]:3000"
+      }
+    },
+    {
+      "id": "plainHttp",
+      "provenance": "computed",
+      "note": "A code sent in the open can be read on the way and redeemed by whoever reads it.",
+      "input": "http://app.vibememory.ru",
+      "expect": {
+        "refused": null
+      }
+    },
+    {
+      "id": "noScheme",
+      "provenance": "computed",
+      "note": "curl would send it over plain http.",
+      "input": "app.vibememory.ru",
+      "expect": {
+        "refused": null
+      }
+    },
+    {
+      "id": "withPath",
+      "provenance": "computed",
+      "input": "https://app.vibememory.ru/api",
+      "expect": {
+        "refused": null
+      }
+    },
+    {
+      "id": "userInfo",
+      "provenance": "computed",
+      "input": "https://app.vibememory.ru@evil.example",
+      "expect": {
+        "refused": null
+      }
+    },
+    {
+      "id": "space",
+      "provenance": "computed",
+      "input": "https://app.vibememory.ru --proxy http://evil.example",
+      "expect": {
+        "refused": null
+      }
+    },
+    {
+      "id": "otherScheme",
+      "provenance": "computed",
+      "input": "ftp://app.vibememory.ru",
+      "expect": {
+        "refused": null
+      }
+    },
+    {
+      "id": "hostWithDash",
+      "provenance": "computed",
+      "input": "https://-app.vibememory.ru",
+      "expect": {
+        "refused": null
+      }
+    },
+    {
+      "id": "badPort",
+      "provenance": "computed",
+      "input": "https://app.vibememory.ru:x",
+      "expect": {
+        "refused": null
+      }
+    }
+  ]
+}

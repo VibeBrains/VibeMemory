@@ -1,5 +1,6 @@
 //! Data-driven tests for the claim: what the cabinet's answer gives the engine and what it is
-//! refused for (`fixtures/claim/claimAnswers.json`), and who `icacls` says may reach a token file
+//! refused for (`fixtures/claim/claimAnswers.json`), which cabinet addresses `connect` takes
+//! (`fixtures/claim/cabinetAddresses.json`), and who `icacls` says may reach a token file
 //! (`fixtures/claim/icaclsOutput.json`). The cabinet's own test reads the first file too.
 
 #![allow(
@@ -11,10 +12,12 @@
 
 use serde::Deserialize;
 use vibememory_core::claim::{
-    AccessList, Claim, ClaimFailure, access_list, client_fragment, read_answer, token_sidecar,
+    AccessList, Claim, ClaimFailure, access_list, cabinet_address, client_fragment, read_answer,
+    token_sidecar,
 };
 
 const ANSWERS: &str = include_str!("../../../fixtures/claim/claimAnswers.json");
+const ADDRESSES: &str = include_str!("../../../fixtures/claim/cabinetAddresses.json");
 const ICACLS: &str = include_str!("../../../fixtures/claim/icaclsOutput.json");
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +33,8 @@ enum Provenance {
 struct AnswerFile {
     #[allow(dead_code)]
     description: String,
+    /// The cabinet the codes were sent to.
+    asked: String,
     cases: Vec<AnswerCase>,
 }
 
@@ -47,7 +52,38 @@ struct AnswerCase {
     body: Option<serde_json::Value>,
     #[serde(default)]
     raw: Option<String>,
+    /// Another cabinet than the file's.
+    #[serde(default)]
+    asked: Option<String>,
     expect: AnswerExpect,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AddressFile {
+    #[allow(dead_code)]
+    description: String,
+    cases: Vec<AddressCase>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AddressCase {
+    id: String,
+    #[allow(dead_code)]
+    provenance: Provenance,
+    #[serde(default)]
+    #[allow(dead_code)]
+    note: Option<String>,
+    input: String,
+    expect: AddressExpect,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+enum AddressExpect {
+    Address(String),
+    Refused(Option<()>),
 }
 
 #[derive(Deserialize)]
@@ -115,7 +151,15 @@ fn every_claim_answer_reads_as_the_fixture_says() {
     let file: AnswerFile = serde_json::from_str(ANSWERS).unwrap();
     assert!(!file.cases.is_empty(), "no claim answers were checked");
     for case in &file.cases {
-        let answer = read_answer(case.exit, &stdout_of(case));
+        let asked = case.asked.as_deref().unwrap_or(&file.asked);
+        let answer = read_answer(case.exit, &stdout_of(case), asked);
+        if let Err(failure) = &answer {
+            assert!(
+                !failure.to_string().chars().any(char::is_control),
+                "{}: the reason printed carries a control character",
+                case.id
+            );
+        }
         match (&case.expect, &answer) {
             (AnswerExpect::Token(pinned), Ok(Claim::Token(grant))) => {
                 let as_json = serde_json::json!({
@@ -149,7 +193,7 @@ fn every_claim_answer_reads_as_the_fixture_says() {
 fn a_grant_never_prints_its_token() {
     let file: AnswerFile = serde_json::from_str(ANSWERS).unwrap();
     let case = file.cases.iter().find(|case| case.id == "token").unwrap();
-    let Ok(Claim::Token(grant)) = read_answer(case.exit, &stdout_of(case)) else {
+    let Ok(Claim::Token(grant)) = read_answer(case.exit, &stdout_of(case), &file.asked) else {
         panic!("the token case must read")
     };
     let secret = grant.token.split('_').nth(2).unwrap();
@@ -163,6 +207,24 @@ fn a_grant_never_prints_its_token() {
     );
     // the one other file that may hold it: the client fragment, written with the token's rights
     assert!(client_fragment(&grant).contains(&format!("Bearer {}", grant.token)));
+}
+
+#[test]
+fn a_cabinet_address_is_taken_as_the_fixture_says() {
+    let file: AddressFile = serde_json::from_str(ADDRESSES).unwrap();
+    assert!(!file.cases.is_empty(), "no addresses were checked");
+    for case in &file.cases {
+        let taken = cabinet_address(&case.input);
+        match &case.expect {
+            AddressExpect::Address(address) => {
+                assert_eq!(taken.as_ref(), Ok(address), "{}", case.id);
+            }
+            AddressExpect::Refused(nothing) => {
+                assert!(nothing.is_none(), "{}: write null", case.id);
+                assert!(taken.is_err(), "{}: taken as {taken:?}", case.id);
+            }
+        }
+    }
 }
 
 #[test]

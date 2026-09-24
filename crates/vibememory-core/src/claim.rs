@@ -132,12 +132,14 @@ impl fmt::Display for ClaimFailure {
     }
 }
 
-/// Reads what `curl --fail` left: the exit code and stdout.
+/// Reads what `curl --fail` left: the exit code and stdout. `cabinet` is the address the claim was
+/// sent to, as [`cabinet_address`] gave it: the answer must name that cabinet, and the memory
+/// server it names must be on the cabinet's site.
 ///
 /// # Errors
 ///
 /// [`ClaimFailure`]: a refusal, an unreachable cabinet, or an answer that breaks the contract.
-pub fn read_answer(exit: i32, stdout: &str) -> Result<Claim, ClaimFailure> {
+pub fn read_answer(exit: i32, stdout: &str, cabinet: &str) -> Result<Claim, ClaimFailure> {
     match exit {
         0 => {}
         CURL_HTTP_ERROR => return Err(ClaimFailure::Refused),
@@ -159,21 +161,37 @@ pub fn read_answer(exit: i32, stdout: &str) -> Result<Claim, ClaimFailure> {
         Some("token") => {
             let grant: TokenGrant =
                 serde_json::from_value(fields).map_err(|error| malformed(&error))?;
-            check_token(&grant)?;
+            check_token(&grant, cabinet)?;
             Ok(Claim::Token(grant))
         }
         Some("key") => {
             let grant: KeyGrant =
                 serde_json::from_value(fields).map_err(|error| malformed(&error))?;
-            check_key(&grant)?;
+            check_key(&grant, cabinet)?;
             Ok(Claim::Key(grant))
         }
         other => Err(ClaimFailure::Malformed(format!("unknown kind {other:?}"))),
     }
 }
 
+/// A parse error of the answer: its text quotes the answer — a field's name, a value — and is
+/// printed to a terminal, so whatever could steer the terminal is escaped.
 fn malformed(error: &serde_json::Error) -> ClaimFailure {
-    ClaimFailure::Malformed(error.to_string())
+    ClaimFailure::Malformed(printable(&error.to_string()))
+}
+
+/// Text from outside made safe to print: control characters escaped, never passed to a terminal.
+#[must_use]
+pub fn printable(text: &str) -> String {
+    text.chars()
+        .map(|character| {
+            if character.is_control() {
+                character.escape_default().to_string()
+            } else {
+                character.to_string()
+            }
+        })
+        .collect()
 }
 
 /// A name that becomes a directory here: a slug, or the answer is refused.
@@ -187,23 +205,163 @@ fn slug(field: &str, value: &str) -> Result<(), ClaimFailure> {
     }
 }
 
-/// An address a person is sent to or an agent connects to: http(s) and nothing else.
-fn address(field: &str, value: &str) -> Result<(), ClaimFailure> {
-    if value.starts_with("https://") || value.starts_with("http://") {
-        Ok(())
+/// An address split into what the checks need: whether it is https, its host in lower case,
+/// its authority (host and port) and its path.
+struct Address {
+    https: bool,
+    host: String,
+    authority: String,
+    path: String,
+}
+
+/// Splits `scheme://authority/path` of an http(s) address. `None` for anything else: another
+/// scheme, a user name (`@`), a query or a fragment, a space or a control character, a host that
+/// is not a name or an address, a port that is not a number.
+fn split_address(value: &str) -> Option<Address> {
+    if value
+        .chars()
+        .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return None;
+    }
+    let lower = value.to_ascii_lowercase();
+    let (https, rest) = if let Some(rest) = lower.strip_prefix("https://") {
+        (true, rest)
     } else {
-        Err(ClaimFailure::Malformed(format!(
-            "{field} is not an http address"
-        )))
+        (false, lower.strip_prefix("http://")?)
+    };
+    let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    if authority.contains(['@', '?', '#']) || path.contains(['?', '#']) {
+        return None;
+    }
+    let (host, port) = if let Some(bracketed) = authority.strip_prefix('[') {
+        let (inside, after) = bracketed.split_once(']')?;
+        inside.parse::<std::net::Ipv6Addr>().ok()?;
+        (inside, after.strip_prefix(':'))
+    } else {
+        match authority.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (authority, None),
+        }
+    };
+    if port.is_some_and(|port| {
+        port.is_empty() || port.len() > 5 || !port.bytes().all(|byte| byte.is_ascii_digit())
+    }) {
+        return None;
+    }
+    if !authority.starts_with('[') && !is_host_name(host) {
+        return None;
+    }
+    Some(Address {
+        https,
+        host: host.to_owned(),
+        authority: authority.to_owned(),
+        // the path keeps its case: only the scheme and the host are case-blind
+        path: value
+            .get(value.len() - path.len()..)
+            .unwrap_or_default()
+            .to_owned(),
+    })
+}
+
+/// A host name or an IPv4 address: dot-separated labels of letters, digits and inner dashes.
+fn is_host_name(host: &str) -> bool {
+    host.len() <= 253
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+}
+
+/// This machine: plain http is taken only for a cabinet that never leaves it.
+fn is_loopback(host: &str) -> bool {
+    host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+/// The site of a host: its parent domain when it has one of two labels or more, the host itself
+/// otherwise — `app.vibememory.ru` → `vibememory.ru`, `vibememory.ru` → itself, an address → itself.
+fn site_of(host: &str) -> &str {
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return host;
+    }
+    host.split_once('.')
+        .map(|(_, parent)| parent)
+        .filter(|parent| parent.contains('.'))
+        .unwrap_or(host)
+}
+
+/// A cabinet's address as `connect --cabinet` takes it, made the one form it is compared in:
+/// `https://<host>[:port]`, lower case, no path. Plain `http://` only for a cabinet on this
+/// machine — a code sent in the open can be read on the way and redeemed by whoever reads it.
+///
+/// # Errors
+///
+/// Why the address is not taken, for a person to read.
+pub fn cabinet_address(value: &str) -> Result<String, String> {
+    // `{:?}` quotes the value and escapes whatever could steer a terminal
+    let address =
+        split_address(value.trim()).ok_or_else(|| format!("{value:?} is not an https address"))?;
+    if !address.https && !is_loopback(&address.host) {
+        return Err(format!(
+            "{value:?} is not https: a code sent in the open can be read on the way"
+        ));
+    }
+    if !address.path.is_empty() && address.path != "/" {
+        return Err(format!(
+            "{value:?} has a path: the cabinet is its address alone"
+        ));
+    }
+    let scheme = if address.https { "https" } else { "http" };
+    Ok(format!("{scheme}://{}", address.authority))
+}
+
+/// The cabinet the answer names must be the one the claim was sent to.
+fn same_cabinet(field: &str, value: &str, asked: &str) -> Result<(), ClaimFailure> {
+    match cabinet_address(value) {
+        Ok(named) if named == asked => Ok(()),
+        _ => Err(ClaimFailure::Malformed(format!(
+            "{field} is not the cabinet the code was sent to"
+        ))),
     }
 }
 
-fn check_token(grant: &TokenGrant) -> Result<(), ClaimFailure> {
+/// The memory server an agent is registered with: https (http only on this machine), a plain path,
+/// on the cabinet's own site — the line that registers it is pasted into a shell, and the server it
+/// names receives the token with every call.
+fn memory_server(value: &str, cabinet: &str) -> Result<(), ClaimFailure> {
+    let refuse = |why: &str| Err(ClaimFailure::Malformed(format!("mcpUrl {why}")));
+    let Some(address) = split_address(value) else {
+        return refuse("is not an https address");
+    };
+    if !address.https && !is_loopback(&address.host) {
+        return refuse("is not https");
+    }
+    if !address.path.bytes().all(|byte| {
+        byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'~' | b'-')
+    }) {
+        return refuse("has a path with characters a shell would read");
+    }
+    let asked = split_address(cabinet).map(|cabinet| cabinet.host);
+    if asked.as_deref().map(site_of) != Some(site_of(&address.host)) {
+        return refuse("is not on the cabinet's site");
+    }
+    Ok(())
+}
+
+fn check_token(grant: &TokenGrant, cabinet: &str) -> Result<(), ClaimFailure> {
     slug("team", &grant.team)?;
     slug("member", &grant.member)?;
     slug("agent", &grant.agent)?;
-    address("cabinet", &grant.cabinet)?;
-    address("mcpUrl", &grant.mcp_url)?;
+    same_cabinet("cabinet", &grant.cabinet, cabinet)?;
+    memory_server(&grant.mcp_url, cabinet)?;
     let carried = grant
         .token
         .strip_prefix(token::PREFIX)
@@ -219,12 +377,19 @@ fn check_token(grant: &TokenGrant) -> Result<(), ClaimFailure> {
     Ok(())
 }
 
-fn check_key(grant: &KeyGrant) -> Result<(), ClaimFailure> {
+fn check_key(grant: &KeyGrant, cabinet: &str) -> Result<(), ClaimFailure> {
     slug("team", &grant.team)?;
     slug("member", &grant.member)?;
     slug("machine", &grant.machine)?;
     slug("sshUser", &grant.ssh_user)?;
-    address("cabinet", &grant.cabinet)?;
+    same_cabinet("cabinet", &grant.cabinet, cabinet)?;
+    // it becomes an ssh argument: a name that starts with a dash would be read as an option
+    if !is_host_name(&grant.ssh_host) {
+        return Err(ClaimFailure::Malformed(format!(
+            "sshHost {:?} is not a host name",
+            grant.ssh_host
+        )));
+    }
     if grant.mode != "memory" && grant.mode != "sync" {
         return Err(ClaimFailure::Malformed(format!("mode {:?}", grant.mode)));
     }

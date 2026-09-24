@@ -21,6 +21,8 @@ set -euo pipefail
 
 readonly DEFAULT_ALIAS=vibememory
 readonly DEFAULT_DOMAIN=vibememory.ru
+# The cabinet: a refusal only the cabinet can lift (a team whose term ran out) names its address.
+readonly DEFAULT_APP_DOMAIN=app.vibememory.ru
 readonly DEFAULT_PORT=8787
 readonly REPO_PATH=vibememory/store.git
 # The owner's ssh command names this path; it becomes a link to the server's binary.
@@ -43,9 +45,13 @@ readonly PERSONAL_MAX_RECORD_BYTES=65536
 # locking the owner out of their own memory for an hour is the likelier ban than a real attacker.
 readonly JAIL_MAXRETRY=10
 readonly JAIL_FINDTIME=10m
+# A lost SYN is retried instead of failing the run: the path to the host drops a connection now and
+# then, and every step here is safe to repeat.
+readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=4)
 
 sshAlias="${VIBEMEMORY_SSH_ALIAS:-$DEFAULT_ALIAS}"
 domain="${VIBEMEMORY_DOMAIN:-$DEFAULT_DOMAIN}"
+appDomain="${VIBEMEMORY_APP_DOMAIN:-$DEFAULT_APP_DOMAIN}"
 port="${VIBEMEMORY_MCP_PORT:-$DEFAULT_PORT}"
 binary=""
 owner=""
@@ -58,11 +64,12 @@ usage() {
 Поставить сервер памяти на хост стора: по ssh и по HTTPS.
 
   ./infra/hostMcp.sh --binary <vibememory-mcp под x86_64 Linux> [--owner <handle владельца>]
-                     [--alias vibememory] [--domain vibememory.ru] [--port 8787]
+                     [--alias vibememory] [--domain vibememory.ru] [--app-domain app.vibememory.ru]
+                     [--port 8787]
 
 --owner нужен один раз, пока на хосте нет снимка прав: из файла токена прежнего сервера
 собирается первый снимок, где владелец — единственный член личного стора.
-Переменные окружения: VIBEMEMORY_SSH_ALIAS, VIBEMEMORY_DOMAIN, VIBEMEMORY_MCP_PORT.
+Переменные окружения: VIBEMEMORY_SSH_ALIAS, VIBEMEMORY_DOMAIN, VIBEMEMORY_APP_DOMAIN, VIBEMEMORY_MCP_PORT.
 TEXT
 }
 
@@ -72,6 +79,7 @@ while [ "$#" -gt 0 ]; do
     --owner) owner="${2:-}"; shift 2 ;;
     --alias) sshAlias="${2:-}"; shift 2 ;;
     --domain) domain="${2:-}"; shift 2 ;;
+    --app-domain) appDomain="${2:-}"; shift 2 ;;
     --port) port="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "неизвестный аргумент $1" ;;
@@ -80,24 +88,26 @@ done
 
 [ -n "$binary" ] || { usage; fail "нужен --binary"; }
 [ -f "$binary" ] || fail "нет файла $binary"
-case "$domain" in *[!a-zA-Z0-9.-]*|"") fail "домен $domain выглядит не как домен" ;; esac
+for name in "$domain" "$appDomain"; do
+  case "$name" in *[!a-zA-Z0-9.-]*|"") fail "домен $name выглядит не как домен" ;; esac
+done
 case "$port" in *[!0-9]*|"") fail "порт $port — не число" ;; esac
 # The same rule `access check` applies; checked here too, because the handle goes into JSON text.
 case "$owner" in *[!a-z0-9-]*) fail "handle $owner: только строчные латинские буквы, цифры и дефис" ;; esac
 
 say "1/7 Копирую бинарь"
-ssh -n -o BatchMode=yes "$sshAlias" "mkdir -p \$HOME/$(dirname "$OWNER_BIN")"
-scp -q "$binary" "$sshAlias:$OWNER_BIN.new"
+ssh -n "${SSH_OPTIONS[@]}" "$sshAlias" "mkdir -p \$HOME/$(dirname "$OWNER_BIN")"
+scp -q -o ConnectTimeout=15 -o ConnectionAttempts=4 "$binary" "$sshAlias:$OWNER_BIN.new"
 
-ssh -o BatchMode=yes "$sshAlias" "bash -s -- $(printf '%q ' "$domain" "$port" "$REPO_PATH" \
+ssh "${SSH_OPTIONS[@]}" "$sshAlias" "bash -s -- $(printf '%q ' "$domain" "$port" "$REPO_PATH" \
   "$OWNER_BIN" "$SERVER_BIN" "$ACCESS" "$TEAMS" "$TOKEN_PATH" "${owner:--}" "$PERSONAL_MAX_RECORDS" \
   "$PERSONAL_MAX_RECORD_BYTES" "$JAIL_MAXRETRY" "$JAIL_FINDTIME" "$STORE_REPACK" "$VMGIT_SSH" \
-  "$TEAMS_REPACK_AT")" <<'REMOTE'
+  "$TEAMS_REPACK_AT" "$appDomain")" <<'REMOTE'
 set -euo pipefail
 domain="$1"; port="$2"; repo="$HOME/$3"; ownerBin="$HOME/$4"; serverBin="$5"; access="$6"
 teams="$7"; token="$HOME/$8"; owner="$9"; maxRecords="${10}"; maxRecordBytes="${11}"
 jailMaxretry="${12}"; jailFindtime="${13}"; storeRepack="${14}"; vmgitSsh="${15}"
-teamsRepackAt="${16}"
+teamsRepackAt="${16}"; appDomain="${17}"
 # ssh glues arguments into one line and an empty one vanishes; "-" stands for "not given".
 [ "$owner" = - ] && owner=""
 
@@ -179,7 +189,7 @@ After=network.target
 
 [Service]
 User=vmgit
-ExecStart=$serverBin --http 127.0.0.1:$port --access $access --teams $teams
+ExecStart=$serverBin --http 127.0.0.1:$port --access $access --teams $teams --cabinet https://$appDomain
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
@@ -315,6 +325,8 @@ echo "5/7 Команды хоста под vmgit: снимок применён 
 # backend skips unless journalflags=1 (LOCAL_ONLY); and the backend prefixes every message with
 # host and process, so a failregex anchored at ^ matches nothing. An expired token is logged in
 # other words, which the filter does not match: a client that was let in once is not an attack.
+# The address in the line is an IP literal (http.rs::client_address), and usedns = no besides: a
+# name is never resolved into somebody's address to ban.
 if ! command -v fail2ban-client >/dev/null && [ ! -x /usr/bin/fail2ban-client ]; then
   echo "6/7 fail2ban не установлен — джейл для /mcp пропущен"
   exit 0
@@ -328,6 +340,7 @@ jailText="[vibememory-mcp]
 enabled = true
 filter = vibememory-mcp
 backend = systemd[journalflags=1]
+usedns = no
 port = http,https
 maxretry = $jailMaxretry
 findtime = $jailFindtime
@@ -359,4 +372,4 @@ REMOTE
 
 # Caddy last, from the template both host scripts share: the cabinet's site stays in the same file.
 say "7/7 Caddy"
-"$(dirname "$0")/caddyApply.sh" --alias "$sshAlias" --domain "$domain" --mcp-port "$port"
+"$(dirname "$0")/caddyApply.sh" --alias "$sshAlias" --domain "$domain" --app-domain "$appDomain" --mcp-port "$port"

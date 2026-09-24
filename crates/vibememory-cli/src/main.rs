@@ -204,15 +204,19 @@ fn report(strict: bool, json: bool) -> ExitCode {
 fn print_tokens(tokens: &[vibememory_cli::credentials::KeptToken]) -> usize {
     let mut wrong = 0;
     for token in tokens {
+        // the sidecar is a file on this machine anyone with its rights could have edited
         println!(
             "token    {}/{} {} from {}",
-            token.team, token.agent, token.token_id, token.cabinet
+            vibememory_core::claim::printable(&token.team),
+            vibememory_core::claim::printable(&token.agent),
+            vibememory_core::claim::printable(&token.token_id),
+            vibememory_core::claim::printable(&token.cabinet)
         );
         if !token.problems.is_empty() {
             wrong += 1;
         }
         for problem in &token.problems {
-            println!("         {problem}");
+            println!("         {}", vibememory_core::claim::printable(problem));
         }
     }
     wrong
@@ -302,19 +306,45 @@ fn tokens_json(tokens: &[vibememory_cli::credentials::KeptToken]) -> Vec<serde_j
         .collect()
 }
 
-/// `connect --code <code> --cabinet <address> [--agent <name>]`: trades a claim code from the
-/// cabinet for a token and keeps it where only its owner reaches it. Prints paths and the line
-/// that registers the server — never the token.
+/// `connect --cabinet <address> [--agent <name>]`: trades a claim code from the cabinet — typed
+/// at the prompt or piped in — for a token and keeps it where only its owner reaches it. Prints
+/// paths and the line that registers the server — never the token.
 fn connect_command(args: &[String]) -> ExitCode {
+    const USAGE: &str = "usage: vibememory connect --cabinet <address> [--agent <name>], and the code at the prompt";
     let value = |flag: &str| {
         args.iter()
             .position(|arg| arg == flag)
             .and_then(|at| args.get(at + 1))
             .cloned()
     };
-    let (Some(code), Some(cabinet)) = (value("--code"), value("--cabinet")) else {
-        eprintln!("usage: vibememory connect --code <code> --cabinet <address> [--agent <name>]");
+    if args.iter().any(|arg| arg == "--code") {
+        eprintln!(
+            "connect: the code is not taken from the command line, where every user of this \
+             machine can read it: run the command without --code and paste the code when asked"
+        );
         return ExitCode::from(2);
+    }
+    let Some(asked) = value("--cabinet") else {
+        eprintln!("{USAGE}");
+        return ExitCode::from(2);
+    };
+    let cabinet = match vibememory_core::claim::cabinet_address(&asked) {
+        Ok(cabinet) => cabinet,
+        Err(error) => {
+            eprintln!("connect: --cabinet {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let stdin = std::io::stdin();
+    if std::io::IsTerminal::is_terminal(&stdin) {
+        eprint!("claim code: ");
+    }
+    let code = match vibememory_cli::connect::read_code(stdin.lock()) {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("connect: {error}");
+            return ExitCode::from(2);
+        }
     };
     let layout = layout();
     let reply = match vibememory_cli::connect::ask_cabinet(&cabinet, &code) {
@@ -324,7 +354,7 @@ fn connect_command(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let grant = match vibememory_core::claim::read_answer(reply.exit, &reply.stdout) {
+    let grant = match vibememory_core::claim::read_answer(reply.exit, &reply.stdout, &cabinet) {
         Ok(vibememory_core::claim::Claim::Token(grant)) => grant,
         Ok(vibememory_core::claim::Claim::Key(grant)) => {
             eprintln!(
@@ -338,7 +368,7 @@ fn connect_command(args: &[String]) -> ExitCode {
             eprintln!("connect: {failure}");
             // curl's own line, which already names itself
             if !reply.stderr.is_empty() {
-                eprintln!("{}", reply.stderr);
+                eprintln!("{}", vibememory_core::claim::printable(&reply.stderr));
             }
             return ExitCode::FAILURE;
         }
@@ -1620,7 +1650,7 @@ fn usage() {
     println!("vibememory {}", env!("CARGO_PKG_VERSION"));
     println!(
         "commands: status [--json], doctor [--json], install [--dry-run], \
-         connect --code <code> --cabinet <address> [--agent <name>], hook <event>, \
+         connect --cabinet <address> [--agent <name>], hook <event>, \
          merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>, tick [--release-deletions], \
          relink <enc> <name> <cwd>, import <enc> <name> <cwd>, \
          migrate --from <dir> [--apply], switch --from <dir> [--apply|--rollback], --version"

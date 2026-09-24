@@ -178,6 +178,7 @@
             "sizeBytes": 20480
           }
         ],
+        "retiring": [],
         "orphans": [
           {
             "slug": "lost",
@@ -304,6 +305,7 @@
             "sizeBytes": 20480
           }
         ],
+        "retiring": [],
         "orphans": [
           {
             "slug": "lost",
@@ -331,7 +333,7 @@
     {
       "id": "deletedNotRenamedYet",
       "provenance": "computed",
-      "note": "A deleted team whose directory still has its live name is neither a team nor an orphan: the next application renames it, or names in its problems why it could not.",
+      "note": "A deleted team whose directory still has its live name is neither a team nor an orphan: it is reported in retiring until the next application renames it, or names in its problems why it could not.",
       "applied": {
         "version": 1,
         "snapshotHash": "9f2c000000000000000000000000000000000000000000000000000000000000",
@@ -448,6 +450,12 @@
           }
         },
         "deleted": [],
+        "retiring": [
+          {
+            "slug": "oldteam",
+            "sizeBytes": 20480
+          }
+        ],
         "orphans": [
           {
             "slug": "lost",
@@ -580,6 +588,7 @@
             "sizeBytes": 20480
           }
         ],
+        "retiring": [],
         "orphans": [],
         "hostKeys": [
           "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZm"

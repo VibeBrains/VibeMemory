@@ -164,8 +164,16 @@ fn read_json<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
     }
 }
 
+/// Temporary names tried before a write gives up: each is fresh, so only a directory someone keeps
+/// filling on purpose runs out of them.
+const TEMPORARY_ATTEMPTS: u32 = 8;
+
 /// Writes a file whole or not at all: a temporary file beside it, then a rename over it. A reader
 /// sees the old file or the new one, never half of one.
+///
+/// The temporary file is always a new one (`create_new`): the directory is shared with the
+/// cabinet's account, and opening a name someone placed there — a file, or a link to one of this
+/// account's own files — would write through it.
 fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), String> {
     let parent = path
         .parent()
@@ -174,23 +182,43 @@ fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), String> {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let temporary = parent.join(format!(".{name}.{}.tmp", std::process::id()));
-    let written = (|| -> std::io::Result<()> {
+    let mut last = None;
+    for attempt in 0..TEMPORARY_ATTEMPTS {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.subsec_nanos());
+        let temporary = parent.join(format!(
+            ".{name}.{}.{nanos}.{attempt}.tmp",
+            std::process::id()
+        ));
         let mut options = std::fs::OpenOptions::new();
-        options.write(true).create(true).truncate(true);
+        options.write(true).create_new(true);
         #[cfg(unix)]
         std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
         #[cfg(not(unix))]
         let _ = mode;
-        let mut file = options.open(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        std::fs::rename(&temporary, path)
-    })();
-    written.map_err(|error| {
-        let _ = std::fs::remove_file(&temporary);
-        format!("{}: {error}", path.display())
-    })
+        let mut file = match options.open(&temporary) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                last = Some(error);
+                continue;
+            }
+            Err(error) => return Err(format!("{}: {error}", path.display())),
+        };
+        let written = file
+            .write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .and_then(|()| std::fs::rename(&temporary, path));
+        return written.map_err(|error| {
+            let _ = std::fs::remove_file(&temporary);
+            format!("{}: {error}", path.display())
+        });
+    }
+    Err(format!(
+        "{}: no fresh temporary name after {TEMPORARY_ATTEMPTS} tries ({})",
+        path.display(),
+        last.map_or_else(String::new, |error| error.to_string())
+    ))
 }
 
 /// Writes a report of the host, pretty, with a final newline.

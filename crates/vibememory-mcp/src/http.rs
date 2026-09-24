@@ -375,14 +375,15 @@ pub fn encode(response: &HttpResponse) -> Vec<u8> {
 /// Who asked, for the journal line fail2ban reads. Behind the proxy every connection comes from
 /// `127.0.0.1`, so the address is the last one the proxy appended to `X-Forwarded-For`: the
 /// entries before it were written by the client and prove nothing. Without the header — a
-/// connection straight to the port — the peer itself.
+/// connection straight to the port — the peer itself. Only an IP literal is taken: fail2ban
+/// resolves a host name, and a name in the line would let a request pick whom the jail bans.
 #[must_use]
 pub fn client_address(request: Option<&HttpRequest>, peer: &str) -> String {
     request
         .and_then(|request| request.header("x-forwarded-for"))
         .and_then(|forwarded| forwarded.rsplit(',').next())
         .map(str::trim)
-        .filter(|address| !address.is_empty())
+        .filter(|address| address.parse::<std::net::IpAddr>().is_ok())
         .unwrap_or(peer)
         .to_owned()
 }

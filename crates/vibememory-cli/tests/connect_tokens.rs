@@ -40,7 +40,8 @@ fn grant() -> TokenGrant {
         .iter()
         .find(|case| case["id"] == "token")
         .unwrap();
-    let Ok(Claim::Token(grant)) = read_answer(0, &case["body"].to_string()) else {
+    let asked = file["asked"].as_str().unwrap();
+    let Ok(Claim::Token(grant)) = read_answer(0, &case["body"].to_string(), asked) else {
         panic!("the fixture's token case must read")
     };
     grant
@@ -85,6 +86,25 @@ fn the_token_is_kept_for_its_owner_alone_and_printed_nowhere() {
     );
     assert!(!line.contains(secret), "the line must not carry the token");
     assert!(line.contains("vibememory-vibebrains"));
+    assert!(
+        line.contains(&format!(" '{}' ", grant.mcp_url)),
+        "the address is one quoted word: {line}"
+    );
+}
+
+#[test]
+fn the_code_is_the_first_line_of_what_is_typed_or_piped() {
+    use vibememory_cli::connect::read_code;
+    assert_eq!(
+        read_code("ABCD-EFGH-JKMN\nrest\n".as_bytes()),
+        Ok("ABCD-EFGH-JKMN".to_owned())
+    );
+    assert_eq!(
+        read_code("  ABCD-EFGH-JKMN\r\n".as_bytes()),
+        Ok("ABCD-EFGH-JKMN".to_owned())
+    );
+    assert!(read_code("\n".as_bytes()).is_err());
+    assert!(read_code("".as_bytes()).is_err());
 }
 
 #[test]

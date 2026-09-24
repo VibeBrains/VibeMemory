@@ -1,5 +1,6 @@
-//! `vibememory connect --code <code> --cabinet <address> --agent <name>`: a claim code from the
-//! cabinet traded for a token, and the token kept where the agent reads it and nobody else does.
+//! `vibememory connect --cabinet <address> --agent <name>`: a claim code from the cabinet — typed
+//! at the prompt or piped in, never an argument — traded for a token, and the token kept where the
+//! agent reads it and nobody else does.
 //!
 //! The token passes through this process and three files — its own, and the client fragment for
 //! agents that read MCP servers from JSON — and nowhere else: not stdout, not an argument, not a
@@ -11,8 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use vibememory_core::claim::{TokenGrant, client_fragment, server_name, token_sidecar};
+use vibememory_core::naming::PathSyntax;
 
-use crate::install::{Layout, shell_word};
+use crate::install::{Layout, shell_word, shell_word_for};
 
 /// The cabinet's claim endpoint, under the address `--cabinet` names.
 const CLAIM_PATH: &str = "/api/agent/claim";
@@ -30,9 +32,29 @@ pub const SIDECAR_EXTENSION: &str = "json";
 /// The client fragment beside a token: the one other file that holds it.
 pub const FRAGMENT_SUFFIX: &str = ".mcp.json";
 
+/// The claim code, from the first line of `input`: the terminal a person pastes it into, or a pipe.
+/// Never an argument — `ps` shows those to every user of the machine.
+///
+/// # Errors
+///
+/// When nothing could be read, or the line is empty.
+pub fn read_code(mut input: impl std::io::BufRead) -> Result<String, String> {
+    let mut line = String::new();
+    input
+        .read_line(&mut line)
+        .map_err(|error| format!("the code could not be read: {error}"))?;
+    let code = line.trim();
+    if code.is_empty() {
+        return Err("no code was given".to_owned());
+    }
+    Ok(code.to_owned())
+}
+
 /// Asks the cabinet with curl. The code goes through stdin: an argument would show in `ps` to
 /// every user of the machine. curl, like git and ssh, is the machine's own — there is no TLS in
-/// this binary.
+/// this binary. `cabinet` is an address [`vibememory_core::claim::cabinet_address`] took: curl
+/// reads no `.curlrc` (`-q`) and speaks its scheme alone (`--proto`), so no configuration of the
+/// machine sends the code anywhere else.
 ///
 /// # Errors
 ///
@@ -40,9 +62,18 @@ pub const FRAGMENT_SUFFIX: &str = ".mcp.json";
 /// is not an error here: they are the exit code and stdout, for
 /// [`vibememory_core::claim::read_answer`], and curl's own words on stderr for a person.
 pub fn ask_cabinet(cabinet: &str, code: &str) -> Result<CabinetReply, String> {
-    let url = format!("{}{CLAIM_PATH}", cabinet.trim_end_matches('/'));
+    let url = format!("{cabinet}{CLAIM_PATH}");
+    let protocol = if cabinet.starts_with("https://") {
+        "=https"
+    } else {
+        "=http"
+    };
     let mut child = Command::new("curl")
         .args([
+            // first, or curl reads the user's .curlrc before it
+            "-q",
+            "--proto",
+            protocol,
             "--fail",
             "--silent",
             "--show-error",
@@ -240,13 +271,15 @@ fn owner_only(path: &Path, rights: &str) -> Result<(), String> {
 /// The line that registers the team's memory server with Claude Code, in the user's own
 /// `~/.claude.json`. The token is read from its file when the line runs: it never stands in the
 /// terminal, the shell's history or a chat — and never in `settings.json`, whose managed copy the
-/// engine carries between machines.
+/// engine carries between machines. The address is quoted like the path: it came from the cabinet,
+/// and the line is pasted into a shell.
 #[must_use]
 pub fn claude_code_registration(grant: &TokenGrant, token: &Path) -> String {
     format!(
         "claude mcp add --scope user --transport http {} {} --header \"Authorization: Bearer $(cat {})\"",
         server_name(&grant.team),
-        grant.mcp_url,
+        // an address, not a path: quoted as it is, with no separator turned around
+        shell_word_for(&grant.mcp_url, PathSyntax::Posix),
         shell_word(token)
     )
 }
