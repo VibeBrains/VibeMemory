@@ -175,19 +175,20 @@ fn run(args: &[&str], host: &Host, env: &[(&str, &str)], input: Option<&str>) ->
 }
 
 fn apply(host: &Host) -> Output {
+    apply_with(host, &[])
+}
+
+fn apply_with(host: &Host, extra: &[&str]) -> Output {
     let store_init = support::repo_root().join("infra/storeInit.sh");
-    run(
-        &[
-            "access-apply",
-            "--authorized-keys",
-            host.keys.to_str().expect("utf-8"),
-            "--store-init",
-            store_init.to_str().expect("utf-8"),
-        ],
-        host,
-        &[],
-        None,
-    )
+    let mut args = vec![
+        "access-apply",
+        "--authorized-keys",
+        host.keys.to_str().expect("utf-8"),
+        "--store-init",
+        store_init.to_str().expect("utf-8"),
+    ];
+    args.extend_from_slice(extra);
+    run(&args, host, &[], None)
 }
 
 fn json_file(path: &Path) -> Value {
@@ -702,4 +703,197 @@ fn a_key_reaches_its_teams_memory_and_its_status() {
     assert!(
         String::from_utf8_lossy(&unavailable.stderr).starts_with("vibememory: statusUnavailable\n")
     );
+}
+
+#[test]
+fn an_open_session_ends_with_the_first_request_after_the_key_is_revoked() {
+    use std::io::{BufRead as _, BufReader};
+
+    let host = host("session");
+    assert!(apply(&host).status.success());
+    let mut child = Command::new(BINARY)
+        .args(["shell", ALICE_LAPTOP])
+        .args([
+            "--access",
+            host.access.to_str().expect("utf-8"),
+            "--teams",
+            host.teams.to_str().expect("utf-8"),
+        ])
+        .env(
+            "SSH_ORIGINAL_COMMAND",
+            "mcp --team vibebrains --agent test-agent",
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("run the binary");
+    let mut stdin = child.stdin.take().expect("stdin");
+    let mut answers = BufReader::new(child.stdout.take().expect("stdout")).lines();
+    let mut ask = |line: &str| -> Value {
+        writeln!(stdin, "{line}").expect("write");
+        stdin.flush().expect("flush");
+        serde_json::from_str(&answers.next().expect("an answer").expect("read")).expect("JSON")
+    };
+    let search = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"memory_search","arguments":{"query":"x"}}}"#;
+    assert!(
+        ask(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#)["result"].is_object()
+    );
+    assert_eq!(ask(search)["result"]["isError"], false);
+
+    // The cabinet revokes the laptop's key while the session is open.
+    let mut revoked: Value =
+        serde_json::from_slice(&fs::read(&host.access).expect("snapshot")).expect("JSON");
+    revoked["serial"] = json!(13);
+    revoked["keys"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|key| key["id"] != ALICE_LAPTOP);
+    put_snapshot(&host, &revoked);
+    let ended = ask(search);
+    assert_eq!(ended["error"]["code"], -32001, "{ended}");
+    assert!(
+        ended["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not in the snapshot any more"),
+        "{ended}"
+    );
+    let status = child.wait().expect("wait");
+    assert!(status.success(), "the session ends on its own");
+}
+
+#[test]
+fn a_run_that_cannot_list_the_stores_applies_nothing_and_the_timer_catches_up() {
+    let host = host("catch-up");
+    assert!(apply(&host).status.success());
+    let copy = layout::applied_snapshot_file(&host.access);
+    let before = fs::read(&copy).expect("copy");
+
+    // A newer snapshot while the team stores cannot be listed: nothing applied, and it says so.
+    let mut newer: Value =
+        serde_json::from_slice(&fs::read(&host.access).expect("snapshot")).expect("JSON");
+    newer["serial"] = json!(13);
+    newer["keys"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|key| key["id"] != ALICE_LAPTOP);
+    put_snapshot(&host, &newer);
+    fs::set_permissions(&host.teams, fs::Permissions::from_mode(0o000)).expect("chmod");
+    let failed = apply_with(&host, &["--catch-up"]);
+    fs::set_permissions(&host.teams, fs::Permissions::from_mode(0o755)).expect("chmod");
+    assert!(!failed.status.success());
+    let applied = json_file(&layout::applied_file(&host.access));
+    assert_eq!(applied["serial"], 12);
+    assert_eq!(applied["problems"][0]["code"], "applyFailed");
+    assert_eq!(
+        fs::read(&copy).expect("copy"),
+        before,
+        "no copy of what was not applied"
+    );
+
+    // The timer's next run applies it; the one after finds nothing to do.
+    assert!(apply_with(&host, &["--catch-up"]).status.success());
+    assert_eq!(json_file(&layout::applied_file(&host.access))["serial"], 13);
+    let stamp = fs::metadata(layout::applied_file(&host.access))
+        .expect("applied")
+        .modified()
+        .expect("mtime");
+    assert!(apply_with(&host, &["--catch-up"]).status.success());
+    assert_eq!(
+        fs::metadata(layout::applied_file(&host.access))
+            .expect("applied")
+            .modified()
+            .expect("mtime"),
+        stamp,
+        "caught up: nothing rewritten"
+    );
+
+    // Without a copy, applied.json still keeps the host from going back.
+    fs::remove_file(&copy).expect("remove the copy");
+    newer["serial"] = json!(12);
+    put_snapshot(&host, &newer);
+    assert!(!apply(&host).status.success());
+    let refused = json_file(&layout::applied_file(&host.access));
+    assert_eq!(refused["problems"][0]["code"], "serialBehind");
+    assert_eq!(refused["serial"], 13);
+}
+
+#[test]
+fn a_push_of_a_file_holding_an_agent_token_is_refused_whole() {
+    let host = host("token-push");
+    let (sync, work) = alice_clone(&host);
+    let before = bare(&sync, &["rev-parse", "main"]);
+    let line = support::fixture("fixtures/export/settingsWithToken.json")["cases"]
+        .as_array()
+        .expect("cases")
+        .iter()
+        .find(|case| case["id"] == "transcriptToolResult")
+        .and_then(|case| case["text"].as_str())
+        .expect("the case")
+        .to_owned();
+    let transcript = "projects/Acme/11111111-1111-4111-8111-111111111111.jsonl";
+    fs::create_dir_all(work.join("projects/Acme")).expect("dirs");
+    fs::write(work.join(transcript), line).expect("write");
+    fs::write(work.join("projects/Acme/notes.txt"), "no token here\n").expect("write");
+    git(&work, &["add", "-A"]);
+    git(
+        &work,
+        &["commit", "--quiet", "-m", "a tick of an old engine"],
+    );
+    let refused = member_git(&host, &work, ALICE_LAPTOP, &["push", "origin", "main"]);
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{said}");
+    assert!(said.contains("remote: vibememory: tokenInPush"), "{said}");
+    assert!(said.contains(&format!("remote: {transcript}")), "{said}");
+    assert!(
+        !said.contains("notes.txt"),
+        "only the files that hold one: {said}"
+    );
+    assert_eq!(
+        bare(&sync, &["rev-parse", "main"]),
+        before,
+        "nothing landed"
+    );
+}
+
+#[test]
+fn an_application_waits_for_the_one_under_way() {
+    let host = host("apply-lock");
+    assert!(apply(&host).status.success());
+    // Another application holds the lock: the timer's run starts and waits, even with nothing to do.
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(layout::apply_lock_file(&host.access))
+        .expect("lock file");
+    lock.lock().expect("lock");
+    let store_init = support::repo_root().join("infra/storeInit.sh");
+    let mut child = Command::new(BINARY)
+        .args([
+            "access-apply",
+            "--catch-up",
+            "--authorized-keys",
+            host.keys.to_str().expect("utf-8"),
+            "--store-init",
+            store_init.to_str().expect("utf-8"),
+            "--access",
+            host.access.to_str().expect("utf-8"),
+            "--teams",
+            host.teams.to_str().expect("utf-8"),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("run the binary");
+    // caught up, a run that did not wait would be over within milliseconds
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    assert!(
+        child.try_wait().expect("try wait").is_none(),
+        "it waits while the other one runs"
+    );
+    lock.unlock().expect("unlock");
+    assert!(child.wait().expect("wait").success());
 }

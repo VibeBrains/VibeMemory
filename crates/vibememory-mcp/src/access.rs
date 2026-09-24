@@ -971,6 +971,21 @@ fn keys(raw: &RawSnapshot) -> Result<(), Refusal> {
             ),
         ));
     }
+    // One public key, one id: sshd takes the first line that matches, and a second key with
+    // someone else's public half would take over their logins — signed as the wrong machine.
+    let mut seen = BTreeSet::new();
+    for key in &raw.keys {
+        let material = key
+            .public_key
+            .strip_prefix(ED25519)
+            .and_then(|rest| base64(rest.trim_start()));
+        if !seen.insert(material) {
+            return Err(refuse(
+                "publicKeyTwice",
+                format!("key {} carries a public key another key has", key.id),
+            ));
+        }
+    }
     Ok(())
 }
 

@@ -1,5 +1,5 @@
 {
-  "description": "What pre-receive decides for a push to a team store: the update lines, the paths changed on main and the sizes, against the access snapshot. The snapshot is the base of accessSnapshots.json with snapshotPatch and then the case's patch applied; every push comes at `now`.",
+  "description": "What pre-receive decides for a push to a team store: the update lines, the paths changed on main and the sizes, against the access snapshot. The snapshot is the base of accessSnapshots.json with snapshotPatch and then the case's patch applied; every push comes at `now`; withTokens names the changed paths whose new content holds an agent token (the hook reads them from the pushed objects).",
   "snapshotPatch": {
     "teamCount": 5,
     "teams": {
@@ -484,6 +484,59 @@
         "paths": [
           "machines/alice-laptop",
           "projects"
+        ]
+      }
+    },
+    {
+      "id": "tokenInTranscript",
+      "provenance": "computed",
+      "note": "A transcript whose tool result holds an agent token: an engine that screens holds it back itself; this push came without one, and the whole push is refused.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/11111111-1111-4111-8111-111111111111.jsonl",
+        "projects/Acme/memory.jsonl"
+      ],
+      "withTokens": [
+        "projects/Acme/11111111-1111-4111-8111-111111111111.jsonl"
+      ],
+      "expect": {
+        "code": "tokenInPush",
+        "paths": [
+          "projects/Acme/11111111-1111-4111-8111-111111111111.jsonl"
+        ]
+      }
+    },
+    {
+      "id": "pathBeforeToken",
+      "provenance": "computed",
+      "note": "A path the member may not push at all is named first, token or not.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        ".gitattributes"
+      ],
+      "withTokens": [
+        ".gitattributes"
+      ],
+      "expect": {
+        "code": "pathDenied",
+        "paths": [
+          ".gitattributes"
         ]
       }
     },

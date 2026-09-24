@@ -194,6 +194,7 @@ Deploy-ключ старого сервера в репозитории зерк
 | Юнит | Когда | Что делает |
 |---|---|---|
 | `vibememory-access-apply.path` → `.service` | при каждой смене `/srv/vibememory/access/access.json` | `vibememory-mcp access-apply`: копия применённого снимка `applied-snapshot.json`, сторы команд, ключи машин в `~vmgit/.ssh/authorized_keys`, `applied.json` и отчёт `host.json` |
+| `vibememory-access-catch-up.timer` → `.service` | раз в 15 минут | `vibememory-mcp access-apply --catch-up`: применяет снимок заново, если последнее применение этого файла провалилось (`applyFailed`); иначе ничего. С применением по смене файла не пересекается — оба держат замок `.access-apply.lock` |
 | `vibememory-status.timer` → `.service` | раз в час | `vibememory-mcp status`: отчёт `host.json` для кабинета |
 | `vibememory-teams-repack.timer` → `.service` | в 04:47 | `storeRepack.sh --teams`: упаковка каждого живого стора команды |
 

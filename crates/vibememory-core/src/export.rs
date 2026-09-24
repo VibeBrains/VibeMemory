@@ -15,48 +15,6 @@
 /// resume does not need — and git would carry every version of them forever.
 pub const MAX_EXPORTED_BYTES: u64 = 45 * 1024 * 1024;
 
-/// The directory of projects, where the sessions of each live.
-const PROJECTS_DIR: &str = "projects";
-/// A session's transcript: its id and this.
-const TRANSCRIPT_SUFFIX: &str = ".jsonl";
-/// Where the dashes of a session id stand: the CLI names sessions by UUID.
-const SESSION_ID_DASHES: [usize; 4] = [8, 13, 18, 23];
-/// Characters of a session id.
-const SESSION_ID_LENGTH: usize = 36;
-
-/// Whether `text` is a session id: a UUID in lowercase, as the CLI writes it.
-fn is_session_id(text: &str) -> bool {
-    text.len() == SESSION_ID_LENGTH
-        && text.char_indices().all(|(at, character)| {
-            if SESSION_ID_DASHES.contains(&at) {
-                character == '-'
-            } else {
-                character.is_ascii_digit() || ('a'..='f').contains(&character)
-            }
-        })
-}
-
-/// Whether `path` — `/`-separated, from the root of the store or of the config directory — is a
-/// session's own file: its transcript `projects/<name>/<session>.jsonl` or anything under its side
-/// directory `projects/<name>/<session>/`. These are the agent's raw output: what a tool read and
-/// what a person pasted lands there, the memory of a project does not.
-#[must_use]
-pub fn is_session_file(path: &str) -> bool {
-    let mut segments = path.split('/');
-    let (Some(PROJECTS_DIR), Some(_), Some(third)) =
-        (segments.next(), segments.next(), segments.next())
-    else {
-        return false;
-    };
-    if segments.next().is_some() {
-        is_session_id(third)
-    } else {
-        third
-            .strip_suffix(TRANSCRIPT_SUFFIX)
-            .is_some_and(is_session_id)
-    }
-}
-
 /// How a path is matched. Rules are data rather than code so that the two lists read as lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Match {

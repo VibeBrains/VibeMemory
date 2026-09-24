@@ -14,7 +14,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use vibememory_core::terminal::printable;
 
-use crate::access::{self, Key, Snapshot};
+use crate::access::{self, Snapshot};
 use crate::apply::{self, Step};
 use crate::git_memories::{self, GitMemories};
 use crate::host::TeamMemories;
@@ -354,7 +354,7 @@ pub fn shell(key: &str, original: &str, paths: &HostPaths) -> ExitCode {
                 Some(key),
             )
         }
-        ShellAction::Mcp { team, agent } => serve_team(snapshot, identity, &team, &agent, paths),
+        ShellAction::Mcp { team, agent } => serve_team(&identity.id, &team, &agent, paths),
         ShellAction::Status => answer_status(snapshot, key, paths),
     }
 }
@@ -389,25 +389,26 @@ fn run_git(command: &str, repo: &Path, key: Option<&str>) -> ExitCode {
     }
 }
 
-/// The memory server of a team over the session's stdin and stdout: the member is the key's, the
-/// agent is what the client said, versions are signed with the key's `storeName`.
-fn serve_team(
+/// What one machine key may do in one team, taken from `snapshot` at `now`; why not, when it may
+/// no longer — the key revoked, its member banned or out of the team, the team deleted.
+fn team_rights(
     snapshot: &Snapshot,
-    key: &Key,
+    key_id: &str,
     slug: &str,
     agent: &str,
+    now: &str,
     paths: &HostPaths,
-) -> ExitCode {
-    let Some((team, rank)) = snapshot
+) -> Result<(Grant, TeamMemories), String> {
+    let key = snapshot
+        .key(key_id)
+        .filter(|key| !snapshot.barred(&key.member, now))
+        .ok_or_else(|| format!("key {key_id} is not in the snapshot any more"))?;
+    let (team, rank) = snapshot
         .teams
         .get(slug)
+        .filter(|team| team.deleted.is_none() && key.teams.iter().any(|team| team == slug))
         .and_then(|team| Some((team, *team.members.get(&key.member)?)))
-    else {
-        return refuse(
-            "unknownTeam",
-            &[&format!("key {} does not open {slug}", key.id)],
-        );
-    };
+        .ok_or_else(|| format!("key {key_id} does not open {slug} any more"))?;
     let memories = TeamMemories::for_session(
         team.repository(slug, &paths.teams),
         key.store_name.clone(),
@@ -431,24 +432,41 @@ fn serve_team(
         },
         cabinet: None,
     };
+    Ok((grant, memories))
+}
+
+/// The memory server of a team over the session's stdin and stdout: the member is the key's, the
+/// agent is what the client said, versions are signed with the key's `storeName`.
+///
+/// A client keeps such a session open for days, so what the key may do is taken anew from the
+/// snapshot in force before every request: a ban, a revocation, a removal, a demotion or the end of
+/// the team's term reaches an open session with its next request, not with its next connection.
+fn serve_team(key_id: &str, slug: &str, agent: &str, paths: &HostPaths) -> ExitCode {
     journal_quietly(&format!(
-        "{SHELL_TAG}: key {} ({}) opens the memory of {slug} for {agent}",
-        key.id, key.store_name
+        "{SHELL_TAG}: key {key_id} opens the memory of {slug} for {agent}"
     ));
-    let caller = grant.caller();
+    let mut rights = || {
+        let snapshot = read_in_force(&paths.access, journal_quietly)?;
+        let now = vibememory_cli::clock::now();
+        team_rights(&snapshot, key_id, slug, agent, &now, paths).inspect_err(|why| {
+            journal_quietly(&format!("{SHELL_TAG}: session of key {key_id} ends: {why}"));
+        })
+    };
     let stdin = std::io::stdin();
-    let served = protocol::serve_lines(
+    let served = protocol::serve_checked_lines(
         stdin.lock(),
         std::io::stdout(),
-        &caller,
-        &memories,
-        &mut |request, response| {
+        &mut rights,
+        &|(grant, memories): &(Grant, TeamMemories), request| {
+            let response = protocol::handle(request, &grant.caller(), memories);
             if let Some(line) =
-                http::journal_line(&http::call_note(request, response, &grant), "ssh")
+                http::journal_line(&http::call_note(request, response.as_ref(), grant), "ssh")
             {
                 journal_quietly(&line);
             }
+            response
         },
+        &mut |_, _| {},
     );
     match served {
         Ok(()) => ExitCode::SUCCESS,
@@ -535,6 +553,13 @@ pub fn pre_receive(paths: &HostPaths, reserve_bytes: u64) -> ExitCode {
         free_bytes,
         reserve_bytes,
     };
+    let with_tokens = match receive::main_update(&updates) {
+        Some(update) => match paths_with_tokens(&repo, &update.new, &changed) {
+            Ok(found) => found,
+            Err(why) => return refuse("hostFailure", &[&why]),
+        },
+        None => Vec::new(),
+    };
     let snapshot = read_in_force(&paths.access, journal_quietly).ok();
     let now = vibememory_cli::clock::now();
     let push = Push {
@@ -544,6 +569,7 @@ pub fn pre_receive(paths: &HostPaths, reserve_bytes: u64) -> ExitCode {
         changed: &changed,
         sizes,
         now: &now,
+        with_tokens: &with_tokens,
     };
     let who = key.as_deref().unwrap_or("-");
     match receive::decide(&push, snapshot.as_ref()) {
@@ -568,6 +594,49 @@ pub fn pre_receive(paths: &HostPaths, reserve_bytes: u64) -> ExitCode {
             }
         }
     }
+}
+
+/// Of `changed`, the paths whose content at `commit` holds an agent token of a cabinet, read in one
+/// `git cat-file --batch`; a path the push deletes has no content and holds nothing.
+fn paths_with_tokens(repo: &Path, commit: &str, changed: &[String]) -> Result<Vec<String>, String> {
+    if changed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut asked = String::new();
+    for path in changed {
+        asked.push_str(commit);
+        asked.push(':');
+        asked.push_str(path);
+        asked.push('\n');
+    }
+    let output = git_memories::run(repo, &["cat-file", "--batch"], Some(asked.as_bytes()), &[])?;
+    let mut found = Vec::new();
+    let mut rest = output.as_slice();
+    for path in changed {
+        let end = rest
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .ok_or_else(|| "git cat-file answered short".to_owned())?;
+        let header = String::from_utf8_lossy(rest.get(..end).unwrap_or_default()).into_owned();
+        rest = rest.get(end + 1..).unwrap_or_default();
+        if header.ends_with(" missing") {
+            continue;
+        }
+        let size: usize = header
+            .rsplit(' ')
+            .next()
+            .and_then(|size| size.parse().ok())
+            .ok_or_else(|| format!("git cat-file answered {header:?}"))?;
+        let content = rest
+            .get(..size)
+            .ok_or_else(|| "git cat-file answered short".to_owned())?;
+        if vibememory_core::token::holds_token(content) {
+            found.push(path.clone());
+        }
+        // the content, then the newline that ends it
+        rest = rest.get(size + 1..).unwrap_or_default();
+    }
+    Ok(found)
 }
 
 /// The paths a push changes on `main`: the difference of the trees before and after, not every
@@ -624,8 +693,25 @@ pub struct ApplyPaths {
 ///
 /// A snapshot published while a run is on would be merged by systemd into that run and wait for
 /// the next publication, so a run that finds the file changed under it applies it again.
+///
+/// `catch_up` is the timer's run: it does nothing when the file is the snapshot applied last and
+/// that application failed at nothing. An application that failed is otherwise retried only by the
+/// next change of the file, which may be days away. The two runs are separate units, so the whole
+/// application holds its lock: the second waits and then finds the host caught up.
 #[must_use]
-pub fn access_apply(paths: &HostPaths, apply_paths: &ApplyPaths) -> ExitCode {
+pub fn access_apply(paths: &HostPaths, apply_paths: &ApplyPaths, catch_up: bool) -> ExitCode {
+    let _lock = match hold_lock(&layout::apply_lock_file(&paths.access)) {
+        Ok(lock) => lock,
+        Err(why) => {
+            journal(&format!(
+                "{APPLY_TAG}: the application cannot take its lock: {why}"
+            ));
+            return ExitCode::FAILURE;
+        }
+    };
+    if catch_up && caught_up(paths) {
+        return ExitCode::SUCCESS;
+    }
     let mut outcome = ExitCode::FAILURE;
     for _ in 0..APPLY_PASSES {
         let (code, applied) = apply_once(paths, apply_paths);
@@ -640,12 +726,39 @@ pub fn access_apply(paths: &HostPaths, apply_paths: &ApplyPaths) -> ExitCode {
     outcome
 }
 
+/// Takes the exclusive lock on the file at `path`, waiting for its holder; it is held until the
+/// returned file is dropped.
+fn hold_lock(path: &Path) -> Result<std::fs::File, String> {
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    lock.lock()
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    Ok(lock)
+}
+
+/// Whether the last application was of the file as it is now and did everything it had to.
+fn caught_up(paths: &HostPaths) -> bool {
+    let Ok(bytes) = std::fs::read(&paths.access) else {
+        return false;
+    };
+    matches!(
+        read_json::<Applied>(&layout::applied_file(&paths.access)),
+        Ok(Some(applied)) if applied.snapshot_hash == vibememory_cli::sha256::hex(&bytes)
+            && applied.problems.iter().all(|problem| problem.code != APPLY_FAILED)
+    )
+}
+
 /// One application of the snapshot as it is now; returns the bytes it applied or refused.
 ///
 /// A snapshot not newer than the one applied last is refused: a publication that lost its turn,
-/// or a file put back by hand, is an older decision and does not take the host back. The copy of
-/// what is applied is written before anything else, so a late older file is out of force from
-/// here on.
+/// or a file put back by hand, is an older decision and does not take the host back. Once the team
+/// stores are listed, the copy of what is applied is written before anything else, so a late older
+/// file is out of force from here on; a run that cannot even list them applies nothing and says
+/// so, and the timer's next run tries again.
 fn apply_once(paths: &HostPaths, apply_paths: &ApplyPaths) -> (ExitCode, Option<Vec<u8>>) {
     let applied_file = layout::applied_file(&paths.access);
     let (bytes, snapshot) = match read_checked(&paths.access) {
@@ -655,20 +768,18 @@ fn apply_once(paths: &HostPaths, apply_paths: &ApplyPaths) -> (ExitCode, Option<
         }
         Err(why) => return refused(paths, &applied_file, SNAPSHOT_REJECTED, why, None),
     };
-    if let Err(why) = newer_than_applied(&paths.access, &snapshot) {
+    if let Err(why) = newer_than_applied(&paths.access, &snapshot, &bytes) {
         return refused(paths, &applied_file, SERIAL_BEHIND, why, Some(bytes));
     }
-    let mut problems = Vec::new();
-    let mut failed = !keep_applied_copy(&paths.access, &bytes, &mut problems);
     let dirs = match directory_names(&paths.teams) {
         Ok(dirs) => dirs,
         Err(why) => {
-            journal(&format!(
-                "{APPLY_TAG}: the team stores cannot be listed: {why}"
-            ));
-            return (ExitCode::FAILURE, Some(bytes));
+            let why = format!("the team stores cannot be listed: {why}");
+            return refused(paths, &applied_file, APPLY_FAILED, why, Some(bytes));
         }
     };
+    let mut problems = Vec::new();
+    let mut failed = !keep_applied_copy(&paths.access, &bytes, &mut problems);
     let plan = apply::plan(&snapshot, &dirs);
     for problem in &plan.problems {
         journal(&format!(
@@ -729,8 +840,20 @@ fn apply_once(paths: &HostPaths, apply_paths: &ApplyPaths) -> (ExitCode, Option<
     (code, Some(bytes))
 }
 
-/// Whether `snapshot` is newer than the one the host applied last; why not, when it is not.
-fn newer_than_applied(access: &Path, snapshot: &Snapshot) -> Result<(), String> {
+/// Whether `snapshot` (`bytes`) is newer than the one the host applied last; why not, when it is
+/// not. The copy says so first; `applied.json` too, for a run whose copy could not be written.
+fn newer_than_applied(access: &Path, snapshot: &Snapshot, bytes: &[u8]) -> Result<(), String> {
+    if let Ok(Some(applied)) = read_json::<Applied>(&layout::applied_file(access))
+        && (snapshot.serial < applied.serial
+            || (snapshot.serial > 0
+                && snapshot.serial == applied.serial
+                && vibememory_cli::sha256::hex(bytes) != applied.snapshot_hash))
+    {
+        return Err(format!(
+            "serial {} is not newer than serial {} applied",
+            snapshot.serial, applied.serial
+        ));
+    }
     let Some(last) = read_applied_snapshot(access, journal) else {
         return Ok(());
     };
@@ -824,9 +947,9 @@ fn run_steps(
 }
 
 /// A refused snapshot changes nothing on the host, and the last application says so: its values
-/// stay, and the refusal — `snapshotRejected` or `serialBehind`, the latest one only — stands first
-/// among its problems. Before the first application there is nothing to keep, and nothing is
-/// written.
+/// stay, and the refusal — `snapshotRejected`, `serialBehind` or an `applyFailed` that stopped the
+/// run, the latest one only — stands first among its problems. Before the first application there
+/// is nothing to keep, and nothing is written.
 fn keep_previous_with_rejection(applied_file: &Path, code: &str, why: String) {
     let previous = match read_json::<Applied>(applied_file) {
         Ok(Some(previous)) => previous,
@@ -837,9 +960,9 @@ fn keep_previous_with_rejection(applied_file: &Path, code: &str, why: String) {
         }
     };
     let mut applied = previous;
-    applied
-        .problems
-        .retain(|problem| problem.code != SNAPSHOT_REJECTED && problem.code != SERIAL_BEHIND);
+    applied.problems.retain(|problem| {
+        problem.code != SNAPSHOT_REJECTED && problem.code != SERIAL_BEHIND && problem.code != code
+    });
     applied.problems.insert(
         0,
         Problem {
@@ -933,7 +1056,12 @@ fn report_after(paths: &HostPaths) {
 }
 
 /// Builds `host.json` from the snapshot, `applied.json` and what is on disk, and writes it.
+///
+/// The application and the hourly report are separate units and may run at once; each holds the
+/// lock from reading `applied.json` to writing the report, so a slow report never lands after a
+/// fresh one with an older application in it.
 fn write_report(paths: &HostPaths) -> Result<(), String> {
+    let _lock = hold_lock(&layout::report_lock_file(&paths.access))?;
     let snapshot = match read_in_force(&paths.access, journal) {
         Ok(snapshot) => Some(snapshot),
         Err(why) => {

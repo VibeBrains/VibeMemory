@@ -1,5 +1,5 @@
 {
-  "description": "Что уходит с машины в стор, а что остаётся. Кейсы observed — пути из описи ~/.claude, снятой 2026-09-03; computed — те же правила на путях, которых на этой машине нет, но которые CLI создаёт на других (Windows, Desktop, Cowork) или может создать после обновления. sessionFile — only where a case gives it — says whether the path is a session's own file, whose content is screened for agent tokens before it leaves the machine.",
+  "description": "Что уходит с машины в стор, а что остаётся. Кейсы observed — пути из описи ~/.claude, снятой 2026-09-03; computed — те же правила на путях, которых на этой машине нет, но которые CLI создаёт на других (Windows, Desktop, Cowork) или может создать после обновления.",
   "cases": [
     {
       "id": "projects-transcript",
@@ -7,8 +7,7 @@
       "note": "Транскрипт проекта — ровно то, ради чего движок существует.",
       "path": "projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/11111111-1111-4111-8111-111111111111.jsonl",
       "expect": {
-        "decision": "export",
-        "sessionFile": true
+        "decision": "export"
       }
     },
     {
@@ -17,8 +16,7 @@
       "note": "Память проекта лежит внутри projects/ и уезжает вместе с ним.",
       "path": "projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/memory/MEMORY.md",
       "expect": {
-        "decision": "export",
-        "sessionFile": false
+        "decision": "export"
       }
     },
     {
@@ -264,8 +262,7 @@
       "size": 47185920,
       "expect": {
         "decision": "refuse",
-        "refusal": "tooLarge",
-        "sessionFile": false
+        "refusal": "tooLarge"
       }
     },
     {
@@ -295,8 +292,7 @@
       "note": "Реальный путь из архива владельца: хендофф сессии в памяти проекта. Первый dry-run миграции показал 39 таких файлов в отказе — правило про sessions было шире, чем реестр, который оно защищает.",
       "path": "projects/BuzzBang/memory/sessions/auth-and-mail.md",
       "expect": {
-        "decision": "export",
-        "sessionFile": false
+        "decision": "export"
       }
     },
     {
@@ -307,46 +303,6 @@
       "expect": {
         "decision": "refuse",
         "refusal": "secret"
-      }
-    },
-    {
-      "id": "session-tool-result",
-      "provenance": "computed",
-      "note": "A tool result kept beside the transcript is the session's own output: screened like the transcript.",
-      "path": "projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/11111111-1111-4111-8111-111111111111/tool-results/toolu_01.txt",
-      "expect": {
-        "decision": "export",
-        "sessionFile": true
-      }
-    },
-    {
-      "id": "session-subagent",
-      "provenance": "computed",
-      "note": "A subagent's transcript in the session's side directory: the same session, the same screening.",
-      "path": "projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/11111111-1111-4111-8111-111111111111/subagents/agent-1.jsonl",
-      "expect": {
-        "decision": "export",
-        "sessionFile": true
-      }
-    },
-    {
-      "id": "memory-journal-not-session",
-      "provenance": "computed",
-      "note": "The journal of a project's memory is written by the memory server, record by record, not by the agent's tools: not a session file.",
-      "path": "projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/memory.jsonl",
-      "expect": {
-        "decision": "export",
-        "sessionFile": false
-      }
-    },
-    {
-      "id": "uppercase-id-not-session",
-      "provenance": "computed",
-      "note": "The CLI names sessions by lowercase UUID; a name that only looks like one is not a session.",
-      "path": "projects/-Volumes-Storage-Projects-VibeCode-VibeMemory/11111111-1111-4111-8111-11111111111A.jsonl",
-      "expect": {
-        "decision": "export",
-        "sessionFile": false
       }
     }
   ]

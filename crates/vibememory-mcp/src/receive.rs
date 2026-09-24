@@ -108,6 +108,8 @@ pub struct Push<'a> {
     pub sizes: Sizes,
     /// When the push comes, `YYYY-MM-DDTHH:MM:SSZ`: a banned member's key pushes nothing.
     pub now: &'a str,
+    /// The changed paths whose new content holds an agent token of a cabinet.
+    pub with_tokens: &'a [String],
 }
 
 /// Why the push is refused.
@@ -207,6 +209,15 @@ pub fn decide(push: &Push<'_>, snapshot: Option<&Snapshot>) -> Result<(), PushRe
         ));
     }
     paths_allowed(push.changed, &key.store_name)?;
+    if !push.with_tokens.is_empty() {
+        // Engines hold such files back themselves; this is for one that does not, and for a
+        // plain `git push` — a token in a team's store is in front of every member for good.
+        return Err(refuse_paths(
+            "tokenInPush",
+            "these files hold an agent token; revoke it in the cabinet and push without it",
+            push.with_tokens.to_vec(),
+        ));
+    }
     sizes_allowed(push.sizes, team.limits.quota_bytes)
 }
 

@@ -21,6 +21,11 @@ pub const TEAMS_DIR: &str = "/srv/vibememory/teams";
 const APPLIED_NAME: &str = "applied.json";
 /// The host's report for the cabinet, next to the snapshot.
 const REPORT_NAME: &str = "host.json";
+/// What the application and the hourly report hold while one of them writes `host.json`.
+const REPORT_LOCK_NAME: &str = ".host.json.lock";
+/// What an application of the snapshot holds from start to end: the run on a change of the file
+/// and the timer's catch-up are separate units and must not apply side by side.
+const APPLY_LOCK_NAME: &str = ".access-apply.lock";
 /// The bytes of the snapshot the host applied last, next to the snapshot: what is in force when a
 /// stale `access.json` lands over a newer one.
 const APPLIED_SNAPSHOT_NAME: &str = "applied-snapshot.json";
@@ -49,6 +54,18 @@ pub fn applied_file(access: &Path) -> PathBuf {
 #[must_use]
 pub fn applied_snapshot_file(access: &Path) -> PathBuf {
     access.with_file_name(APPLIED_SNAPSHOT_NAME)
+}
+
+/// The lock the writers of `host.json` take in turn, beside the snapshot at `access`.
+#[must_use]
+pub fn report_lock_file(access: &Path) -> PathBuf {
+    access.with_file_name(REPORT_LOCK_NAME)
+}
+
+/// The lock an application of the snapshot holds, beside the snapshot at `access`.
+#[must_use]
+pub fn apply_lock_file(access: &Path) -> PathBuf {
+    access.with_file_name(APPLY_LOCK_NAME)
 }
 
 /// `host.json` beside the snapshot at `access`.

@@ -323,7 +323,9 @@ fn project_of(
     })
 }
 
-/// Which projects a read looks at: the one it named, or every one the caller may see.
+/// Which projects a read looks at: the one it named, or every one the caller may see. A named
+/// project must be one the store lists, as for a write: a `memory` team's archived project keeps
+/// its records in the repository, and naming it would read them past the cabinet's list.
 fn scope(
     arguments: &Value,
     caller: &Caller<'_>,
@@ -332,6 +334,9 @@ fn scope(
     match optional(arguments, "project") {
         Some(one) => {
             in_scope(&one, caller)?;
+            if !memories.projects()?.contains(&one) {
+                return Err(format!("the store holds no project {one}"));
+            }
             Ok(vec![one])
         }
         None => visible(caller, memories),

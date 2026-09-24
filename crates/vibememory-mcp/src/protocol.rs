@@ -154,6 +154,9 @@ pub fn malformed(detail: &str) -> Response {
     Response::failed(Value::Null, -32700, detail)
 }
 
+/// The JSON-RPC error of a request the session's rights no longer allow: the session ends with it.
+const RIGHTS_ENDED: i64 = -32001;
+
 /// Serves MCP over a stream of lines until the input closes: one request per line, one answer per
 /// line, nothing else on `output` — it *is* the protocol. `after` sees every request with its
 /// answer; the host journals tool calls with it.
@@ -163,9 +166,34 @@ pub fn malformed(detail: &str) -> Response {
 /// Input that cannot be read. A client that goes away mid-answer is not an error of the server.
 pub fn serve_lines(
     input: impl std::io::BufRead,
-    mut output: impl std::io::Write,
+    output: impl std::io::Write,
     caller: &crate::tools::Caller<'_>,
     memories: &dyn Memories,
+    after: &mut dyn FnMut(&Request, Option<&Response>),
+) -> Result<(), String> {
+    serve_checked_lines(
+        input,
+        output,
+        &mut || Ok(()),
+        &|(), request| handle(request, caller, memories),
+        after,
+    )
+}
+
+/// Serves MCP over a stream of lines like [`serve_lines`], with the session's rights taken anew
+/// before every request: a session that lasts days must not outlive a revocation. `rights` answers
+/// what the session may do now, or why it may do nothing any more — then that request is refused
+/// with the reason and the session ends; the client's next connection meets the refusal of the
+/// door.
+///
+/// # Errors
+///
+/// Input that cannot be read.
+pub fn serve_checked_lines<Rights>(
+    input: impl std::io::BufRead,
+    mut output: impl std::io::Write,
+    rights: &mut dyn FnMut() -> Result<Rights, String>,
+    serve: &dyn Fn(&Rights, &Request) -> Option<Response>,
     after: &mut dyn FnMut(&Request, Option<&Response>),
 ) -> Result<(), String> {
     for line in input.lines() {
@@ -173,14 +201,32 @@ pub fn serve_lines(
         if line.trim().is_empty() {
             continue;
         }
+        let mut ended = false;
         let response = match parse(&line) {
             Ok(request) => {
-                let response = handle(&request, caller, memories);
+                let response = match rights() {
+                    Ok(now) => serve(&now, &request),
+                    Err(why) => {
+                        ended = true;
+                        request
+                            .id
+                            .clone()
+                            .map(|id| Response::failed(id, RIGHTS_ENDED, &why))
+                    }
+                };
                 after(&request, response.as_ref());
                 response
             }
             Err(detail) => Some(malformed(&detail)),
         };
+        if ended {
+            if let Some(response) = response
+                && let Ok(text) = serde_json::to_string(&response)
+            {
+                let _ = writeln!(output, "{text}").and_then(|()| output.flush());
+            }
+            return Ok(());
+        }
         let Some(response) = response else {
             continue; // a notification: answered by saying nothing
         };

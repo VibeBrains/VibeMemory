@@ -91,7 +91,8 @@ fn main() -> ExitCode {
                     .unwrap_or_else(|| layout::STORE_INIT.to_owned())
                     .into(),
             };
-            return hostops::access_apply(&host_paths(), &apply_paths);
+            let catch_up = std::env::args().any(|arg| arg == "--catch-up");
+            return hostops::access_apply(&host_paths(), &apply_paths, catch_up);
         }
         Some("status") => return hostops::status(&host_paths()),
         _ => {}

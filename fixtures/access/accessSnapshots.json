@@ -1764,6 +1764,40 @@
       "expect": {
         "code": "invalidPublicKey"
       }
+    },
+    {
+      "id": "publicKeyTwice",
+      "provenance": "computed",
+      "note": "Two keys with one public key: sshd would take the first line for both, and one member's machine would sign in as another's.",
+      "patch": {
+        "keys": [
+          {
+            "id": "mk_3f8k1p0z",
+            "member": "alice",
+            "machine": "laptop",
+            "storeName": "alice-laptop",
+            "teams": [
+              "vibebrains",
+              "syncteam"
+            ],
+            "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+          },
+          {
+            "id": "mk_9z8y7x6w",
+            "member": "alice",
+            "machine": "desk",
+            "storeName": "alice-desk",
+            "teams": [
+              "vibebrains",
+              "syncteam"
+            ],
+            "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+          }
+        ]
+      },
+      "expect": {
+        "code": "publicKeyTwice"
+      }
     }
   ]
 }

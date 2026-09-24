@@ -36,6 +36,8 @@ readonly STORE_REPACK=/srv/vibememory/bin/storeRepack.sh
 readonly VMGIT_SSH=/home/vmgit/.ssh
 # After the nightly backup (backupSetup.sh, 03:47) and the owner's repack (hostBootstrap.sh, 04:17).
 readonly TEAMS_REPACK_AT='*-*-* 04:47:00'
+# How often a failed application of the snapshot is tried again, in minutes.
+readonly ACCESS_CATCH_UP_MINUTES=15
 # The token of the single-token server: made into the snapshot's legacy line, then removed.
 readonly TOKEN_PATH=vibememory/mcp-token
 # Limits of the personal store in the first snapshot: memories per project, bytes per memory.
@@ -102,12 +104,12 @@ scp -q -o ConnectTimeout=15 -o ConnectionAttempts=4 "$binary" "$sshAlias:$OWNER_
 ssh "${SSH_OPTIONS[@]}" "$sshAlias" "bash -s -- $(printf '%q ' "$domain" "$port" "$REPO_PATH" \
   "$OWNER_BIN" "$SERVER_BIN" "$ACCESS" "$TEAMS" "$TOKEN_PATH" "${owner:--}" "$PERSONAL_MAX_RECORDS" \
   "$PERSONAL_MAX_RECORD_BYTES" "$JAIL_MAXRETRY" "$JAIL_FINDTIME" "$STORE_REPACK" "$VMGIT_SSH" \
-  "$TEAMS_REPACK_AT" "$appDomain")" <<'REMOTE'
+  "$TEAMS_REPACK_AT" "$appDomain" "$ACCESS_CATCH_UP_MINUTES")" <<'REMOTE'
 set -euo pipefail
 domain="$1"; port="$2"; repo="$HOME/$3"; ownerBin="$HOME/$4"; serverBin="$5"; access="$6"
 teams="$7"; token="$HOME/$8"; owner="$9"; maxRecords="${10}"; maxRecordBytes="${11}"
 jailMaxretry="${12}"; jailFindtime="${13}"; storeRepack="${14}"; vmgitSsh="${15}"
-teamsRepackAt="${16}"; appDomain="${17}"
+teamsRepackAt="${16}"; appDomain="${17}"; catchUpMinutes="${18}"
 # ssh glues arguments into one line and an empty one vanishes; "-" stands for "not given".
 [ "$owner" = - ] && owner=""
 
@@ -242,19 +244,35 @@ putUnit() {
     reload=1
   fi
 }
-putUnit vibememory-access-apply.service "[Unit]
-Description=VibeMemory: apply the access snapshot to the team stores and vmgit's keys
+applyService() {
+  printf '%s\n' "[Unit]
+Description=VibeMemory: $1
 
 [Service]
 Type=oneshot
 User=vmgit
 UMask=0007
-ExecStart=$serverBin access-apply --access $access --teams $teams
+ExecStart=$serverBin access-apply --access $access --teams $teams$2
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=$teams $(dirname "$access") $vmgitSsh"
+}
+putUnit vibememory-access-apply.service "$(applyService "apply the access snapshot to the team stores and vmgit's keys" "")"
+# An application that failed is otherwise retried only by the next publication, which may be days
+# away. The catch-up run does nothing while the last application of the file did everything, and
+# waits for one under way: the binary holds a lock over the whole application.
+putUnit vibememory-access-catch-up.service "$(applyService "apply the access snapshot again if its last application failed" " --catch-up")"
+putUnit vibememory-access-catch-up.timer "[Unit]
+Description=VibeMemory: catch up with the access snapshot every $catchUpMinutes minutes
+
+[Timer]
+OnCalendar=*:0/$catchUpMinutes
+Persistent=true
+
+[Install]
+WantedBy=timers.target"
 putUnit vibememory-access-apply.path "[Unit]
 Description=VibeMemory: apply the access snapshot whenever it changes
 
@@ -309,13 +327,13 @@ Persistent=true
 [Install]
 WantedBy=timers.target"
 [ "$reload" = 0 ] || sudo systemctl daemon-reload
-sudo systemctl enable --now --quiet vibememory-access-apply.path vibememory-status.timer \
-  vibememory-teams-repack.timer
+sudo systemctl enable --now --quiet vibememory-access-apply.path vibememory-access-catch-up.timer \
+  vibememory-status.timer vibememory-teams-repack.timer
 # Applied once now rather than at the cabinet's first publication: vmgit's keys and the host's
 # report exist from the start.
 sudo systemctl start vibememory-access-apply.service ||
   { echo "Ошибка: применение снимка не прошло — journalctl -t vibememory-apply" >&2; exit 1; }
-echo "5/7 Команды хоста под vmgit: снимок применён ($(sudo -u vmgit cat "$(dirname "$access")/applied.json" | grep -c '"code"') проблем), отчёт — раз в час, упаковка сторов команд — $teamsRepackAt"
+echo "5/7 Команды хоста под vmgit: снимок применён ($(sudo -u vmgit cat "$(dirname "$access")/applied.json" | grep -c '"code"') проблем), догон — раз в $catchUpMinutes мин, отчёт — раз в час, упаковка сторов команд — $teamsRepackAt"
 
 # The server logs every refused token with the address Caddy saw (the last X-Forwarded-For entry).
 # Bans go to the web ports only: a wrong token says nothing about ssh. Without fail2ban on the host

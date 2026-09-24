@@ -392,6 +392,44 @@ fn a_memory_team_writes_only_to_the_projects_the_cabinet_listed() {
     );
     assert!(matches!(note, Note::Call { ok: false, .. }));
 
+    // A memory is shared and kept for good: one holding an agent token is not written.
+    let (answer, refused, _) = call(
+        &stand,
+        ALICE,
+        "memory_save",
+        &save(
+            "VibeIDE",
+            "mcp-setup",
+            "the env holds vmt_7q2m9x4a_1111111111111111111111111111111111111111111",
+        ),
+    );
+    assert!(refused, "{answer}");
+    assert!(
+        answer["error"]
+            .as_str()
+            .unwrap()
+            .contains("holds an agent token"),
+        "{answer}"
+    );
+
+    // A project the cabinet archived keeps its records in the repository; naming it reads nothing.
+    let mut archived = snapshot(&stand.personal);
+    archived["teams"]["vibebrains"]["projects"] = json!([]);
+    publish(&stand.access, &archived.to_string());
+    for tool in ["memory_search", "memory_get"] {
+        let arguments = json!({ "project": "VibeIDE", "query": "b", "id": "one" });
+        let (answer, refused, _) = call(&stand, ALICE, tool, &arguments);
+        assert!(refused, "{tool}: {answer}");
+        assert!(
+            answer["error"]
+                .as_str()
+                .unwrap()
+                .contains("the store holds no project VibeIDE"),
+            "{tool}: {answer}"
+        );
+    }
+    publish(&stand.access, &snapshot(&stand.personal).to_string());
+
     // The host cannot see the client's disk; it answers with what the caller may use instead.
     let (resolved, refused, _) = call(
         &stand,

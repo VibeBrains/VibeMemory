@@ -58,6 +58,15 @@ fn every_push_is_answered_as_the_fixture_says() {
             .iter()
             .map(|path| path.as_str().expect("path").to_owned())
             .collect();
+        let with_tokens: Vec<String> = case["withTokens"]
+            .as_array()
+            .map(|paths| {
+                paths
+                    .iter()
+                    .map(|path| path.as_str().expect("path").to_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
         let push = Push {
             key: case["key"].as_str(),
             team: case["team"].as_str().expect("team"),
@@ -70,6 +79,7 @@ fn every_push_is_answered_as_the_fixture_says() {
                 reserve_bytes: size(case, defaults, "reserveBytes"),
             },
             now,
+            with_tokens: &with_tokens,
         };
         let answer = receive::decide(&push, usable.then_some(&snapshot));
         let answered = match &answer {
