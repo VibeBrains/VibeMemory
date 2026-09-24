@@ -193,7 +193,7 @@ Deploy-ключ старого сервера в репозитории зерк
 
 | Юнит | Когда | Что делает |
 |---|---|---|
-| `vibememory-access-apply.path` → `.service` | при каждой смене `/srv/vibememory/access/access.json` | `vibememory-mcp access-apply`: сторы команд, ключи машин в `~vmgit/.ssh/authorized_keys`, `applied.json` и отчёт `host.json` |
+| `vibememory-access-apply.path` → `.service` | при каждой смене `/srv/vibememory/access/access.json` | `vibememory-mcp access-apply`: копия применённого снимка `applied-snapshot.json`, сторы команд, ключи машин в `~vmgit/.ssh/authorized_keys`, `applied.json` и отчёт `host.json` |
 | `vibememory-status.timer` → `.service` | раз в час | `vibememory-mcp status`: отчёт `host.json` для кабинета |
 | `vibememory-teams-repack.timer` → `.service` | в 04:47 | `storeRepack.sh --teams`: упаковка каждого живого стора команды |
 
@@ -208,8 +208,11 @@ Deploy-ключ старого сервера в репозитории зерк
 - ничего не удаляется никогда
 
 Что не получилось, лежит в `problems` файла `applied.json` с кодом
-([hostStatusSpec.md](hostStatusSpec.md)): слаг удалённой команды, негодный снимок, сбой операции.
-Снимок, который не проходит `access check`, не меняет ничего — ни сторов, ни ключей.
+([hostStatusSpec.md](hostStatusSpec.md)): слаг удалённой команды, негодный снимок, снимок не новее
+применённого, сбой операции. Снимок, который не проходит `access check`, не меняет ничего — ни сторов,
+ни ключей. Снимок с номером `serial` не выше применённого не меняет ничего тоже (`serialBehind`): хост
+держится копии `applied-snapshot.json`, и так же поступают сервер памяти, вход по ключу, `pre-receive`,
+отчёт и бэкап ([accessSnapshotSpec.md](accessSnapshotSpec.md)).
 
 Проверить руками:
 
