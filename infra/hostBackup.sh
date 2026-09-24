@@ -13,10 +13,11 @@
 # opens it. The host cannot read its own backups.
 #
 # The list of memory teams comes from the access snapshot through the server binary, which checks
-# the snapshot first: a backup of a guessed list would look complete and not be. The database is
-# dumped by vmgit's own Postgres role: peer authentication, read-only rights, no password anywhere.
-# A host without the cabinet's database yet has nothing to dump; once it exists, a failed dump fails
-# the backup.
+# the snapshot first: a backup of a guessed list would look complete and not be. The database comes
+# dumped and encrypted by vmdump, which runs just before (vibememory-dump.service, cabinetDump.sh):
+# this account has no role in the database and takes the ciphertext as it is. A host without the
+# cabinet has nothing to dump; a host with it and no dump wired in fails the backup, and so does a
+# dump that is not this night's.
 set -euo pipefail
 
 readonly SERVER_BIN=/srv/vibememory/bin/vibememory-mcp
@@ -27,6 +28,10 @@ readonly RECIPIENT=/srv/vibememory/backup/recipient.txt
 readonly REPORT=/srv/vibememory/access/backup.json
 readonly TAG=vibememory-backup
 readonly DATABASE=cabinet
+# The cabinet's unit: with it on the host, the backup is incomplete without the database's dump.
+readonly CABINET_UNIT=/etc/systemd/system/vibememory-cabinet.service
+# The dump runs right before the backup; one older than this is a night that did not dump.
+readonly DUMP_MAX_AGE_MINUTES=60
 
 say() { logger -t "$TAG" -- "$*"; }
 fail() { say "failed: $*"; printf 'hostBackup.sh: %s\n' "$*" >&2; exit 1; }
@@ -41,6 +46,17 @@ trap 'rm -rf "$work"' EXIT
 out="$work/backup"
 mkdir -p "$out"
 
+dumped=0
+if [ -n "${VIBEMEMORY_DUMP:-}" ]; then
+  [ -s "$VIBEMEMORY_DUMP" ] || fail "no dump of the $DATABASE database at $VIBEMEMORY_DUMP"
+  [ -n "$(find "$VIBEMEMORY_DUMP" -mmin "-$DUMP_MAX_AGE_MINUTES")" ] ||
+    fail "the dump at $VIBEMEMORY_DUMP is older than $DUMP_MAX_AGE_MINUTES minutes"
+  cp "$VIBEMEMORY_DUMP" "$out/$DATABASE.pgdump.age"
+  dumped=1
+elif [ -e "$CABINET_UNIT" ]; then
+  fail "the cabinet is on this host and its dump is not wired into the backup: run hostCabinet.sh"
+fi
+
 slugs=$("$SERVER_BIN" access teams "$ACCESS" --mode memory) || fail "the access snapshot cannot be used"
 count=0
 for slug in $slugs; do
@@ -53,13 +69,6 @@ for slug in $slugs; do
   rm -f "$work/$slug.bundle"
   count=$((count + 1))
 done
-
-dumped=0
-if [ "$(psql -d postgres -tAXc "select 1 from pg_database where datname = '$DATABASE'" 2>/dev/null)" = 1 ]; then
-  pg_dump --format=custom --dbname="$DATABASE" | age -R "$RECIPIENT" -o "$out/$DATABASE.pgdump.age" ||
-    fail "dump of the $DATABASE database"
-  dumped=1
-fi
 
 cat > "$out/README.md" <<'TEXT'
 # Бэкап VibeMemory: сторы memory-команд и база кабинета

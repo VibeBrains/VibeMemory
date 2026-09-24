@@ -16,7 +16,10 @@ ssh-сеанс; повторный запуск безопасен и печат
 2. `./infra/hostMcp.sh --binary …` — сервер памяти, первый снимок прав, команды хоста.
 3. `./infra/backupSetup.sh` — ночной бэкап; повторите его после обновления `infra/hostBackup.sh`,
    он же доставляет скрипт на хост.
-4. `./infra/hostCabinet.sh --owner-email <адрес>` — кабинет.
+4. `./infra/hostCabinet.sh --owner-email <адрес>` — кабинет и дамп его базы в бэкап. Роль `vmgit`
+   в базе, если она осталась от прежней схемы, скрипт снимает, только когда скрипт бэкапа на хосте уже
+   берёт готовый дамп: иначе бэкап молча остался бы без базы. Тогда он так и пишет — запустите
+   `backupSetup.sh`, затем этот скрипт ещё раз.
 5. `./infra/cabinetPassword.sh` — пароль владельца, вводит сам владелец.
 6. `./infra/cabinetSecrets.sh` — ключ Resend, бот Telegram, ссылка «поддержать», вводит сам владелец.
 7. Релиз: `./infra/releaseBuild.sh` на Mac, `infra\releaseBuild.ps1` на GPD, затем
@@ -33,8 +36,13 @@ ssh-сеанс; повторный запуск безопасен и печат
 - Postgres 17 из PGDG, только `localhost`, `shared_buffers = 64MB`, `max_connections = 20`
 - `.env` кабинета — `/home/vmcab/cabinet/.env`, 0600, `vmcab`; секреты (`BETTER_AUTH_SECRET`,
   пароль базы, `OPENAPI_CREDENTIALS`) генерируются на хосте один раз и не печатаются
-- Роль `vmcab` — владелец базы `cabinet`; роль `vmgit` — `pg_read_all_data` и вход по peer, без
-  пароля: ею ночью снимается дамп
+- Роль `vmcab` — владелец базы `cabinet`; учётка и роль `vmdump` — `pg_read_all_data` и вход по
+  peer, без пароля: ею перед каждым бэкапом юнит `vibememory-dump` снимает дамп и сразу шифрует его
+  открытым ключом владельца (`infra/cabinetDump.sh`) в `/srv/vibememory/backup/dump/`. Бэкап под `vmgit`
+  ждёт этот юнит и берёт готовый шифротекст; своей роли в базе у `vmgit` нет, и подключаться к базе
+  может только владелец и `vmdump`
+- better-auth хранит ссылки сброса пароля и подтверждения адреса хешем, а токены Google — шифром
+  под `BETTER_AUTH_SECRET`: дамп базы сам по себе ни ссылки, ни доступа к Google не даёт
 - Bun той версии, на которой кабинет тестируется, под `vmcab`
 - Зависимости только production, затем `prisma migrate deploy`
 - Импорт владельца из `/srv/vibememory/access/access.json` — снимка, на котором хост уже работает

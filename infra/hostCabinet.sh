@@ -26,6 +26,8 @@ readonly DEFAULT_APP_DOMAIN=app.vibememory.ru
 readonly CABINET_PORT=3000
 readonly MCP_PORT=8787
 readonly CABINET_LOCAL="$(cd "$(dirname "$0")/../cabinet" && pwd)"
+# The nightly dump of the database, run on the host by vmdump before the backup.
+readonly DUMP_SCRIPT_LOCAL="$(cd "$(dirname "$0")" && pwd)/cabinetDump.sh"
 readonly RELEASES_LOCAL=/Volumes/Storage/Caches/VibeMemory/cabinetReleases
 # The Bun the cabinet is built and tested with (package.json devDependencies).
 readonly BUN_VERSION=1.4.0
@@ -122,10 +124,11 @@ releaseHash=$(
 )
 # rsync with --partial: a transfer the network cuts resumes where it stopped instead of starting over
 for attempt in 1 2 3 4 5; do
-  rsync -q --partial --timeout=60 -e "ssh ${SSH_OPTIONS[*]}" "$release" "$sshAlias:cabinet-release.tar.gz" && break
+  rsync -q --partial --timeout=60 -e "ssh ${SSH_OPTIONS[*]}" "$release" "$DUMP_SCRIPT_LOCAL" "$sshAlias:" && break
   [ "$attempt" -lt 5 ] || fail "архив сборки не доехал до хоста за пять попыток"
   say "   передача оборвалась, повтор $((attempt + 1))/5"
 done
+ssh -n "${SSH_OPTIONS[@]}" "$sshAlias" "mv -f $(printf '%q' "$(basename "$release")") cabinet-release.tar.gz"
 
 ssh "${SSH_OPTIONS[@]}" "$sshAlias" "bash -s -- $(printf '%q ' "$domain" "$appDomain" "$sourceVersion" \
   "$releaseHash" "${ownerEmail:--}" "$BUN_VERSION" "$PG_VERSION" "$PG_SHARED_BUFFERS" \
@@ -237,8 +240,11 @@ else
   echo "4/9 .env кабинета: без изменений"
 fi
 
-# 5. Roles and the database: vmcab owns it and signs in with the password from .env; vmgit reads
-# everything through peer authentication and has no password at all — the nightly dump is its.
+# 5. Roles and the database: vmcab owns it and signs in with the password from .env; vmdump alone
+# reads it, through peer authentication and without a password, to dump it for the nightly backup
+# encrypted before it touches the disk (cabinetDump.sh). vmgit, which faces the network through git
+# and the memory server, has no role at all, and nobody else may connect: a hole in either of them
+# reads no database.
 psqlAdmin() { sudo -u postgres psql -qtAX -v ON_ERROR_STOP=1 "$@"; }
 rolesChanged=0
 if [ -z "$(psqlAdmin -c "select 1 from pg_roles where rolname = 'vmcab'")" ]; then
@@ -262,20 +268,90 @@ fi
 sudo rm -f "$passfile"
 [ -n "$(psqlAdmin -c "select 1 from pg_database where datname = 'cabinet'")" ] ||
   { psqlAdmin -c "create database cabinet owner vmcab" >/dev/null; echo "5/9 База cabinet создана"; rolesChanged=1; }
-[ -n "$(psqlAdmin -c "select 1 from pg_roles where rolname = 'vmgit'")" ] ||
-  { psqlAdmin -c "create role vmgit login" >/dev/null; echo "5/9 Роль vmgit создана"; rolesChanged=1; }
-if [ "$(psqlAdmin -c "select pg_has_role('vmgit', 'pg_read_all_data', 'member')")" != t ]; then
-  psqlAdmin -c "grant pg_read_all_data to vmgit" >/dev/null
+if ! id vmdump >/dev/null 2>&1; then
+  sudo useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin vmdump
+  echo "5/9 Учётка vmdump создана"
   rolesChanged=1
 fi
-if [ "$(psqlAdmin -c "select has_database_privilege('vmgit', 'cabinet', 'connect')")" != t ]; then
-  psqlAdmin -c "grant connect on database cabinet to vmgit" >/dev/null
+[ -n "$(psqlAdmin -c "select 1 from pg_roles where rolname = 'vmdump'")" ] ||
+  { psqlAdmin -c "create role vmdump login" >/dev/null; echo "5/9 Роль vmdump создана"; rolesChanged=1; }
+if [ "$(psqlAdmin -c "select pg_has_role('vmdump', 'pg_read_all_data', 'member')")" != t ]; then
+  psqlAdmin -c "grant pg_read_all_data to vmdump" >/dev/null
+  rolesChanged=1
+fi
+if [ "$(psqlAdmin -c "select has_database_privilege('vmdump', 'cabinet', 'connect')")" != t ]; then
+  psqlAdmin -c "grant connect on database cabinet to vmdump" >/dev/null
+  rolesChanged=1
+fi
+# Postgres lets every role connect to a new database; here only the owner and vmdump do.
+if [ "$(psqlAdmin -c "select has_database_privilege('public', 'cabinet', 'connect')")" = t ]; then
+  psqlAdmin -c "revoke connect on database cabinet from public" >/dev/null
   rolesChanged=1
 fi
 if [ "$rolesChanged" = 1 ]; then
-  echo "5/9 Роли: vmcab — владелец базы, vmgit — только чтение по peer"
+  echo "5/9 Роли: vmcab — владелец базы, vmdump — только чтение по peer для дампа"
 else
   echo "5/9 Роли и база: без изменений"
+fi
+
+# The dump: vmdump writes the encrypted file where vmgit — the backup's account — reads it and
+# nothing else, and the backup pulls the dump in and waits for it (a drop-in beside its unit).
+dumpChanged=0
+sudo install -d -o root -g root -m 755 /srv/vibememory/backup
+sudo install -d -o vmdump -g vmgit -m 2750 /srv/vibememory/backup/dump
+if ! sudo cmp -s "$HOME/cabinetDump.sh" /srv/vibememory/bin/cabinetDump.sh; then
+  sudo install -o root -g root -m 755 "$HOME/cabinetDump.sh" /srv/vibememory/bin/cabinetDump.sh
+  dumpChanged=1
+fi
+rm -f "$HOME/cabinetDump.sh"
+dumpUnit=/etc/systemd/system/vibememory-dump.service
+dumpUnitText="[Unit]
+Description=VibeMemory: the cabinet's database, dumped and encrypted for the nightly backup
+After=postgresql@$pgVersion-main.service
+Requires=postgresql@$pgVersion-main.service
+
+[Service]
+Type=oneshot
+User=vmdump
+UMask=0027
+ExecStart=/srv/vibememory/bin/cabinetDump.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/vibememory/backup/dump"
+dropIn=/etc/systemd/system/vibememory-backup.service.d/cabinet-dump.conf
+dropInText="[Unit]
+Requires=vibememory-dump.service
+After=vibememory-dump.service
+
+[Service]
+Environment=VIBEMEMORY_DUMP=/srv/vibememory/backup/dump/cabinet.pgdump.age"
+if [ "$(sudo cat "$dumpUnit" 2>/dev/null || true)" != "$dumpUnitText" ]; then
+  printf '%s\n' "$dumpUnitText" | sudo tee "$dumpUnit" >/dev/null
+  dumpChanged=1
+fi
+if [ "$(sudo cat "$dropIn" 2>/dev/null || true)" != "$dropInText" ]; then
+  sudo install -d /etc/systemd/system/vibememory-backup.service.d
+  printf '%s\n' "$dropInText" | sudo tee "$dropIn" >/dev/null
+  dumpChanged=1
+fi
+if [ "$dumpChanged" = 1 ]; then
+  sudo systemctl daemon-reload
+  echo "5/9 Дамп базы: vibememory-dump.service под vmdump перед каждым бэкапом"
+else
+  echo "5/9 Дамп базы: без изменений"
+fi
+# vmgit's role goes once nothing dumps with it: a backup script from before vmdump reads the database
+# itself, and without the role it would leave the database out of the backup without a word.
+backupScript=/srv/vibememory/bin/hostBackup.sh
+if [ -n "$(psqlAdmin -c "select 1 from pg_roles where rolname = 'vmgit'")" ]; then
+  if ! sudo test -e "$backupScript" || sudo grep -q VIBEMEMORY_DUMP "$backupScript"; then
+    psqlAdmin -c "revoke all on database cabinet from vmgit" -c "drop role vmgit" >/dev/null
+    echo "5/9 Роль vmgit снята: базу читает только vmdump"
+  else
+    echo "5/9 Роль vmgit оставлена: бэкап на хосте ещё снимает дамп ею — ./infra/backupSetup.sh, затем этот скрипт ещё раз"
+  fi
 fi
 
 # 6. Bun under vmcab, the version the cabinet is tested with.
