@@ -213,4 +213,18 @@ for file in "$check"/backup/*.bundle.age; do
     fail "из $(basename "${file%.age}") не клонируется стор"
   opened=$((opened + 1))
 done
-say "6/6 Бэкап прошёл; на этой машине расшифровано и склонировано сторов: $opened"
+# The cabinet's dump is opened too, and its table of contents read: a dump that decrypts but does
+# not restore is no backup. The plaintext stays in the temporary directory the trap removes.
+dumped="дампа базы кабинета нет (кабинета на хосте нет)"
+if [ -f "$check/backup/cabinet.pgdump.age" ]; then
+  age -d -i "$KEY_FILE" -o "$check/cabinet.pgdump" "$check/backup/cabinet.pgdump.age" ||
+    fail "не расшифровался дамп базы кабинета"
+  if command -v pg_restore >/dev/null; then
+    tables=$(pg_restore --list "$check/cabinet.pgdump" | grep -c 'TABLE DATA' || true)
+    [ "$tables" -gt 0 ] || fail "в дампе базы кабинета нет данных таблиц"
+    dumped="дамп базы кабинета читается, таблиц с данными: $tables"
+  else
+    dumped="дамп базы кабинета расшифрован; pg_restore на этой машине нет, содержимое не проверено"
+  fi
+fi
+say "6/6 Бэкап прошёл; на этой машине расшифровано и склонировано сторов: $opened; $dumped"
