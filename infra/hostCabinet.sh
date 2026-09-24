@@ -111,7 +111,15 @@ else
   [ -f "$release" ] || fail "нет сборки $release — запустите без --skip-build"
   say "1/9 Сборка $sourceVersion взята готовой"
 fi
-releaseHash=$(shasum -a 256 "$release" | cut -d ' ' -f 1)
+# The release is what it holds, not the archive's bytes: tar and gzip stamp every build with its own
+# times, while the build itself is deterministic — the same commit gives the same files, and a run
+# with nothing new neither replaces the release nor restarts the service.
+releaseHash=$(
+  tree=$(mktemp -d)
+  tar -xzf "$release" -C "$tree"
+  (cd "$tree" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256) | shasum -a 256 | cut -d ' ' -f 1
+  rm -rf "$tree"
+)
 # rsync with --partial: a transfer the network cuts resumes where it stopped instead of starting over
 for attempt in 1 2 3 4 5; do
   rsync -q --partial --timeout=60 -e "ssh ${SSH_OPTIONS[*]}" "$release" "$sshAlias:cabinet-release.tar.gz" && break
@@ -232,22 +240,43 @@ fi
 # 5. Roles and the database: vmcab owns it and signs in with the password from .env; vmgit reads
 # everything through peer authentication and has no password at all — the nightly dump is its.
 psqlAdmin() { sudo -u postgres psql -qtAX -v ON_ERROR_STOP=1 "$@"; }
+rolesChanged=0
 if [ -z "$(psqlAdmin -c "select 1 from pg_roles where rolname = 'vmcab'")" ]; then
   psqlAdmin -c "create role vmcab login" >/dev/null
   echo "5/9 Роль vmcab создана"
+  rolesChanged=1
 fi
-# the password travels in a here-document, never on a command line
-psqlAdmin <<SQL >/dev/null
+# The password from .env is set only when it does not already sign vmcab in: the check signs in
+# through a passfile readable by root alone, removed at once, and the password travels in a
+# here-document, never on a command line.
+passfile=$(sudo mktemp)
+printf 'localhost:5432:postgres:vmcab:%s\n' "$dbPassword" | sudo tee "$passfile" >/dev/null
+if ! sudo psql "host=localhost port=5432 dbname=postgres user=vmcab passfile=$passfile" -qtAc 'select 1' >/dev/null 2>&1; then
+  psqlAdmin <<SQL >/dev/null
 \set password '$dbPassword'
 alter role vmcab password :'password';
 SQL
+  echo "5/9 Пароль vmcab поставлен из .env"
+  rolesChanged=1
+fi
+sudo rm -f "$passfile"
 [ -n "$(psqlAdmin -c "select 1 from pg_database where datname = 'cabinet'")" ] ||
-  { psqlAdmin -c "create database cabinet owner vmcab" >/dev/null; echo "5/9 База cabinet создана"; }
+  { psqlAdmin -c "create database cabinet owner vmcab" >/dev/null; echo "5/9 База cabinet создана"; rolesChanged=1; }
 [ -n "$(psqlAdmin -c "select 1 from pg_roles where rolname = 'vmgit'")" ] ||
-  { psqlAdmin -c "create role vmgit login" >/dev/null; echo "5/9 Роль vmgit создана"; }
-psqlAdmin -c "grant pg_read_all_data to vmgit" >/dev/null
-psqlAdmin -c "grant connect on database cabinet to vmgit" >/dev/null
-echo "5/9 Роли: vmcab — владелец базы, vmgit — только чтение по peer"
+  { psqlAdmin -c "create role vmgit login" >/dev/null; echo "5/9 Роль vmgit создана"; rolesChanged=1; }
+if [ "$(psqlAdmin -c "select pg_has_role('vmgit', 'pg_read_all_data', 'member')")" != t ]; then
+  psqlAdmin -c "grant pg_read_all_data to vmgit" >/dev/null
+  rolesChanged=1
+fi
+if [ "$(psqlAdmin -c "select has_database_privilege('vmgit', 'cabinet', 'connect')")" != t ]; then
+  psqlAdmin -c "grant connect on database cabinet to vmgit" >/dev/null
+  rolesChanged=1
+fi
+if [ "$rolesChanged" = 1 ]; then
+  echo "5/9 Роли: vmcab — владелец базы, vmgit — только чтение по peer"
+else
+  echo "5/9 Роли и база: без изменений"
+fi
 
 # 6. Bun under vmcab, the version the cabinet is tested with.
 if [ "$(sudo -u vmcab "$bun" --version 2>/dev/null || true)" != "$bunVersion" ]; then
