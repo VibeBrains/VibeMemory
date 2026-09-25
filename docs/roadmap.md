@@ -1127,6 +1127,11 @@
   Знак VibeMemory вместо иконки пака: M из двух машин, сходящихся в точку. Гейт — e2e страницы команды с токеном на
   375 и 1280 пикселях; на первом прогоне он поймал бейдж шире телефона. Выложено (`3b196e4`).
   [knowledge](knowledge/toolchain/cabinetTables.md).
+- [x] **Фаза 4: живой гейт токенов агентов** — ✅ (2026-09-25, next) владелец выдал токены `claude-code`, `vibeide`,
+  `vibeidea` командой `connect` с кодом из кабинета (команда `personal`). Claude Code зарегистрирован с
+  `headersHelper` — `claude mcp list`: «Connected». По HTTPS с новым токеном: `project_resolve` отдаёт 20 проектов,
+  запись в `Probe` подписана `claude-code`/`borodatych` и id токена, чтение и удаление работают, чужой токен —
+  `401`; токены `vibeide` и `vibeidea` — `200`. На Mac `tk_legacy` больше не используется.
 - [ ] Участник и выпуск `memory` (фаза 4: живые гейты, снятие `tk_legacy`), `sync` (фаза 5), биллинг — по плану
   выше.
 - [ ] **Фаза 4: `headersHelper` на Windows** — строка регистрации в кавычках POSIX; проверить на GPD, как Claude
