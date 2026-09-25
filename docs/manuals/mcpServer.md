@@ -177,6 +177,10 @@ claude mcp add-json --scope user vibememory-acme '{"headersHelper":"'\''/Users/m
 `vibememory mcp-headers <команда> <агент>` читает `~/.vibememory/tokens/<команда>/<агент>` и
 печатает `{"Authorization":"Bearer …"}` в stdout — и больше ничего и никуда.
 
+Клиент, который подключается к памяти команды сам, берёт адрес из поля `mcpUrl` сайдкара
+`~/.vibememory/tokens/<команда>/<агент>.json`. Все поля сайдкара описаны в
+[teamSetup.md](teamSetup.md#сайдкар--контракт-для-клиентов).
+
 Прежний токен владельца, выданный до кабинета, кладётся туда же — в
 `~/.vibememory/tokens/personal/claude-code`, с правами только владельца (`chmod 600`), — и
 регистрируется той же строкой с `mcp-headers personal claude-code`. Движок узнаёт токены по форме
