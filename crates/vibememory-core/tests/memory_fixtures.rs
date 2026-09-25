@@ -295,7 +295,7 @@ fn check_state(label: &str, memory: &Memory, expect: &Expect, failures: &mut Vec
 
     let forgotten: Vec<String> = memory
         .forgotten
-        .keys()
+        .iter()
         .map(|id| id.as_str().to_owned())
         .collect();
     if forgotten != expect.forgotten {

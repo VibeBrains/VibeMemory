@@ -131,8 +131,8 @@ pub fn sync(
             record.project.clone_from(&project);
         }
     }
-    // A forgotten record's projection, untouched since the version the delete saw, is what the
-    // delete asked to remove. Left in place, the next run would read it as a new record.
+    // Untouched files the projection no longer holds: a forgotten record's document, which left
+    // in place the next run would read as a new record, and rival files of settled rivals.
     for name in import.stale {
         let path = memory_dir.join(&name);
         match std::fs::remove_file(&path) {

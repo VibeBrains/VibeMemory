@@ -17,6 +17,8 @@ use super::record::{Record, RecordId, RecordKind, RecordStatus};
 pub const INDEX_FILE: &str = "MEMORY.md";
 /// Extension of a projected record.
 const DOCUMENT_EXTENSION: &str = "md";
+/// What sets a rival file apart from the document of its record: `<id>.rival-<version>.md`.
+const RIVAL_MARKER: &str = ".rival-";
 /// Keys of `metadata` this format names itself; everything else is carried untouched.
 const KNOWN_METADATA: &[&str] = &[
     "type", "project", "status", "agent", "member", "created", "updated", "version",
@@ -73,7 +75,10 @@ pub fn document_name(id: &RecordId) -> String {
 
 /// `<id>.rival-<version>.md` — a version written at the same time as the one in `<id>.md`.
 fn rival_name(id: &RecordId, version: &str) -> String {
-    format!("{}.rival-{version}.{DOCUMENT_EXTENSION}", id.as_str())
+    format!(
+        "{}{RIVAL_MARKER}{version}.{DOCUMENT_EXTENSION}",
+        id.as_str()
+    )
 }
 
 fn index(memory: &Memory) -> Vec<u8> {
@@ -284,12 +289,17 @@ pub struct Import {
     pub events: Vec<Event>,
     /// Documents that could not be read; their files stay untouched.
     pub rejected: Vec<(String, MemoryError)>,
-    /// Projections of forgotten records, unchanged since the version the delete saw. They are
-    /// what the delete asked to remove: the caller deletes the files, and no event is written.
+    /// Files nobody touched since they were projected, which the projection no longer holds:
+    /// documents of forgotten records, and rival files of versions that stopped being rivals.
+    /// The caller deletes them, and no event is written.
     pub stale: Vec<String>,
 }
 
 /// Reads the edits made to the projection back into events.
+///
+/// A file is an edit only when it differs from the version it names: that is the version it was
+/// projected from. Comparing it with the current record instead would take a projection the
+/// record moved past — an agent wrote over MCP between two ticks — for somebody's edit.
 ///
 /// A file that changed becomes a new version whose parent is the version the file was projected
 /// from — so an edit made from an old projection is recognised as concurrent instead of
@@ -298,8 +308,12 @@ pub struct Import {
 ///
 /// The other way round, a file that is still there after its record was forgotten elsewhere is
 /// *not* an edit either: the delete arrived with the journal, the file stayed behind. Only when
-/// the file differs from the version the delete saw did somebody write it, and then it is an edit
+/// the file differs from the version it names did somebody write it, and then it is an edit
 /// concurrent with the delete, which keeps the record.
+///
+/// A rival file is a copy of a version the journal already holds and is never read as an edit.
+/// Once that version stops being a rival — a later write made it the projected one, or the record
+/// was forgotten — the untouched file is stale; a rival file somebody edited stays where it is.
 ///
 /// A new version is signed by whoever imports it — `agent`, and `member` when the writer is a
 /// member of a team — whatever the file said: the file names the author of the version it was
@@ -314,27 +328,50 @@ pub fn import(
 ) -> Import {
     let mut import = Import::default();
     for (path, bytes) in documents {
-        if path == INDEX_FILE || path.contains(".rival-") {
-            continue; // the index is generated, and a rival file is a copy of a known version
+        if path == INDEX_FILE {
+            continue; // the index is generated
         }
+        let rival = path.contains(RIVAL_MARKER);
         let document = match parse_document(path, bytes) {
             Ok(document) => document,
+            // A rival file is never read as an edit, so there is nothing to reject.
+            Err(_) if rival => continue,
             Err(error) => {
                 import.rejected.push((path.clone(), error));
                 continue;
             }
         };
-        let known = memory.records.get(&document.record.id);
-        if known.is_none()
-            && let Some(forgotten) = memory.forgotten.get(&document.record.id)
-            && let Some((version, seen)) = &forgotten.seen
-            && document.version.as_deref() == Some(version.as_str())
-            && unchanged(seen, &document.record)
-        {
-            import.stale.push(path.clone());
+        let id = &document.record.id;
+        let known = memory.records.get(id);
+        let untouched = document
+            .version
+            .as_deref()
+            .and_then(|version| memory.versions.get(version))
+            .is_some_and(|projected| projected.id == *id && unchanged(projected, &document.record));
+        if rival {
+            let still_rival = document.version.as_deref().is_some_and(|version| {
+                *path == rival_name(id, version)
+                    && known
+                        .is_some_and(|entry| entry.rivals.iter().any(|(rival, _)| rival == version))
+            });
+            if untouched && !still_rival {
+                import.stale.push(path.clone());
+            }
             continue;
         }
-        if known.is_some_and(|entry| unchanged(&entry.record, &document.record)) {
+        if untouched {
+            if known.is_none() && memory.forgotten.contains(id) {
+                import.stale.push(path.clone());
+            }
+            continue; // the next projection rewrites it from the current version
+        }
+        // A file that names no version the journal holds — written by hand, or projected from a
+        // version whose line has not arrived yet — can only be held against the current record.
+        let named = document
+            .version
+            .as_deref()
+            .is_some_and(|version| memory.versions.contains_key(version));
+        if !named && known.is_some_and(|entry| unchanged(&entry.record, &document.record)) {
             continue;
         }
         let mut record = document.record;

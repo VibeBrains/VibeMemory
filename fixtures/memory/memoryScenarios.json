@@ -850,6 +850,154 @@
           "rejected": []
         }
       }
+    },
+    {
+      "id": "importProjectionOvertakenByLaterWriteIsNotAnEdit",
+      "provenance": "observed",
+      "note": "The tick projected e1, then an agent wrote e2 over MCP before the next tick. The file still says what e1 says: nobody touched it. Held against the current record it looked like a human edit from e1 and made a rival with the old text (VibeIDE, 2026-09-25).",
+      "journal": [
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
+        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir, never the worktree.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:05:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "store-naming",
+            "version": "e2",
+            "rivals": []
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "import": {
+          "stamp": "2026-09-03T12:00:00Z",
+          "agent": "claude-code",
+          "documents": [
+            {
+              "name": "store-naming.md",
+              "text": "---\nname: store-naming\ndescription: one line about store naming\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:00:00Z\n  version: e1\n---\n\nThe name follows the git common dir.\n"
+            }
+          ],
+          "events": [],
+          "rejected": []
+        }
+      }
+    },
+    {
+      "id": "importForgottenAfterLaterWriteIsStale",
+      "provenance": "computed",
+      "note": "The file was projected from e1; e2 was written over MCP and then the record was forgotten. The file is untouched since e1, so it is what the delete removes, not an edit that brings the record back.",
+      "journal": [
+        "{\"uuid\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}",
+        "{\"uuid\": \"e2\", \"parent\": \"e1\", \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir, never the worktree.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:05:00Z\"}}",
+        "{\"uuid\": \"d1\", \"parent\": \"e2\", \"action\": \"delete\", \"id\": \"store-naming\", \"agent\": \"claude-code\", \"updatedAt\": \"2026-09-03T10:10:00Z\"}"
+      ],
+      "expect": {
+        "records": [],
+        "forgotten": [
+          "store-naming"
+        ],
+        "unreadable": 0,
+        "import": {
+          "stamp": "2026-09-03T12:00:00Z",
+          "agent": "claude-code",
+          "documents": [
+            {
+              "name": "store-naming.md",
+              "text": "---\nname: store-naming\ndescription: one line about store naming\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:00:00Z\n  updated: 2026-09-03T10:00:00Z\n  version: e1\n---\n\nThe name follows the git common dir.\n"
+            }
+          ],
+          "events": [],
+          "rejected": [],
+          "stale": [
+            "store-naming.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "importRivalFileOfFormerRivalIsStale",
+      "provenance": "computed",
+      "note": "mac was a rival of gpd; then gpd2 superseded gpd, and mac became the projected version. The untouched rival file of mac is no longer part of the projection and goes, and the document projected from gpd is not an edit either.",
+      "journal": [
+        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership. See [[store-naming]].\", \"links\": [\"store-naming\"], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}",
+        "{\"uuid\": \"mac\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Mac wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"gpd\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"gpd2\", \"parent\": \"gpd\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one, then an agent refined it over MCP.\", \"links\": [], \"agent\": \"vibeide\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T12:00:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "merge-rules",
+            "version": "mac",
+            "rivals": [
+              "gpd2"
+            ]
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "fileNames": [
+          "MEMORY.md",
+          "merge-rules.md",
+          "merge-rules.rival-gpd2.md"
+        ],
+        "import": {
+          "stamp": "2026-09-03T12:30:00Z",
+          "agent": "claude-code",
+          "documents": [
+            {
+              "name": "merge-rules.md",
+              "text": "---\nname: merge-rules\ndescription: one line about merge rules\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:02:00Z\n  updated: 2026-09-03T11:00:00Z\n  version: gpd\n---\n\nWindows wrote this one.\n"
+            },
+            {
+              "name": "merge-rules.rival-mac.md",
+              "text": "---\nname: merge-rules\ndescription: one line about merge rules\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:02:00Z\n  updated: 2026-09-03T11:00:00Z\n  version: mac\n---\n\nMac wrote this one.\n"
+            }
+          ],
+          "events": [],
+          "rejected": [],
+          "stale": [
+            "merge-rules.rival-mac.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "importEditedRivalFileStays",
+      "provenance": "computed",
+      "note": "Same history, but somebody wrote into the old rival file. It is not read as an edit, and it is not removed either: the text is somebody's work.",
+      "journal": [
+        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership. See [[store-naming]].\", \"links\": [\"store-naming\"], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}",
+        "{\"uuid\": \"mac\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Mac wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"gpd\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"gpd2\", \"parent\": \"gpd\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one, then an agent refined it over MCP.\", \"links\": [], \"agent\": \"vibeide\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T12:00:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "merge-rules",
+            "version": "mac",
+            "rivals": [
+              "gpd2"
+            ]
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "import": {
+          "stamp": "2026-09-03T12:30:00Z",
+          "agent": "claude-code",
+          "documents": [
+            {
+              "name": "merge-rules.rival-mac.md",
+              "text": "---\nname: merge-rules\ndescription: one line about merge rules\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:02:00Z\n  updated: 2026-09-03T11:00:00Z\n  version: mac\n---\n\nMac wrote this one, and somebody merged the Windows text into it here.\n"
+            }
+          ],
+          "events": [],
+          "rejected": []
+        }
+      }
     }
   ]
 }

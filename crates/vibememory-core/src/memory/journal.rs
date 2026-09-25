@@ -93,18 +93,14 @@ pub struct UnreadableLine {
 pub struct Memory {
     /// The live records, by identity.
     pub records: BTreeMap<RecordId, Entry>,
-    /// Records whose last word was "forget it", with the version the delete saw.
-    pub forgotten: BTreeMap<RecordId, Forgotten>,
+    /// Records whose last word was "forget it".
+    pub forgotten: BTreeSet<RecordId>,
+    /// Every version the journal holds, superseded ones included, by `uuid`.
+    /// A projected file names the version it was written from, and only that version can say
+    /// whether somebody touched the file since: the record may have moved on without it.
+    pub versions: BTreeMap<String, Record>,
     /// Lines that could not be read.
     pub unreadable: Vec<UnreadableLine>,
-}
-
-/// What a delete asked to forget.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Forgotten {
-    /// The version the delete named as its parent, when the journal still holds it. A projection
-    /// written from exactly this version is what the delete meant to remove, not a new edit.
-    pub seen: Option<(String, Record)>,
 }
 
 /// A record as it stands, and the versions that disagree with it.
@@ -175,6 +171,11 @@ pub fn fold(events: &[Event], unreadable: Vec<UnreadableLine>) -> Memory {
         unreadable,
         ..Memory::default()
     };
+    for event in events {
+        if let Action::Upsert { record } = &event.action {
+            memory.versions.insert(event.uuid.clone(), record.clone());
+        }
+    }
     for (id, mut group) in by_id {
         // Deterministic order first, so equal clocks never depend on the order of the file.
         group.sort_by(|left, right| {
@@ -192,26 +193,18 @@ pub fn fold(events: &[Event], unreadable: Vec<UnreadableLine>) -> Memory {
             .collect();
 
         let mut versions = Vec::new();
-        let mut deleted: Option<&Event> = None;
+        let mut deleted = false;
         for leaf in leaves {
             match &leaf.action {
                 Action::Upsert { record } => versions.push((leaf.uuid.clone(), record.clone())),
-                Action::Delete { .. } => deleted = Some(leaf),
+                Action::Delete { .. } => deleted = true,
             }
         }
         match versions.split_first() {
             // Someone asked to forget it and nobody wrote it afterwards.
             None => {
-                if let Some(delete) = deleted {
-                    let seen = delete.parent.as_deref().and_then(|parent| {
-                        group.iter().find_map(|event| match &event.action {
-                            Action::Upsert { record } if event.uuid == parent => {
-                                Some((event.uuid.clone(), record.clone()))
-                            }
-                            _ => None,
-                        })
-                    });
-                    memory.forgotten.insert(id.clone(), Forgotten { seen });
+                if deleted {
+                    memory.forgotten.insert(id.clone());
                 }
             }
             Some(((version, record), rivals)) => {
