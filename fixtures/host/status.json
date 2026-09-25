@@ -79,7 +79,14 @@
               "VibeIDE"
             ],
             "lastCommitAt": "2026-09-23T09:12:40Z",
-            "machines": false
+            "machines": false,
+            "projectFacts": {
+              "VibeIDE": {
+                "sizeBytes": 24576,
+                "lastCommitAt": "2026-09-23T09:12:40Z",
+                "lastAuthor": "tk_7a9b2c4d"
+              }
+            }
           },
           "otherteam.git": {
             "sizeBytes": 8192,
@@ -155,7 +162,8 @@
           "otherteam": {
             "projects": [],
             "sizeBytes": 8192,
-            "lastCommitAt": "2026-09-22T08:00:00Z"
+            "lastCommitAt": "2026-09-22T08:00:00Z",
+            "projectFacts": {}
           },
           "personal": {
             "projects": [
@@ -163,14 +171,22 @@
               "VibeMemory"
             ],
             "sizeBytes": 953221120,
-            "lastCommitAt": "2026-09-23T10:58:12Z"
+            "lastCommitAt": "2026-09-23T10:58:12Z",
+            "projectFacts": {}
           },
           "vibebrains": {
             "projects": [
               "VibeIDE"
             ],
             "sizeBytes": 40960,
-            "lastCommitAt": "2026-09-23T09:12:40Z"
+            "lastCommitAt": "2026-09-23T09:12:40Z",
+            "projectFacts": {
+              "VibeIDE": {
+                "sizeBytes": 24576,
+                "lastCommitAt": "2026-09-23T09:12:40Z",
+                "lastAuthor": "tk_7a9b2c4d"
+              }
+            }
           }
         },
         "deleted": [
@@ -221,7 +237,14 @@
               "VibeIDE"
             ],
             "lastCommitAt": "2026-09-23T09:12:40Z",
-            "machines": false
+            "machines": false,
+            "projectFacts": {
+              "VibeIDE": {
+                "sizeBytes": 24576,
+                "lastCommitAt": "2026-09-23T09:12:40Z",
+                "lastAuthor": "tk_7a9b2c4d"
+              }
+            }
           },
           "otherteam.git": {
             "sizeBytes": 8192,
@@ -282,7 +305,8 @@
           "otherteam": {
             "projects": [],
             "sizeBytes": 8192,
-            "lastCommitAt": "2026-09-22T08:00:00Z"
+            "lastCommitAt": "2026-09-22T08:00:00Z",
+            "projectFacts": {}
           },
           "personal": {
             "projects": [
@@ -290,14 +314,22 @@
               "VibeMemory"
             ],
             "sizeBytes": 953221120,
-            "lastCommitAt": "2026-09-23T10:58:12Z"
+            "lastCommitAt": "2026-09-23T10:58:12Z",
+            "projectFacts": {}
           },
           "vibebrains": {
             "projects": [
               "VibeIDE"
             ],
             "sizeBytes": 40960,
-            "lastCommitAt": "2026-09-23T09:12:40Z"
+            "lastCommitAt": "2026-09-23T09:12:40Z",
+            "projectFacts": {
+              "VibeIDE": {
+                "sizeBytes": 24576,
+                "lastCommitAt": "2026-09-23T09:12:40Z",
+                "lastAuthor": "tk_7a9b2c4d"
+              }
+            }
           }
         },
         "deleted": [
@@ -359,7 +391,14 @@
               "VibeIDE"
             ],
             "lastCommitAt": "2026-09-23T09:12:40Z",
-            "machines": false
+            "machines": false,
+            "projectFacts": {
+              "VibeIDE": {
+                "sizeBytes": 24576,
+                "lastCommitAt": "2026-09-23T09:12:40Z",
+                "lastAuthor": "tk_7a9b2c4d"
+              }
+            }
           },
           "otherteam.git": {
             "sizeBytes": 8192,
@@ -435,7 +474,8 @@
           "otherteam": {
             "projects": [],
             "sizeBytes": 8192,
-            "lastCommitAt": "2026-09-22T08:00:00Z"
+            "lastCommitAt": "2026-09-22T08:00:00Z",
+            "projectFacts": {}
           },
           "personal": {
             "projects": [
@@ -443,14 +483,22 @@
               "VibeMemory"
             ],
             "sizeBytes": 953221120,
-            "lastCommitAt": "2026-09-23T10:58:12Z"
+            "lastCommitAt": "2026-09-23T10:58:12Z",
+            "projectFacts": {}
           },
           "vibebrains": {
             "projects": [
               "VibeIDE"
             ],
             "sizeBytes": 40960,
-            "lastCommitAt": "2026-09-23T09:12:40Z"
+            "lastCommitAt": "2026-09-23T09:12:40Z",
+            "projectFacts": {
+              "VibeIDE": {
+                "sizeBytes": 24576,
+                "lastCommitAt": "2026-09-23T09:12:40Z",
+                "lastAuthor": "tk_7a9b2c4d"
+              }
+            }
           }
         },
         "deleted": [],
@@ -512,7 +560,14 @@
               "VibeIDE"
             ],
             "lastCommitAt": "2026-09-23T09:12:40Z",
-            "machines": false
+            "machines": false,
+            "projectFacts": {
+              "VibeIDE": {
+                "sizeBytes": 24576,
+                "lastCommitAt": "2026-09-23T09:12:40Z",
+                "lastAuthor": "tk_7a9b2c4d"
+              }
+            }
           },
           "otherteam.git": {
             "sizeBytes": 8192,

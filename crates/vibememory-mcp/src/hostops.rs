@@ -24,7 +24,9 @@ use crate::protocol;
 use crate::push_scan::{self, Scanned};
 use crate::receive::{self, Objects, Push, Sizes, Update};
 use crate::shell::{self, ShellAction};
-use crate::status::{self, Applied, Backup, Disk, Facts, HostReport, Problem, Refused, RepoFacts};
+use crate::status::{
+    self, Applied, Backup, Disk, Facts, HostReport, Problem, ProjectFacts, Refused, RepoFacts,
+};
 use crate::tools::{Limits, Writes};
 
 /// The variable through which the forced command tells `pre-receive` whose key pushes.
@@ -1160,6 +1162,7 @@ fn repo_facts(repo: &Path) -> RepoFacts {
             projects: Vec::new(),
             last_commit_at: None,
             machines: false,
+            project_facts: BTreeMap::new(),
         };
     };
     let text = |args: &[&str]| {
@@ -1173,12 +1176,63 @@ fn repo_facts(repo: &Path) -> RepoFacts {
         .map(vibememory_cli::clock::iso8601);
     let machines = text(&["ls-tree", "-d", "--name-only", &main, "machines"])
         .is_ok_and(|listed| !listed.is_empty());
+    let project_facts = project_facts(&text, &main, &projects);
     RepoFacts {
         size_bytes,
         projects,
         last_commit_at,
         machines,
+        project_facts,
     }
+}
+
+/// Size, last commit and its author of each project of `main`. The size is one listing of the
+/// tree, not a walk of history; the last commit is one `log -1` per project, hourly.
+fn project_facts(
+    text: &dyn Fn(&[&str]) -> Result<String, String>,
+    main: &str,
+    projects: &[String],
+) -> BTreeMap<String, ProjectFacts> {
+    let mut sizes: BTreeMap<&str, u64> = BTreeMap::new();
+    if let Ok(listed) = text(&["ls-tree", "-r", "-l", main, "--", "projects/"]) {
+        // `<mode> <type> <object> <size>\t<path>`; a submodule has `-` for a size and adds nothing
+        for line in listed.lines() {
+            let Some((meta, path)) = line.split_once('\t') else {
+                continue;
+            };
+            let size = meta
+                .split_whitespace()
+                .nth(3)
+                .and_then(|size| size.parse::<u64>().ok());
+            let project = path
+                .strip_prefix("projects/")
+                .and_then(|rest| rest.split('/').next());
+            if let (Some(size), Some(project)) = (size, project)
+                && let Some(known) = projects.iter().find(|known| known.as_str() == project)
+            {
+                *sizes.entry(known.as_str()).or_default() += size;
+            }
+        }
+    }
+    projects
+        .iter()
+        .map(|project| {
+            let path = format!("projects/{project}/");
+            let last = text(&["log", "-1", "--format=%ct%x09%an", main, "--", &path]).ok();
+            let (seconds, author) = last
+                .as_deref()
+                .and_then(|line| line.split_once('\t'))
+                .map_or((None, None), |(seconds, author)| {
+                    (seconds.parse::<i64>().ok(), Some(author.to_owned()))
+                });
+            let facts = ProjectFacts {
+                size_bytes: sizes.get(project.as_str()).copied().unwrap_or_default(),
+                last_commit_at: seconds.map(vibememory_cli::clock::iso8601),
+                last_author: author.filter(|author| !author.is_empty()),
+            };
+            (project.clone(), facts)
+        })
+        .collect()
 }
 
 /// The host's public keys: type and base64 of each `ssh_host_*_key.pub`, without the comment.

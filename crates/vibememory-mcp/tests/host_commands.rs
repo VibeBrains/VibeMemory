@@ -112,7 +112,7 @@ fn host(label: &str) -> Host {
     fs::create_dir_all(host.access.parent().expect("access dir")).expect("access dir");
     fs::create_dir_all(&host.teams).expect("teams");
     let personal = host.root.join("personal.git");
-    bare_with(&personal, &[("projects/VibeMemory/memory.jsonl", "")]);
+    bare_with(&personal, &[("projects/VibeMemory/memory.jsonl", "{}\n")]);
     bare_with(
         &host.teams.join("oldteam.git"),
         &[("projects/Old/memory.jsonl", "")],
@@ -276,6 +276,24 @@ fn apply_makes_the_stores_and_the_keys_and_reports_them() {
     assert_eq!(
         report["teams"]["personal"]["projects"],
         json!(["VibeMemory"])
+    );
+    // What the owner reads a project by: its bytes in `main`, when it was last written and by whom
+    let project = &report["teams"]["personal"]["projectFacts"]["VibeMemory"];
+    assert_eq!(
+        project["sizeBytes"], 3,
+        "the bytes of the journal line: {project}"
+    );
+    assert!(
+        project["lastCommitAt"]
+            .as_str()
+            .is_some_and(|at| at.ends_with('Z')),
+        "{project}"
+    );
+    assert!(
+        project["lastAuthor"]
+            .as_str()
+            .is_some_and(|author| !author.is_empty()),
+        "{project}"
     );
     assert_eq!(
         report["deleted"],

@@ -79,6 +79,21 @@ pub struct RepoFacts {
     pub last_commit_at: Option<String>,
     /// Whether `main` has a `machines/` directory: a hint that the team synced clones.
     pub machines: bool,
+    /// What each project of `main` holds and who wrote to it last.
+    #[serde(default)]
+    pub project_facts: BTreeMap<String, ProjectFacts>,
+}
+
+/// One project of a store: what the owner of a team looks at to tell a live project from a stale one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectFacts {
+    /// The bytes of its files in `main`, not of their history.
+    pub size_bytes: u64,
+    /// The time of the last commit of `main` that touched it.
+    pub last_commit_at: Option<String>,
+    /// Who made that commit: the machine's git author, or the writer the memory server commits as.
+    pub last_author: Option<String>,
 }
 
 /// Free and total space of the partition the stores live on.
@@ -129,6 +144,9 @@ pub struct TeamReport {
     pub size_bytes: u64,
     /// The time of the last commit of `main`.
     pub last_commit_at: Option<String>,
+    /// What each project holds and who wrote to it last.
+    #[serde(default)]
+    pub project_facts: BTreeMap<String, ProjectFacts>,
 }
 
 /// A deleted team's renamed directory.
@@ -237,6 +255,7 @@ pub fn host_report(
                                 projects: repo.projects,
                                 size_bytes: repo.size_bytes,
                                 last_commit_at: repo.last_commit_at,
+                                project_facts: repo.project_facts,
                             },
                         );
                     }
@@ -265,6 +284,7 @@ pub fn host_report(
                         projects: repo.projects,
                         size_bytes: repo.size_bytes,
                         last_commit_at: repo.last_commit_at,
+                        project_facts: repo.project_facts,
                     },
                 );
             }
