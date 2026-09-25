@@ -286,6 +286,68 @@ fn owner_only(path: &Path, rights: &str) -> Result<(), String> {
     }
 }
 
+/// What `disconnect` did for a team on this machine.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Disconnected {
+    /// The files taken off the machine: each token, its sidecar and its client fragment.
+    pub removed: Vec<PathBuf>,
+    /// The tokens that are gone from here, `(public id, cabinet)`: they still open the team until
+    /// they are revoked there.
+    pub revoke: Vec<(String, String)>,
+    /// Files of the team's directory `connect` did not write — a token kept by hand, from before the
+    /// cabinet — left where they are: nothing here says where they came from or where to revoke them.
+    pub left: Vec<PathBuf>,
+}
+
+/// Takes the tokens of `team` off this machine: every token `connect` kept for the team, with its
+/// sidecar and client fragment, and the team's directory once nothing else is in it. A machine of
+/// a `memory` team keeps nothing else of it. The tokens still open the team until they are revoked
+/// in the cabinet their sidecars name; the engine never touches `~/.claude.json`, so a client
+/// registered there is removed by the person.
+///
+/// # Errors
+///
+/// A name that is not a team, or a file that cannot be removed.
+pub fn disconnect(layout: &Layout, team: &str) -> Result<Disconnected, String> {
+    if !vibememory_core::naming::is_slug(team) {
+        return Err(format!("{team:?} is not a team"));
+    }
+    let mut done = Disconnected::default();
+    for kept in crate::credentials::kept_tokens(layout)
+        .into_iter()
+        .filter(|kept| kept.team == team)
+    {
+        for path in [
+            sidecar_file(&kept.file),
+            fragment_file(&kept.file),
+            kept.file.clone(),
+        ] {
+            match std::fs::remove_file(&path) {
+                Ok(()) => done.removed.push(path),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("{}: {error}", path.display())),
+            }
+        }
+        done.revoke.push((kept.token_id, kept.cabinet));
+    }
+    let directory = layout.engine_dir.join(TOKENS_DIR).join(team);
+    if let Ok(entries) = std::fs::read_dir(&directory) {
+        done.left = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect();
+        done.left.sort();
+    }
+    if done.left.is_empty() {
+        match std::fs::remove_dir(&directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("{}: {error}", directory.display())),
+        }
+    }
+    Ok(done)
+}
+
 /// The subcommand of the engine's binary that Claude Code runs for the authorization header.
 pub const HEADERS_COMMAND: &str = "mcp-headers";
 

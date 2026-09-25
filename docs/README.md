@@ -20,6 +20,7 @@ docs/
 │   ├── linksFixtures.md    # как добавить кейс в fixtures/links/, два раздела файла, годные подделки
 │   ├── mergeFixtures.md    # как добавить кейс в fixtures/merge/, скраббер транскриптов, грамматика сценариев
 │   ├── namingFixtures.md   # как добавить кейс в fixtures/naming/, метки provenance, оракул, новая версия CLI
+│   ├── teamSetup.md        # участник memory-команды: программы, connect, регистрация агента, doctor, disconnect
 │   ├── serverHardeningPrompt.md # промпт агенту соседнего проекта: аудит и ужесточение доступа к серверу, каждый пункт — итог реальной проверки
 │   └── memoryRecordsSpec.md # формат памяти: журнал, документ-проекция, правила расхождений
 └── knowledge/              # база знаний: проверенные факты и грабли

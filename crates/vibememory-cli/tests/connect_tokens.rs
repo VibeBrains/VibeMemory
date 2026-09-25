@@ -17,7 +17,7 @@ mod support;
 use std::fs;
 
 use support::TempDir;
-use vibememory_cli::connect::{claude_code_registration, headers_of, keep_token};
+use vibememory_cli::connect::{claude_code_registration, disconnect, headers_of, keep_token};
 use vibememory_cli::credentials::kept_tokens;
 use vibememory_cli::install::{Layout, Step, plan_binaries};
 use vibememory_core::claim::{Claim, TokenGrant, read_answer};
@@ -211,4 +211,51 @@ fn connect_takes_no_code_and_no_stray_word_from_the_command_line() {
         assert_eq!(output.status.code(), Some(2), "{args:?}: {stderr}");
         assert!(stderr.contains(said), "{args:?}: {stderr}");
     }
+}
+
+#[test]
+fn disconnect_takes_the_teams_tokens_off_the_machine_and_names_where_to_revoke_them() {
+    let temp = TempDir::new("disconnect");
+    let layout = layout(&temp);
+    let grant = grant();
+    let kept = keep_token(&layout, &grant).unwrap();
+    // A token of another team stays; one kept by hand in this team is left for the person.
+    let other = TokenGrant {
+        team: "otherteam".to_owned(),
+        ..grant.clone()
+    };
+    let other_kept = keep_token(&layout, &other).unwrap();
+    let by_hand = layout
+        .engine_dir
+        .join("tokens")
+        .join(&grant.team)
+        .join("by-hand");
+    fs::write(&by_hand, "0123456789abcdef".repeat(4)).unwrap();
+
+    let done = disconnect(&layout, &grant.team).unwrap();
+    for path in [&kept.token, &kept.sidecar, &kept.fragment] {
+        assert!(!path.exists(), "{} is gone", path.display());
+        assert!(done.removed.contains(path));
+    }
+    assert_eq!(
+        done.revoke,
+        [(grant.token_id.clone(), grant.cabinet.clone())]
+    );
+    assert_eq!(done.left, std::slice::from_ref(&by_hand));
+    assert!(other_kept.token.exists(), "another team's token stays");
+
+    // Without the hand-kept file the directory goes too, and doctor finds nothing of the team.
+    fs::remove_file(&by_hand).unwrap();
+    let again = disconnect(&layout, &grant.team).unwrap();
+    assert!(again.removed.is_empty() && again.left.is_empty());
+    assert!(!layout.engine_dir.join("tokens").join(&grant.team).exists());
+    assert!(
+        kept_tokens(&layout)
+            .iter()
+            .all(|token| token.team != grant.team)
+    );
+    assert!(
+        disconnect(&layout, "../escape").is_err(),
+        "a name that is not a team"
+    );
 }

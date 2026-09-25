@@ -39,6 +39,7 @@ fn main() -> ExitCode {
             install(dry_run)
         }
         Some("connect") => connect_command(&args.collect::<Vec<String>>()),
+        Some("disconnect") => disconnect_command(&args.collect::<Vec<String>>()),
         Some(vibememory_cli::connect::HEADERS_COMMAND) => {
             headers_command(&args.collect::<Vec<String>>())
         }
@@ -440,6 +441,49 @@ fn print_connected(
             &vibememory_cli::install::installed_binary(&layout())
         )
     );
+}
+
+/// `disconnect <team>`: the team's tokens off this machine, and what is left to do elsewhere —
+/// revoke them in the cabinet, and remove the client registered in `~/.claude.json`, which the
+/// engine never writes.
+fn disconnect_command(args: &[String]) -> ExitCode {
+    let [team] = args else {
+        eprintln!("usage: vibememory disconnect <team>");
+        return ExitCode::from(2);
+    };
+    let done = match vibememory_cli::connect::disconnect(&layout(), team) {
+        Ok(done) => done,
+        Err(error) => {
+            eprintln!("disconnect: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if done.removed.is_empty() && done.left.is_empty() {
+        println!("no token of team {team} is kept on this machine");
+        return ExitCode::SUCCESS;
+    }
+    for path in &done.removed {
+        println!("removed  {}", path.display());
+    }
+    for path in &done.left {
+        println!(
+            "left     {} \u{2014} not written by connect; revoke it, then remove it by hand",
+            path.display()
+        );
+    }
+    for (token_id, cabinet) in &done.revoke {
+        // the sidecar is a file on this machine anyone with its rights could have edited
+        println!(
+            "revoke   {} in {}: until then it still opens team {team}",
+            vibememory_core::terminal::printable(token_id),
+            vibememory_core::terminal::printable(cabinet)
+        );
+    }
+    println!(
+        "Claude Code: claude mcp remove --scope user {}",
+        vibememory_core::claim::server_name(team)
+    );
+    ExitCode::SUCCESS
 }
 
 /// `mcp-headers <team> <agent>`: what Claude Code runs on every connection to the team's memory
@@ -1772,7 +1816,7 @@ fn usage() {
     println!("vibememory {}", env!("CARGO_PKG_VERSION"));
     println!(
         "commands: status [--json], doctor [--json], install [--dry-run], \
-         connect --cabinet <address> [--agent <name>], hook <event>, \
+         connect --cabinet <address> [--agent <name>], disconnect <team>, hook <event>, \
          merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>, tick [--release-deletions], \
          relink <enc> <name> <cwd>, import <enc> <name> <cwd>, \
          migrate --from <dir> [--apply], switch --from <dir> [--apply|--rollback], --version"
