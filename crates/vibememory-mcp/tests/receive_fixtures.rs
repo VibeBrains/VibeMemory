@@ -17,7 +17,7 @@ mod support;
 use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
-use vibememory_mcp::receive::{self, Push, Sizes, Update};
+use vibememory_mcp::receive::{self, Objects, Push, Sizes, Update};
 
 fn size(case: &Value, defaults: &Value, name: &str) -> u64 {
     case["sizes"][name]
@@ -79,7 +79,13 @@ fn every_push_is_answered_as_the_fixture_says() {
                 reserve_bytes: size(case, defaults, "reserveBytes"),
             },
             now,
-            with_tokens: &with_tokens,
+            objects: match case.get("tooLarge") {
+                Some(large) => Objects::TooLarge {
+                    bytes: large["bytes"].as_u64().expect("bytes"),
+                    limit: large["limit"].as_u64().expect("limit"),
+                },
+                None => Objects::Read(&with_tokens),
+            },
         };
         let answer = receive::decide(&push, usable.then_some(&snapshot));
         let answered = match &answer {

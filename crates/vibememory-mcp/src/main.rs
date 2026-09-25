@@ -80,7 +80,21 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            return hostops::pre_receive(&host_paths(), reserve);
+            let max_content_bytes = match flag("--max-content-bytes")
+                .map(|value| value.parse::<u64>())
+            {
+                None => layout::DEFAULT_MAX_CONTENT_BYTES,
+                Some(Ok(bytes)) => bytes,
+                Some(Err(_)) => {
+                    eprintln!("vibememory-mcp: --max-content-bytes takes a whole number of bytes");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let limits = hostops::PushLimits {
+                reserve_bytes: reserve,
+                max_content_bytes,
+            };
+            return hostops::pre_receive(&host_paths(), limits);
         }
         Some("access-apply") => {
             let apply_paths = ApplyPaths {

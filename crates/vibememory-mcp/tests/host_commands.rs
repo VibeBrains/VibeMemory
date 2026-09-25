@@ -817,6 +817,70 @@ fn a_run_that_cannot_list_the_stores_applies_nothing_and_the_timer_catches_up() 
     let refused = json_file(&layout::applied_file(&host.access));
     assert_eq!(refused["problems"][0]["code"], "serialBehind");
     assert_eq!(refused["serial"], 13);
+    // Nor does the door open by that older file: the key is refused, not let in by serial 12.
+    let why = vibememory_mcp::hostops::read_in_force(&host.access, |_| {})
+        .expect_err("serial 13 was applied and has no copy");
+    assert!(why.contains("serial 13 was applied"), "{why}");
+    // The timer does not refuse the same bytes again every quarter of an hour.
+    assert_eq!(refused["lastRefused"]["code"], "serialBehind");
+    let stamp = fs::metadata(layout::applied_file(&host.access))
+        .expect("applied")
+        .modified()
+        .expect("mtime");
+    assert!(apply_with(&host, &["--catch-up"]).status.success());
+    assert_eq!(
+        fs::metadata(layout::applied_file(&host.access))
+            .expect("applied")
+            .modified()
+            .expect("mtime"),
+        stamp,
+        "refused already: nothing rewritten"
+    );
+}
+
+#[test]
+fn a_run_that_cannot_list_the_stores_keeps_what_failed_for_each_team() {
+    let host = host("team-failures");
+    // syncteam's directory is taken by a file: its store cannot be set up
+    fs::write(host.teams.join("syncteam.git"), "not a repository").expect("write");
+    assert!(!apply(&host).status.success());
+    let first = json_file(&layout::applied_file(&host.access));
+    let team_failed = |applied: &Value| {
+        applied["problems"]
+            .as_array()
+            .expect("problems")
+            .iter()
+            .any(|problem| problem["code"] == "applyFailed" && problem["team"] == "syncteam")
+    };
+    assert!(team_failed(&first), "{first}");
+
+    let mut newer: Value =
+        serde_json::from_slice(&fs::read(&host.access).expect("snapshot")).expect("JSON");
+    newer["serial"] = json!(13);
+    put_snapshot(&host, &newer);
+    fs::set_permissions(&host.teams, fs::Permissions::from_mode(0o000)).expect("chmod");
+    let failed = apply(&host);
+    fs::set_permissions(&host.teams, fs::Permissions::from_mode(0o755)).expect("chmod");
+    assert!(!failed.status.success());
+    let after = json_file(&layout::applied_file(&host.access));
+    assert_eq!(after["problems"][0]["code"], "applyFailed");
+    assert!(after["problems"][0].get("team").is_none());
+    assert!(
+        team_failed(&after),
+        "what failed for syncteam stays: {after}"
+    );
+}
+
+/// A transcript line with an agent token in it, from the fixture of such lines.
+fn token_line() -> String {
+    support::fixture("fixtures/export/settingsWithToken.json")["cases"]
+        .as_array()
+        .expect("cases")
+        .iter()
+        .find(|case| case["id"] == "transcriptToolResult")
+        .and_then(|case| case["text"].as_str())
+        .expect("the case")
+        .to_owned()
 }
 
 #[test]
@@ -824,14 +888,7 @@ fn a_push_of_a_file_holding_an_agent_token_is_refused_whole() {
     let host = host("token-push");
     let (sync, work) = alice_clone(&host);
     let before = bare(&sync, &["rev-parse", "main"]);
-    let line = support::fixture("fixtures/export/settingsWithToken.json")["cases"]
-        .as_array()
-        .expect("cases")
-        .iter()
-        .find(|case| case["id"] == "transcriptToolResult")
-        .and_then(|case| case["text"].as_str())
-        .expect("the case")
-        .to_owned();
+    let line = token_line();
     let transcript = "projects/Acme/11111111-1111-4111-8111-111111111111.jsonl";
     fs::create_dir_all(work.join("projects/Acme")).expect("dirs");
     fs::write(work.join(transcript), line).expect("write");
@@ -858,6 +915,83 @@ fn a_push_of_a_file_holding_an_agent_token_is_refused_whole() {
 }
 
 #[test]
+fn a_token_the_push_adds_and_removes_again_is_still_refused() {
+    let host = host("token-history");
+    let (sync, work) = alice_clone(&host);
+    let before = bare(&sync, &["rev-parse", "main"]);
+    let transcript = "projects/Acme/11111111-1111-4111-8111-111111111111.jsonl";
+    fs::create_dir_all(work.join("projects/Acme")).expect("dirs");
+    fs::write(work.join(transcript), token_line()).expect("write");
+    git(&work, &["add", "-A"]);
+    git(&work, &["commit", "--quiet", "-m", "the token goes in"]);
+    fs::write(work.join(transcript), "{}\n").expect("write");
+    git(&work, &["add", "-A"]);
+    git(&work, &["commit", "--quiet", "-m", "and out again"]);
+    // The tree the push leaves is clean; its history is not.
+    let refused = member_git(&host, &work, ALICE_LAPTOP, &["push", "origin", "main"]);
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{said}");
+    assert!(said.contains("remote: vibememory: tokenInPush"), "{said}");
+    assert!(said.contains(&format!("remote: {transcript}")), "{said}");
+    assert_eq!(
+        bare(&sync, &["rev-parse", "main"]),
+        before,
+        "nothing landed"
+    );
+}
+
+#[test]
+fn a_token_in_a_commit_message_is_refused() {
+    let host = host("token-message");
+    let (sync, work) = alice_clone(&host);
+    let before = bare(&sync, &["rev-parse", "main"]);
+    fs::create_dir_all(work.join("projects/Acme")).expect("dirs");
+    fs::write(work.join("projects/Acme/notes.txt"), "a note\n").expect("write");
+    git(&work, &["add", "-A"]);
+    let token_text = token_line();
+    git(&work, &["commit", "--quiet", "-m", &token_text]);
+    let refused = member_git(&host, &work, ALICE_LAPTOP, &["push", "origin", "main"]);
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{said}");
+    assert!(said.contains("remote: vibememory: tokenInPush"), "{said}");
+    assert!(said.contains("remote: commit "), "{said}");
+    assert_eq!(
+        bare(&sync, &["rev-parse", "main"]),
+        before,
+        "nothing landed"
+    );
+}
+
+#[test]
+fn a_push_of_many_files_is_read_to_the_end() {
+    let host = host("many-files");
+    let (sync, work) = alice_clone(&host);
+    // More answers than a pipe holds: a hook that wrote every question before reading an answer
+    // would wait for git forever, and git for it.
+    let dir = work.join("projects/Acme/many");
+    fs::create_dir_all(&dir).expect("dirs");
+    for index in 0..3000 {
+        fs::write(
+            dir.join(format!("{index:04}.txt")),
+            format!("file {index}\n"),
+        )
+        .expect("write");
+    }
+    git(&work, &["add", "-A"]);
+    git(&work, &["commit", "--quiet", "-m", "many files"]);
+    let pushed = member_git(&host, &work, ALICE_LAPTOP, &["push", "origin", "main"]);
+    assert!(
+        pushed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&pushed.stderr)
+    );
+    assert_eq!(
+        bare(&sync, &["rev-parse", "main"]),
+        git(&work, &["rev-parse", "HEAD"]).trim()
+    );
+}
+
+#[test]
 fn an_application_waits_for_the_one_under_way() {
     let host = host("apply-lock");
     assert!(apply(&host).status.success());
@@ -866,7 +1000,11 @@ fn an_application_waits_for_the_one_under_way() {
         .create(true)
         .truncate(false)
         .write(true)
-        .open(layout::apply_lock_file(&host.access))
+        .open({
+            let file = layout::apply_lock_file(&host.teams);
+            fs::create_dir_all(file.parent().expect("locks dir")).expect("locks dir");
+            file
+        })
         .expect("lock file");
     lock.lock().expect("lock");
     let store_init = support::repo_root().join("infra/storeInit.sh");

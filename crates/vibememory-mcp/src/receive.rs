@@ -108,8 +108,24 @@ pub struct Push<'a> {
     pub sizes: Sizes,
     /// When the push comes, `YYYY-MM-DDTHH:MM:SSZ`: a banned member's key pushes nothing.
     pub now: &'a str,
-    /// The changed paths whose new content holds an agent token of a cabinet.
-    pub with_tokens: &'a [String],
+    /// What the push's objects hold, once the hook has read them.
+    pub objects: Objects<'a>,
+}
+
+/// The push's objects as the hook read them for tokens (`crate::push_scan`).
+#[derive(Debug, Clone, Copy)]
+pub enum Objects<'a> {
+    /// Not read yet: they are read only for a push every other rule lets land.
+    Unread,
+    /// Read: the files and commits among them that hold an agent token of a cabinet.
+    Read(&'a [String]),
+    /// More than the host reads.
+    TooLarge {
+        /// What the objects hold, uncompressed.
+        bytes: u64,
+        /// What the host reads at most.
+        limit: u64,
+    },
 }
 
 /// Why the push is refused.
@@ -209,21 +225,45 @@ pub fn decide(push: &Push<'_>, snapshot: Option<&Snapshot>) -> Result<(), PushRe
         ));
     }
     paths_allowed(push.changed, &key.store_name)?;
-    if !push.with_tokens.is_empty() {
+    sizes_allowed(push.sizes, team.limits.quota_bytes)?;
+    // Last: the objects are read only for a push every other rule lets land
+    match push.objects {
+        Objects::TooLarge { bytes, limit } => Err(refuse(
+            "contentTooLarge",
+            format!(
+                "the push holds {bytes} bytes uncompressed, more than the {limit} the host reads; push in parts"
+            ),
+        )),
         // Engines hold such files back themselves; this is for one that does not, and for a
         // plain `git push` — a token in a team's store is in front of every member for good.
-        return Err(refuse_paths(
+        Objects::Read(with_tokens) if !with_tokens.is_empty() => Err(refuse_paths(
             "tokenInPush",
-            "these files hold an agent token; revoke it in the cabinet and push without it",
-            push.with_tokens.to_vec(),
-        ));
+            "these files or commits of the push hold an agent token; revoke it in the cabinet and push without it, in no commit",
+            with_tokens.to_vec(),
+        )),
+        Objects::Unread | Objects::Read(_) => Ok(()),
     }
-    sizes_allowed(push.sizes, team.limits.quota_bytes)
 }
 
 /// The paths a member may change: `projects/` and the directory of their own machine — never the
 /// store's configuration, which would run on every member's machine.
 fn paths_allowed(changed: &[String], store_name: &str) -> Result<(), PushRefusal> {
+    // a name git read as bytes that are not UTF-8 arrives with U+FFFD in it
+    let unreadable: Vec<String> = changed
+        .iter()
+        .filter(|path| {
+            path.chars()
+                .any(|character| character.is_control() || character == '\u{fffd}')
+        })
+        .map(|path| path.escape_debug().to_string())
+        .collect();
+    if !unreadable.is_empty() {
+        return Err(refuse_paths(
+            "pathDenied",
+            "a name is UTF-8 without control characters",
+            unreadable,
+        ));
+    }
     let config: Vec<String> = changed
         .iter()
         .filter(|path| path.starts_with(CONFIG_PREFIX))

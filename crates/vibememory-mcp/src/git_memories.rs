@@ -44,8 +44,8 @@ fn next_index() -> u64 {
 ///
 /// Always with `--git-dir`: on the host the repositories belong to other accounts, and git answers
 /// `-C` or a working directory there with "dubious ownership", while an explicit git dir is not
-/// checked. Output is read while git runs, so a transcript of 19 MiB cannot fill the pipe and wedge
-/// it.
+/// checked. Output is read while git runs and the input is written beside it, so neither a
+/// transcript of 19 MiB nor a long list of questions can fill a pipe and wedge it.
 ///
 /// # Errors
 ///
@@ -76,17 +76,33 @@ pub fn run(
     let mut child = command
         .spawn()
         .map_err(|error| format!("git could not be started: {error}"))?;
-    if let Some(bytes) = input {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "git took no input".to_owned())?;
-        stdin.write_all(bytes).map_err(|error| error.to_string())?;
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| error.to_string())?;
+    // The input is written from a thread of its own while the output is read here: git answers as
+    // it reads, and an answer that fills the pipe before the input is all written would wedge both
+    let output = std::thread::scope(|scope| {
+        let writer = input
+            .map(|bytes| {
+                child
+                    .stdin
+                    .take()
+                    .ok_or_else(|| "git took no input".to_owned())
+                    .map(|mut stdin| scope.spawn(move || stdin.write_all(bytes)))
+            })
+            .transpose()?;
+        let output = child
+            .wait_with_output()
+            .map_err(|error| error.to_string())?;
+        // a git that stopped reading and failed says why on stderr, below; its broken pipe does not
+        let written = writer.map_or(Ok(()), |writer| {
+            writer
+                .join()
+                .map_err(|_| "the input of git could not be written".to_owned())?
+                .map_err(|error| error.to_string())
+        });
+        Ok::<_, String>((output, written))
+    })?;
+    let (output, written) = output;
     if output.status.success() {
+        written?;
         Ok(output.stdout)
     } else {
         Err(format!(

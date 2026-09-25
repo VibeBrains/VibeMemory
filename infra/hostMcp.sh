@@ -236,6 +236,11 @@ fi
 # the application of the snapshot (team stores, vmgit's keys, applied.json, host.json) whenever
 # the cabinet publishes one, the report every hour, and the nightly repacking of the team stores.
 [ -x "$storeRepack" ] || { echo "Ошибка: нет $storeRepack — сначала hostBootstrap.sh" >&2; exit 1; }
+# The host's locks live where only vmgit writes: the exchange directory is the cabinet's to write
+# too, and a lock it could hold or swap for a link would stall or misdirect the host's commands.
+locks="$(dirname "$teams")/locks"
+sudo install -d -o vmgit -g vmgit -m 0700 "$locks"
+sudo rm -f "$(dirname "$access")/.access-apply.lock" "$(dirname "$access")/.host.json.lock"
 reload=0
 putUnit() {
   local file="/etc/systemd/system/$1" text="$2"
@@ -257,7 +262,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=$teams $(dirname "$access") $vmgitSsh"
+ReadWritePaths=$teams $(dirname "$access") $locks $vmgitSsh"
 }
 putUnit vibememory-access-apply.service "$(applyService "apply the access snapshot to the team stores and vmgit's keys" "")"
 # An application that failed is otherwise retried only by the next publication, which may be days
@@ -294,7 +299,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=$(dirname "$access")"
+ReadWritePaths=$(dirname "$access") $locks"
 putUnit vibememory-status.timer "[Unit]
 Description=VibeMemory: the host's report every hour
 

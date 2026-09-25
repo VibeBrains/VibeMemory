@@ -208,6 +208,18 @@ impl Memories for StoreMemories {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
         let line = journal::encode(event).map_err(|error| error.to_string())?;
+        // A token of a cabinet is refused by its shape before this (`Record::validate`); the owner's
+        // token from before the cabinet has none, and only this machine knows its value
+        if let Some(engine_dir) = self.store.parent() {
+            let found = vibememory_cli::held::Kept::read(engine_dir).found_in(&line);
+            if !found.is_empty() {
+                let named: Vec<&str> = found.iter().map(String::as_str).collect();
+                return Err(format!(
+                    "holdsToken: the memory holds agent token {}, kept on this machine; it is not written",
+                    named.join(", ")
+                ));
+            }
+        }
         // Append, never rewrite: the journal is what two machines merge by union, and a server
         // that rewrote it would turn every concurrent write into a conflict.
         let mut file = std::fs::OpenOptions::new()

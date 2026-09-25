@@ -46,6 +46,19 @@ pub struct Applied {
     pub team_count: u64,
     /// What was not done, and why.
     pub problems: Vec<Problem>,
+    /// The last snapshot refused since, if any: the catch-up does not refuse the same bytes again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_refused: Option<Refused>,
+}
+
+/// A refused application: of which bytes, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Refused {
+    /// SHA-256 of the refused `access.json`; `None` when there was no file to read.
+    pub snapshot_hash: Option<String>,
+    /// The code of the refusal, as it stands first in `problems`.
+    pub code: String,
 }
 
 /// Whether a serial is the absent one of a hand-written snapshot.

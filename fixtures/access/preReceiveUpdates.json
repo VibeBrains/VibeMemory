@@ -541,6 +541,102 @@
       }
     },
     {
+      "id": "quotaBeforeToken",
+      "provenance": "computed",
+      "note": "The objects are read for tokens only for a push every other rule lets land: one over the quota is named for that.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "sizes": {
+        "repoBytes": 10737417240
+      },
+      "withTokens": [
+        "projects/Acme/s1.jsonl"
+      ],
+      "expect": {
+        "code": "quota"
+      }
+    },
+    {
+      "id": "contentTooLarge",
+      "provenance": "computed",
+      "note": "A blob of zeros passes git's cap on what a push sends; what the hook would read uncompressed is capped too.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/zeros.bin"
+      ],
+      "tooLarge": {
+        "bytes": 5368709120,
+        "limit": 4294967296
+      },
+      "expect": {
+        "code": "contentTooLarge"
+      }
+    },
+    {
+      "id": "controlCharacterInName",
+      "provenance": "computed",
+      "note": "A name with a newline would split a question by path; names are UTF-8 without control characters.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/a\nb.txt"
+      ],
+      "expect": {
+        "code": "pathDenied",
+        "paths": [
+          "projects/Acme/a\\nb.txt"
+        ]
+      }
+    },
+    {
+      "id": "nameNotUtf8",
+      "provenance": "computed",
+      "note": "Bytes that are not UTF-8 reach the hook as U+FFFD.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "projects/Acme/�.txt"
+      ],
+      "expect": {
+        "code": "pathDenied",
+        "paths": [
+          "projects/Acme/�.txt"
+        ]
+      }
+    },
+    {
       "id": "deletedTeam",
       "provenance": "computed",
       "note": "The team was deleted; its directory is renamed at the next application.",

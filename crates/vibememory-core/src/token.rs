@@ -18,6 +18,10 @@ pub const ID_LENGTH: usize = 8;
 /// How the cabinet and the host name a token publicly: this prefix and its id.
 pub const PUBLIC_ID_PREFIX: &str = "tk_";
 
+/// The bytes that tell an issued token: the prefix, the id and the `_` before the secret. A scan
+/// that reads a text in parts keeps this many bytes less one from each part in front of the next.
+pub const SHAPE_BYTES: usize = PREFIX.len() + ID_LENGTH + 1;
+
 /// Whether `id` is a public id: eight characters of the alphabet.
 #[must_use]
 pub fn is_id(id: &str) -> bool {
@@ -29,16 +33,15 @@ pub fn is_id(id: &str) -> bool {
 /// hex characters, like any digest — so it is not looked for.
 fn issued_ids(text: &[u8]) -> impl Iterator<Item = &str> {
     let prefix = PREFIX.as_bytes();
-    text.windows(prefix.len() + ID_LENGTH + 1)
-        .filter_map(move |window| {
-            if !window.starts_with(prefix) || window.last() != Some(&b'_') {
-                return None;
-            }
-            window
-                .get(prefix.len()..prefix.len() + ID_LENGTH)
-                .and_then(|id| std::str::from_utf8(id).ok())
-                .filter(|id| is_id(id))
-        })
+    text.windows(SHAPE_BYTES).filter_map(move |window| {
+        if !window.starts_with(prefix) || window.last() != Some(&b'_') {
+            return None;
+        }
+        window
+            .get(prefix.len()..prefix.len() + ID_LENGTH)
+            .and_then(|id| std::str::from_utf8(id).ok())
+            .filter(|id| is_id(id))
+    })
 }
 
 /// Whether `text` holds anything shaped like an issued token.

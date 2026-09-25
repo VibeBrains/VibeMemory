@@ -336,3 +336,34 @@ fn the_host_makes_the_first_commit_and_keeps_a_file_in_step() {
         current.trim_end()
     );
 }
+
+#[test]
+fn a_local_save_holding_a_kept_token_is_refused() {
+    let temp = Temp::new("kept-token");
+    // The engine's directory holds the store; the owner's token from before the cabinet is kept
+    // there by value, having no shape to tell it by
+    let engine = temp.0.join("engine");
+    let store = engine.join("store");
+    fs::create_dir_all(store.join("projects/Project")).expect("project");
+    let legacy = "0123456789abcdef".repeat(4);
+    fs::create_dir_all(engine.join("tokens/personal")).expect("dirs");
+    fs::write(
+        engine.join("tokens/personal/claude-code"),
+        format!("{legacy}\n"),
+    )
+    .expect("write");
+    let local = StoreMemories::new(store.clone(), "mac-test".to_owned());
+
+    let refused = tools::call(
+        "memory_save",
+        &json!({ "project": "Project", "id": "host-access", "kind": "project", "description": "d", "body": legacy }),
+        &CALLER,
+        &local,
+    );
+    let why = refused.expect_err("refused");
+    assert!(why.contains("holdsToken"), "{why}");
+    assert!(
+        !store.join("projects/Project/memory.jsonl").exists(),
+        "nothing written"
+    );
+}

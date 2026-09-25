@@ -21,9 +21,10 @@ use crate::host::TeamMemories;
 use crate::http::{self, Grant};
 use crate::layout::{self, TeamDir, store_dir, team_dir};
 use crate::protocol;
-use crate::receive::{self, Push, Sizes, Update};
+use crate::push_scan::{self, Scanned};
+use crate::receive::{self, Objects, Push, Sizes, Update};
 use crate::shell::{self, ShellAction};
-use crate::status::{self, Applied, Backup, Disk, Facts, HostReport, Problem, RepoFacts};
+use crate::status::{self, Applied, Backup, Disk, Facts, HostReport, Problem, Refused, RepoFacts};
 use crate::tools::{Limits, Writes};
 
 /// The variable through which the forced command tells `pre-receive` whose key pushes.
@@ -136,11 +137,6 @@ fn read_checked(access: &Path) -> Result<(Vec<u8>, Result<Snapshot, String>), St
     Ok((bytes, checked))
 }
 
-/// The snapshot at `access`, checked.
-fn read_snapshot(access: &Path) -> Result<Snapshot, String> {
-    read_checked(access).and_then(|(_, checked)| checked)
-}
-
 /// The copy of the snapshot the host applied last, checked; `None` when there is none, or it does
 /// not read — then the file alone decides, and `note` says why.
 fn read_applied_snapshot(access: &Path, note: fn(&str)) -> Option<Snapshot> {
@@ -161,12 +157,42 @@ fn read_applied_snapshot(access: &Path, note: fn(&str)) -> Option<Snapshot> {
 /// the host applied last (`access::in_force`). A file that is gone or broken shuts the door whatever
 /// the copy says: it may have been a revocation.
 ///
+/// The application's own record, `applied.json`, is asked too, as the application asks it
+/// (`newer_than_applied`): when the copy could not be written, the record alone knows that a newer
+/// snapshot was applied, and a late older file must not open what that one closed. With no copy of
+/// that snapshot to go by, the door stays shut until the cabinet publishes again.
+///
 /// # Errors
 ///
-/// The file cannot be read or breaks a rule.
+/// The file cannot be read or breaks a rule, or what is in force is older than what was applied.
 pub fn read_in_force(access: &Path, note: fn(&str)) -> Result<Snapshot, String> {
-    let file = read_snapshot(access)?;
-    Ok(access::in_force(file, read_applied_snapshot(access, note)))
+    let (bytes, checked) = read_checked(access)?;
+    let file = checked?;
+    let copy = read_applied_snapshot(access, note);
+    let file_in_force = copy
+        .as_ref()
+        .is_none_or(|copy| !access::behind(&file, copy));
+    let file_hash = vibememory_cli::sha256::hex(&bytes);
+    let in_force = access::in_force(file, copy);
+    if let Ok(Some(applied)) = read_json::<Applied>(&layout::applied_file(access)) {
+        let hash = file_in_force.then_some(file_hash.as_str());
+        if older_than_applied(in_force.serial, hash, &applied) {
+            return Err(format!(
+                "serial {} is in force, but serial {} was applied and has no copy here",
+                in_force.serial, applied.serial
+            ));
+        }
+    }
+    Ok(in_force)
+}
+
+/// Whether a snapshot of `serial` — with `hash`, when its bytes are known — is older than the one
+/// `applied` records: a lower serial, or the same serial of the cabinet with other bytes.
+fn older_than_applied(serial: u64, hash: Option<&str>, applied: &Applied) -> bool {
+    serial < applied.serial
+        || (serial > 0
+            && serial == applied.serial
+            && hash.is_some_and(|hash| hash != applied.snapshot_hash))
 }
 
 /// A JSON file of the host, or `None` when there is none yet. A file that is there and does not
@@ -515,7 +541,7 @@ fn answer_status(snapshot: &Snapshot, key: &str, paths: &HostPaths) -> ExitCode 
 /// `pre-receive`: decides a push to the team store the hook runs in. Git runs the hook in the
 /// repository's directory, with the push's objects in quarantine until the hook says yes.
 #[must_use]
-pub fn pre_receive(paths: &HostPaths, reserve_bytes: u64) -> ExitCode {
+pub fn pre_receive(paths: &HostPaths, limits: PushLimits) -> ExitCode {
     let key = std::env::var(KEY_VARIABLE).ok();
     let repo = match std::env::current_dir().and_then(std::fs::canonicalize) {
         Ok(repo) => repo,
@@ -551,27 +577,38 @@ pub fn pre_receive(paths: &HostPaths, reserve_bytes: u64) -> ExitCode {
         repo_bytes: dir_size(&repo, quarantine.as_deref()),
         incoming_bytes: quarantine.as_deref().map_or(0, |dir| dir_size(dir, None)),
         free_bytes,
-        reserve_bytes,
-    };
-    let with_tokens = match receive::main_update(&updates) {
-        Some(update) => match paths_with_tokens(&repo, &update.new, &changed) {
-            Ok(found) => found,
-            Err(why) => return refuse("hostFailure", &[&why]),
-        },
-        None => Vec::new(),
+        reserve_bytes: limits.reserve_bytes,
     };
     let snapshot = read_in_force(&paths.access, journal_quietly).ok();
     let now = vibememory_cli::clock::now();
-    let push = Push {
+    let mut push = Push {
         key: key.as_deref(),
         team: &team,
         updates: &updates,
         changed: &changed,
         sizes,
         now: &now,
-        with_tokens: &with_tokens,
+        objects: Objects::Unread,
     };
-    let who = key.as_deref().unwrap_or("-");
+    let who = who_of(key.as_deref());
+    // Every other rule first: the objects are read only for a push that could otherwise land
+    if let Err(refusal) = receive::decide(&push, snapshot.as_ref()) {
+        return refuse_push(who, &team, &refusal);
+    }
+    let scanned = match receive::main_update(&updates) {
+        None => Scanned::Found(Vec::new()),
+        Some(update) => match push_scan::scan(&repo, &update.new, limits.max_content_bytes) {
+            Ok(scanned) => scanned,
+            Err(why) => return refuse("hostFailure", &[&why]),
+        },
+    };
+    push.objects = match &scanned {
+        Scanned::Found(found) => Objects::Read(found),
+        Scanned::TooLarge { bytes } => Objects::TooLarge {
+            bytes: *bytes,
+            limit: limits.max_content_bytes,
+        },
+    };
     match receive::decide(&push, snapshot.as_ref()) {
         Ok(()) => {
             journal_quietly(&format!(
@@ -581,62 +618,36 @@ pub fn pre_receive(paths: &HostPaths, reserve_bytes: u64) -> ExitCode {
             ));
             ExitCode::SUCCESS
         }
-        Err(refusal) => {
-            journal_quietly(&format!(
-                "{HOOK_TAG}: key {who} refused in {team} ({}): {}",
-                refusal.code, refusal.detail
-            ));
-            if refusal.paths.is_empty() {
-                refuse(refusal.code, &[&refusal.detail])
-            } else {
-                let paths: Vec<&str> = refusal.paths.iter().map(String::as_str).collect();
-                refuse(refusal.code, &paths)
-            }
-        }
+        Err(refusal) => refuse_push(who, &team, &refusal),
     }
 }
 
-/// Of `changed`, the paths whose content at `commit` holds an agent token of a cabinet, read in one
-/// `git cat-file --batch`; a path the push deletes has no content and holds nothing.
-fn paths_with_tokens(repo: &Path, commit: &str, changed: &[String]) -> Result<Vec<String>, String> {
-    if changed.is_empty() {
-        return Ok(Vec::new());
+/// What bounds a push besides the snapshot's rules.
+#[derive(Debug, Clone, Copy)]
+pub struct PushLimits {
+    /// Free space a push may not take from the partition every team shares.
+    pub reserve_bytes: u64,
+    /// What the push's objects may hold, uncompressed, for the hook to read them for tokens.
+    pub max_content_bytes: u64,
+}
+
+/// The key a push came with, as the journal names it.
+fn who_of(key: Option<&str>) -> &str {
+    key.unwrap_or("-")
+}
+
+/// Journals a refused push and answers it: the code, then the paths or what is wrong.
+fn refuse_push(who: &str, team: &str, refusal: &receive::PushRefusal) -> ExitCode {
+    journal_quietly(&format!(
+        "{HOOK_TAG}: key {who} refused in {team} ({}): {}",
+        refusal.code, refusal.detail
+    ));
+    if refusal.paths.is_empty() {
+        refuse(refusal.code, &[&refusal.detail])
+    } else {
+        let paths: Vec<&str> = refusal.paths.iter().map(String::as_str).collect();
+        refuse(refusal.code, &paths)
     }
-    let mut asked = String::new();
-    for path in changed {
-        asked.push_str(commit);
-        asked.push(':');
-        asked.push_str(path);
-        asked.push('\n');
-    }
-    let output = git_memories::run(repo, &["cat-file", "--batch"], Some(asked.as_bytes()), &[])?;
-    let mut found = Vec::new();
-    let mut rest = output.as_slice();
-    for path in changed {
-        let end = rest
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .ok_or_else(|| "git cat-file answered short".to_owned())?;
-        let header = String::from_utf8_lossy(rest.get(..end).unwrap_or_default()).into_owned();
-        rest = rest.get(end + 1..).unwrap_or_default();
-        if header.ends_with(" missing") {
-            continue;
-        }
-        let size: usize = header
-            .rsplit(' ')
-            .next()
-            .and_then(|size| size.parse().ok())
-            .ok_or_else(|| format!("git cat-file answered {header:?}"))?;
-        let content = rest
-            .get(..size)
-            .ok_or_else(|| "git cat-file answered short".to_owned())?;
-        if vibememory_core::token::holds_token(content) {
-            found.push(path.clone());
-        }
-        // the content, then the newline that ends it
-        rest = rest.get(size + 1..).unwrap_or_default();
-    }
-    Ok(found)
 }
 
 /// The paths a push changes on `main`: the difference of the trees before and after, not every
@@ -700,7 +711,7 @@ pub struct ApplyPaths {
 /// application holds its lock: the second waits and then finds the host caught up.
 #[must_use]
 pub fn access_apply(paths: &HostPaths, apply_paths: &ApplyPaths, catch_up: bool) -> ExitCode {
-    let _lock = match hold_lock(&layout::apply_lock_file(&paths.access)) {
+    let _lock = match hold_lock(&layout::apply_lock_file(&paths.teams)) {
         Ok(lock) => lock,
         Err(why) => {
             journal(&format!(
@@ -729,6 +740,9 @@ pub fn access_apply(paths: &HostPaths, apply_paths: &ApplyPaths, catch_up: bool)
 /// Takes the exclusive lock on the file at `path`, waiting for its holder; it is held until the
 /// returned file is dropped.
 fn hold_lock(path: &Path) -> Result<std::fs::File, String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+    }
     let lock = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -740,16 +754,27 @@ fn hold_lock(path: &Path) -> Result<std::fs::File, String> {
     Ok(lock)
 }
 
-/// Whether the last application was of the file as it is now and did everything it had to.
+/// Whether the host already did what it can with the file as it is now: applied it and failed at
+/// nothing, or refused these very bytes — or the missing file — for the snapshot itself, which a
+/// second run would refuse the same way. A run that could not do its work is tried again.
 fn caught_up(paths: &HostPaths) -> bool {
-    let Ok(bytes) = std::fs::read(&paths.access) else {
+    let hash = std::fs::read(&paths.access)
+        .ok()
+        .map(|bytes| vibememory_cli::sha256::hex(&bytes));
+    let Ok(Some(applied)) = read_json::<Applied>(&layout::applied_file(&paths.access)) else {
         return false;
     };
-    matches!(
-        read_json::<Applied>(&layout::applied_file(&paths.access)),
-        Ok(Some(applied)) if applied.snapshot_hash == vibememory_cli::sha256::hex(&bytes)
-            && applied.problems.iter().all(|problem| problem.code != APPLY_FAILED)
-    )
+    let applied_whole = hash.as_deref() == Some(applied.snapshot_hash.as_str())
+        && applied.last_refused.is_none()
+        && applied
+            .problems
+            .iter()
+            .all(|problem| problem.code != APPLY_FAILED);
+    let refused_already = applied
+        .last_refused
+        .as_ref()
+        .is_some_and(|refused| refused.snapshot_hash == hash && refused.code != APPLY_FAILED);
+    applied_whole || refused_already
 }
 
 /// One application of the snapshot as it is now; returns the bytes it applied or refused.
@@ -817,6 +842,7 @@ fn apply_once(paths: &HostPaths, apply_paths: &ApplyPaths) -> (ExitCode, Option<
         applied_at: vibememory_cli::clock::now(),
         team_count: snapshot.team_count,
         problems,
+        last_refused: None,
     };
     if let Err(why) = write_json(&applied_file, &applied) {
         failed = true;
@@ -844,10 +870,11 @@ fn apply_once(paths: &HostPaths, apply_paths: &ApplyPaths) -> (ExitCode, Option<
 /// not. The copy says so first; `applied.json` too, for a run whose copy could not be written.
 fn newer_than_applied(access: &Path, snapshot: &Snapshot, bytes: &[u8]) -> Result<(), String> {
     if let Ok(Some(applied)) = read_json::<Applied>(&layout::applied_file(access))
-        && (snapshot.serial < applied.serial
-            || (snapshot.serial > 0
-                && snapshot.serial == applied.serial
-                && vibememory_cli::sha256::hex(bytes) != applied.snapshot_hash))
+        && older_than_applied(
+            snapshot.serial,
+            Some(&vibememory_cli::sha256::hex(bytes)),
+            &applied,
+        )
     {
         return Err(format!(
             "serial {} is not newer than serial {} applied",
@@ -903,7 +930,11 @@ fn refused(
     journal(&format!(
         "{APPLY_TAG}: the snapshot is refused ({code}), nothing is applied: {why}"
     ));
-    keep_previous_with_rejection(applied_file, code, why);
+    let refusal = Refused {
+        snapshot_hash: read.as_deref().map(vibememory_cli::sha256::hex),
+        code: code.to_owned(),
+    };
+    keep_previous_with_rejection(applied_file, refusal, why);
     report_after(paths);
     (ExitCode::FAILURE, read)
 }
@@ -950,7 +981,7 @@ fn run_steps(
 /// stay, and the refusal — `snapshotRejected`, `serialBehind` or an `applyFailed` that stopped the
 /// run, the latest one only — stands first among its problems. Before the first application there
 /// is nothing to keep, and nothing is written.
-fn keep_previous_with_rejection(applied_file: &Path, code: &str, why: String) {
+fn keep_previous_with_rejection(applied_file: &Path, refusal: Refused, why: String) {
     let previous = match read_json::<Applied>(applied_file) {
         Ok(Some(previous)) => previous,
         Ok(None) => return,
@@ -960,17 +991,22 @@ fn keep_previous_with_rejection(applied_file: &Path, code: &str, why: String) {
         }
     };
     let mut applied = previous;
+    // The earlier refusal gives way to this one; what failed for one team stays until an
+    // application of that team does it
     applied.problems.retain(|problem| {
-        problem.code != SNAPSHOT_REJECTED && problem.code != SERIAL_BEHIND && problem.code != code
+        problem.code != SNAPSHOT_REJECTED
+            && problem.code != SERIAL_BEHIND
+            && !(problem.code == refusal.code && problem.team.is_none())
     });
     applied.problems.insert(
         0,
         Problem {
-            code: code.to_owned(),
+            code: refusal.code.clone(),
             team: None,
             detail: why,
         },
     );
+    applied.last_refused = Some(refusal);
     if let Err(error) = write_json(applied_file, &applied) {
         journal(&format!("{APPLY_TAG}: applied.json: FAILED: {error}"));
     }
@@ -1061,7 +1097,7 @@ fn report_after(paths: &HostPaths) {
 /// lock from reading `applied.json` to writing the report, so a slow report never lands after a
 /// fresh one with an older application in it.
 fn write_report(paths: &HostPaths) -> Result<(), String> {
-    let _lock = hold_lock(&layout::report_lock_file(&paths.access))?;
+    let _lock = hold_lock(&layout::report_lock_file(&paths.teams))?;
     let snapshot = match read_in_force(&paths.access, journal) {
         Ok(snapshot) => Some(snapshot),
         Err(why) => {

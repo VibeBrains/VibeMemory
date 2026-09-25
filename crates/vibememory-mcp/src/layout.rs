@@ -21,11 +21,15 @@ pub const TEAMS_DIR: &str = "/srv/vibememory/teams";
 const APPLIED_NAME: &str = "applied.json";
 /// The host's report for the cabinet, next to the snapshot.
 const REPORT_NAME: &str = "host.json";
+/// The host's locks, beside `teams/`, in a directory only `vmgit` writes: the exchange directory
+/// of the snapshot is the cabinet's to write too, and a lock the cabinet could hold or replace with
+/// a link would stall or misdirect the host's own commands.
+const LOCKS_DIR_NAME: &str = "locks";
 /// What the application and the hourly report hold while one of them writes `host.json`.
-const REPORT_LOCK_NAME: &str = ".host.json.lock";
+const REPORT_LOCK_NAME: &str = "host-report.lock";
 /// What an application of the snapshot holds from start to end: the run on a change of the file
 /// and the timer's catch-up are separate units and must not apply side by side.
-const APPLY_LOCK_NAME: &str = ".access-apply.lock";
+const APPLY_LOCK_NAME: &str = "access-apply.lock";
 /// The bytes of the snapshot the host applied last, next to the snapshot: what is in force when a
 /// stale `access.json` lands over a newer one.
 const APPLIED_SNAPSHOT_NAME: &str = "applied-snapshot.json";
@@ -41,6 +45,10 @@ const STORE_SUFFIX: &str = ".git";
 const DELETED_INFIX: &str = ".deleted-";
 /// Free space a push may not take from the partition every team shares.
 pub const DEFAULT_RESERVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// What a push's objects may hold, uncompressed, for `pre-receive` to read them for tokens: four
+/// times git's own cap on what a push sends (`receive.maxInputSize` of `storeInit.sh`), since text
+/// compresses well — and a blob of zeros, to nothing.
+pub const DEFAULT_MAX_CONTENT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// The services whose state the report carries, as `systemctl is-active` names them.
 pub const SERVICES: &[&str] = &["vibememory-mcp", "caddy", "postgresql"];
 
@@ -56,16 +64,16 @@ pub fn applied_snapshot_file(access: &Path) -> PathBuf {
     access.with_file_name(APPLIED_SNAPSHOT_NAME)
 }
 
-/// The lock the writers of `host.json` take in turn, beside the snapshot at `access`.
+/// The lock the writers of `host.json` take in turn, in the locks directory beside `teams`.
 #[must_use]
-pub fn report_lock_file(access: &Path) -> PathBuf {
-    access.with_file_name(REPORT_LOCK_NAME)
+pub fn report_lock_file(teams: &Path) -> PathBuf {
+    teams.with_file_name(LOCKS_DIR_NAME).join(REPORT_LOCK_NAME)
 }
 
-/// The lock an application of the snapshot holds, beside the snapshot at `access`.
+/// The lock an application of the snapshot holds, in the locks directory beside `teams`.
 #[must_use]
-pub fn apply_lock_file(access: &Path) -> PathBuf {
-    access.with_file_name(APPLY_LOCK_NAME)
+pub fn apply_lock_file(teams: &Path) -> PathBuf {
+    teams.with_file_name(LOCKS_DIR_NAME).join(APPLY_LOCK_NAME)
 }
 
 /// `host.json` beside the snapshot at `access`.
