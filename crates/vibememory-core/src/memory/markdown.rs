@@ -21,7 +21,7 @@ const DOCUMENT_EXTENSION: &str = "md";
 const RIVAL_MARKER: &str = ".rival-";
 /// Keys of `metadata` this format names itself; everything else is carried untouched.
 const KNOWN_METADATA: &[&str] = &[
-    "type", "project", "status", "agent", "member", "created", "updated", "version",
+    "type", "project", "status", "agent", "member", "created", "updated", "version", "merged",
 ];
 
 /// Fence around the frontmatter block.
@@ -114,17 +114,20 @@ fn index(memory: &Memory) -> Vec<u8> {
     if !divergent.is_empty() {
         text.push_str("\n## Written on two machines at once\n\n");
         text.push_str(
-            "Both versions are kept. Merge them by hand, then delete the rival file.\n\n",
+            "Both versions are kept. To settle one, write the merged text into the memory's own \
+             file and add the line shown under its `metadata`; the rival file then goes away by \
+             itself.\n\n",
         );
         for entry in divergent {
             for (version, _) in &entry.rivals {
                 let _ = writeln!(
                     text,
-                    "- [{}]({}) also exists as [{}]({})",
+                    "- [{}]({}) also exists as [{}]({}) — `merged: {}`",
                     entry.record.title(),
                     document_name(&entry.record.id),
                     version,
-                    rival_name(&entry.record.id, version)
+                    rival_name(&entry.record.id, version),
+                    version
                 );
             }
         }
@@ -176,6 +179,8 @@ pub struct Document {
     pub record: Record,
     /// The version it was projected from, when it still says so.
     pub version: Option<String>,
+    /// Rival versions the writer merged into it (`merged: <version>, <version>`).
+    pub merged: Vec<String>,
 }
 
 /// Reads a projected document. Unknown frontmatter keys are kept out of the way rather than
@@ -259,6 +264,16 @@ pub fn parse_document(path: &str, bytes: &[u8]) -> Result<Document, MemoryError>
     Ok(Document {
         record,
         version: nested.get("version").cloned(),
+        merged: nested
+            .get("merged")
+            .map(|list| {
+                list.split(',')
+                    .map(str::trim)
+                    .filter(|version| !version.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -315,6 +330,10 @@ pub struct Import {
 /// Once that version stops being a rival — a later write made it the projected one, or the record
 /// was forgotten — the untouched file is stale; a rival file somebody edited stays where it is.
 ///
+/// A rival is settled from the document of its record: `merged: <version>, <version>` in its
+/// `metadata` closes those versions along with the one the file was projected from. The key is
+/// never kept in the record — it lives in the event, as `merges`.
+///
 /// A new version is signed by whoever imports it — `agent`, and `member` when the writer is a
 /// member of a team — whatever the file said: the file names the author of the version it was
 /// projected from, and the edit is somebody else's work.
@@ -359,7 +378,25 @@ pub fn import(
             }
             continue;
         }
-        if untouched {
+        if let Some(unknown) = document.merged.iter().find(|version| {
+            memory
+                .versions
+                .get(version.as_str())
+                .is_none_or(|merged| merged.id != *id)
+        }) {
+            import.rejected.push((
+                path.clone(),
+                MemoryError::UnknownMergedVersion {
+                    path: path.clone(),
+                    version: unknown.clone(),
+                },
+            ));
+            continue;
+        }
+        // `merged` is an act of its own: keeping the projected text and dropping the rival is a
+        // way to settle it too, so an unchanged text does not make the file untouched
+        let settles = !document.merged.is_empty();
+        if untouched && !settles {
             if known.is_none() && memory.forgotten.contains(id) {
                 import.stale.push(path.clone());
             }
@@ -371,7 +408,10 @@ pub fn import(
             .version
             .as_deref()
             .is_some_and(|version| memory.versions.contains_key(version));
-        if !named && known.is_some_and(|entry| unchanged(&entry.record, &document.record)) {
+        if !settles
+            && !named
+            && known.is_some_and(|entry| unchanged(&entry.record, &document.record))
+        {
             continue;
         }
         let mut record = document.record;
@@ -389,6 +429,7 @@ pub fn import(
         import.events.push(Event {
             uuid: format!("{stamp}-{}", record.id.as_str()),
             parent,
+            merges: document.merged,
             action: Action::Upsert { record },
         });
     }

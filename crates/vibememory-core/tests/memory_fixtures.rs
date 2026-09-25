@@ -110,6 +110,12 @@ struct ExpectedEvent {
     /// The member the event's record names. Absent means none.
     #[serde(default)]
     member: Option<String>,
+    /// Rival versions the event settles besides its parent. Absent means none.
+    #[serde(default)]
+    merges: Vec<String>,
+    /// The metadata the event's record carries, when the case pins it.
+    #[serde(default)]
+    metadata: Option<std::collections::BTreeMap<String, String>>,
 }
 
 fn active_status() -> String {
@@ -153,6 +159,12 @@ fn check_event(
             got.parent, want.parent
         ));
     }
+    if got.merges != want.merges {
+        failures.push(format!(
+            "{label}: merges {:?}, expected {:?}",
+            got.merges, want.merges
+        ));
+    }
     if got.id().as_str() != want.id {
         failures.push(format!(
             "{label}: event about {}, expected {}",
@@ -186,6 +198,16 @@ fn check_event(
             "{label}: status {}, expected {}",
             record.status.as_str(),
             want.status
+        ));
+    }
+    if want
+        .metadata
+        .as_ref()
+        .is_some_and(|metadata| *metadata != record.metadata)
+    {
+        failures.push(format!(
+            "{label}: metadata {:?}, expected {:?}",
+            record.metadata, want.metadata
         ));
     }
     if record.member != want.member {

@@ -735,3 +735,107 @@ fn a_write_to_a_project_the_store_does_not_hold_is_refused_and_names_the_near_on
         "nothing was written anywhere"
     );
 }
+
+/// A record two machines wrote from the same version: `gpd` is shown, `mac` is its rival.
+fn disputed() -> FakeMemories {
+    let fake = memories();
+    let version = |uuid: &str, parent: Option<&str>, body: &str, updated: &str| {
+        serde_json::from_value(json!({
+            "uuid": uuid, "parent": parent, "action": "upsert",
+            "record": {
+                "id": "merge-rules", "kind": "project", "project": "VibeMemory",
+                "description": "one line about merge rules", "body": body, "links": [],
+                "agent": "claude-code", "createdAt": "2026-09-03T10:02:00Z", "updatedAt": updated
+            }
+        }))
+        .expect("event")
+    };
+    fake.seed(
+        "VibeMemory",
+        vec![
+            version(
+                "e3",
+                None,
+                "The base decides membership.",
+                "2026-09-03T10:02:00Z",
+            ),
+            version(
+                "mac",
+                Some("e3"),
+                "Mac wrote this one.",
+                "2026-09-03T11:00:00Z",
+            ),
+            version(
+                "gpd",
+                Some("e3"),
+                "Windows wrote this one.",
+                "2026-09-03T11:00:00Z",
+            ),
+        ],
+    );
+    fake
+}
+
+#[test]
+fn a_disputed_fact_shows_its_rivals_and_an_update_that_merges_them_settles_it() {
+    let fake = disputed();
+    let before = call("memory_get", &json!({"id": "merge-rules"}), &fake).expect("get");
+    assert_eq!(
+        before["rivalVersions"], 1,
+        "kept for clients that read the count"
+    );
+    assert_eq!(before["rivals"][0]["version"], "mac");
+    assert_eq!(
+        before["rivals"][0]["body"], "Mac wrote this one.",
+        "an agent cannot merge a text it is not shown"
+    );
+    let search = call("memory_search", &json!({"query": "merge"}), &fake).expect("search");
+    assert_eq!(search["results"][0]["disputed"], true);
+
+    let updated = call(
+        "memory_update",
+        &json!({"project": "VibeMemory", "id": "merge-rules", "body": "Both agree.", "merges": ["mac"]}),
+        &fake,
+    )
+    .expect("update");
+    assert_eq!(updated["merged"], json!(["mac"]));
+    let after = call("memory_get", &json!({"id": "merge-rules"}), &fake).expect("get");
+    assert_eq!(
+        after["rivals"],
+        json!([]),
+        "the merged rival stops being shown"
+    );
+    assert_eq!(after["body"], "Both agree.");
+}
+
+#[test]
+fn an_update_cannot_merge_a_version_that_is_not_a_rival() {
+    let fake = disputed();
+    for wrong in ["gpd", "e3", "nope"] {
+        let refused = call(
+            "memory_update",
+            &json!({"project": "VibeMemory", "id": "merge-rules", "body": "x", "merges": [wrong]}),
+            &fake,
+        )
+        .expect_err("only a current rival can be merged");
+        assert!(refused.contains("memory_get"), "{refused}");
+    }
+    let after = call("memory_get", &json!({"id": "merge-rules"}), &fake).expect("get");
+    assert_eq!(after["rivalVersions"], 1, "a refused update writes nothing");
+}
+
+#[test]
+fn forgetting_a_disputed_fact_forgets_its_rivals_too() {
+    let fake = disputed();
+    call(
+        "memory_delete",
+        &json!({"project": "VibeMemory", "id": "merge-rules"}),
+        &fake,
+    )
+    .expect("delete");
+    let gone = call("memory_get", &json!({"id": "merge-rules"}), &fake);
+    assert!(
+        gone.is_err(),
+        "the rival must not step in as the record: {gone:?}"
+    );
+}

@@ -998,6 +998,227 @@
           "rejected": []
         }
       }
+    },
+    {
+      "id": "mergeSettlesRival",
+      "provenance": "computed",
+      "note": "A version that names the rival in merges closes it along with its parent: one leaf, no rival file, and the index no longer asks for anything.",
+      "journal": [
+        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership. See [[store-naming]].\", \"links\": [\"store-naming\"], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}",
+        "{\"uuid\": \"mac\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Mac wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"gpd\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"m1\", \"parent\": \"gpd\", \"merges\": [\"mac\"], \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Both machines agree now.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T12:00:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "merge-rules",
+            "version": "m1",
+            "rivals": []
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "fileNames": [
+          "MEMORY.md",
+          "merge-rules.md"
+        ]
+      }
+    },
+    {
+      "id": "mergeLeavesUnseenRival",
+      "provenance": "computed",
+      "note": "A rival written without seeing the merge is still a rival: merges closes only what it names.",
+      "journal": [
+        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership. See [[store-naming]].\", \"links\": [\"store-naming\"], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}",
+        "{\"uuid\": \"mac\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Mac wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"gpd\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"m1\", \"parent\": \"gpd\", \"merges\": [\"mac\"], \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Both machines agree now.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T12:00:00Z\"}}",
+        "{\"uuid\": \"win2\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"A third machine wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T12:10:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "merge-rules",
+            "version": "m1",
+            "rivals": [
+              "win2"
+            ]
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0
+      }
+    },
+    {
+      "id": "deleteWithMergesForgetsDisputedRecord",
+      "provenance": "computed",
+      "note": "A delete that names the rivals it saw forgets the whole record; without merges the rival would stay and be shown as the record.",
+      "journal": [
+        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership. See [[store-naming]].\", \"links\": [\"store-naming\"], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}",
+        "{\"uuid\": \"mac\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Mac wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"gpd\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"d1\", \"parent\": \"gpd\", \"merges\": [\"mac\"], \"action\": \"delete\", \"id\": \"merge-rules\", \"agent\": \"claude-code\", \"updatedAt\": \"2026-09-03T12:00:00Z\"}"
+      ],
+      "expect": {
+        "records": [],
+        "forgotten": [
+          "merge-rules"
+        ],
+        "unreadable": 0
+      }
+    },
+    {
+      "id": "importMergedLineSettlesRival",
+      "provenance": "computed",
+      "note": "The document of the record carries merged: <version> and the merged text: the edit is a version whose parent is the projected one and which merges the rival. The key is not kept in the record.",
+      "journal": [
+        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership. See [[store-naming]].\", \"links\": [\"store-naming\"], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}",
+        "{\"uuid\": \"mac\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Mac wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"gpd\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "merge-rules",
+            "version": "gpd",
+            "rivals": [
+              "mac"
+            ]
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "import": {
+          "stamp": "2026-09-03T12:30:00Z",
+          "agent": "claude-code",
+          "documents": [
+            {
+              "name": "merge-rules.md",
+              "text": "---\nname: merge-rules\ndescription: one line about merge rules\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:02:00Z\n  updated: 2026-09-03T11:00:00Z\n  version: gpd\n  merged: mac\n---\n\nWindows wrote this one, and Mac agreed.\n"
+            }
+          ],
+          "events": [
+            {
+              "uuid": "2026-09-03T12:30:00Z-merge-rules",
+              "parent": "gpd",
+              "id": "merge-rules",
+              "bodyContains": "Mac agreed",
+              "createdAt": "2026-09-03T10:02:00Z",
+              "merges": [
+                "mac"
+              ],
+              "metadata": {}
+            }
+          ],
+          "rejected": []
+        }
+      }
+    },
+    {
+      "id": "importMergedLineWithoutTextChange",
+      "provenance": "computed",
+      "note": "Keeping the projected text and dropping the rival is a way to settle it too: merged alone makes the file an edit.",
+      "journal": [
+        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership. See [[store-naming]].\", \"links\": [\"store-naming\"], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}",
+        "{\"uuid\": \"mac\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Mac wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"gpd\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "merge-rules",
+            "version": "gpd",
+            "rivals": [
+              "mac"
+            ]
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "import": {
+          "stamp": "2026-09-03T12:30:00Z",
+          "agent": "claude-code",
+          "documents": [
+            {
+              "name": "merge-rules.md",
+              "text": "---\nname: merge-rules\ndescription: one line about merge rules\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:02:00Z\n  updated: 2026-09-03T11:00:00Z\n  version: gpd\n  merged: mac\n---\n\nWindows wrote this one.\n"
+            }
+          ],
+          "events": [
+            {
+              "uuid": "2026-09-03T12:30:00Z-merge-rules",
+              "parent": "gpd",
+              "id": "merge-rules",
+              "bodyContains": "Windows wrote this one.",
+              "createdAt": "2026-09-03T10:02:00Z",
+              "merges": [
+                "mac"
+              ]
+            }
+          ],
+          "rejected": []
+        }
+      }
+    },
+    {
+      "id": "importMergedUnknownVersionIsRejected",
+      "provenance": "computed",
+      "note": "merged names a version the journal does not hold: a typo. Nothing is written and the file stays for the writer to fix, instead of the rival coming back as if the line were ignored.",
+      "journal": [
+        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership. See [[store-naming]].\", \"links\": [\"store-naming\"], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}",
+        "{\"uuid\": \"mac\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Mac wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}",
+        "{\"uuid\": \"gpd\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T11:00:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "merge-rules",
+            "version": "gpd",
+            "rivals": [
+              "mac"
+            ]
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "import": {
+          "stamp": "2026-09-03T12:30:00Z",
+          "agent": "claude-code",
+          "documents": [
+            {
+              "name": "merge-rules.md",
+              "text": "---\nname: merge-rules\ndescription: one line about merge rules\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:02:00Z\n  updated: 2026-09-03T11:00:00Z\n  version: gpd\n  merged: mca\n---\n\nWindows wrote this one.\n"
+            }
+          ],
+          "events": [],
+          "rejected": [
+            {
+              "name": "merge-rules.md",
+              "code": "unknownMergedVersion"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "unknownEventFieldIsIgnored",
+      "provenance": "computed",
+      "note": "A field this engine does not know keeps the line readable: that is how merges reaches engines older than it without losing a line, and how the next field will reach this one.",
+      "journal": [
+        "{\"uuid\": \"e1\", \"future\": {\"any\": 1}, \"action\": \"upsert\", \"record\": {\"id\": \"store-naming\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about store naming\", \"body\": \"The name follows the git common dir.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:00:00Z\", \"updatedAt\": \"2026-09-03T10:00:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "store-naming",
+            "version": "e1",
+            "rivals": []
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0
+      }
     }
   ]
 }

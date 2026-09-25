@@ -25,6 +25,11 @@ pub struct Event {
     /// The version its writer had seen, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    /// Further versions of the same record this one settles: rivals the writer read and merged.
+    /// Kept apart from `parent` so an engine that predates the field still reads the line —
+    /// serde ignores what it does not know — and only goes on showing the rival until it updates.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub merges: Vec<String>,
     /// What the writer did.
     #[serde(flatten)]
     pub action: Action,
@@ -185,7 +190,8 @@ pub fn fold(events: &[Event], unreadable: Vec<UnreadableLine>) -> Memory {
         });
         let superseded: BTreeSet<&str> = group
             .iter()
-            .filter_map(|event| event.parent.as_deref())
+            .flat_map(|event| event.parent.iter().chain(&event.merges))
+            .map(String::as_str)
             .collect();
         let leaves: Vec<&&Event> = group
             .iter()

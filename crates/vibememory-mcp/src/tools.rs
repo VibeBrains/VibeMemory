@@ -38,7 +38,8 @@ pub fn catalogue() -> Value {
         },
         {
             "name": "memory_get",
-            "description": "Read one remembered fact in full, by its identifier.",
+            "description": "Read one remembered fact in full, by its identifier. A fact two \
+                            machines wrote at once carries `rivals`: the other versions, in full.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -69,7 +70,9 @@ pub fn catalogue() -> Value {
             "name": "memory_update",
             "description": "Change a remembered fact, or mark it stale. Writes a new version whose \
                             parent is the one you were shown, so two agents editing at once keep \
-                            both versions instead of overwriting each other.",
+                            both versions instead of overwriting each other. To settle a disputed \
+                            fact, write the merged text and pass the rival versions you merged \
+                            in `merges`.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -77,15 +80,16 @@ pub fn catalogue() -> Value {
                     "id": { "type": "string" },
                     "description": { "type": "string" },
                     "body": { "type": "string" },
-                    "status": { "type": "string", "enum": ["active", "stale"] }
+                    "status": { "type": "string", "enum": ["active", "stale"] },
+                    "merges": { "type": "array", "items": { "type": "string" }, "description": "Versions from `rivals` of memory_get whose text this update takes in; they stop being shown." }
                 },
                 "required": ["id"]
             }
         },
         {
             "name": "memory_delete",
-            "description": "Forget a fact. The versions stay in the journal; the record stops \
-                            being shown. Prefer marking it stale when it explains why something \
+            "description": "Forget a fact, with every version of it now shown. The versions stay \
+                            in the journal; the record stops being shown. Prefer marking it stale when it explains why something \
                             was done.",
             "inputSchema": {
                 "type": "object",
@@ -426,6 +430,9 @@ fn search(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> To
                 // Always reported, never only when stale: an agent that has to ask a second
                 // question to learn a fact is out of date will skip asking.
                 "status": record.status.as_str(),
+                // Same reasoning: a disputed record is read differently, and the search is where
+                // an agent meets it
+                "disputed": entry.is_divergent(),
                 "title": record.title(),
                 "description": record.description,
                 "agent": record.agent,
@@ -472,6 +479,15 @@ fn get(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolR
                 // edit look like it was made blind.
                 "version": entry.version,
                 "rivalVersions": entry.rivals.len(),
+                // What the other machine wrote: to merge it, an agent has to read it
+                "rivals": entry.rivals.iter().map(|(version, rival)| json!({
+                    "version": version,
+                    "description": rival.description,
+                    "body": rival.body,
+                    "agent": rival.agent,
+                    "member": rival.member,
+                    "updated": rival.updated_at,
+                })).collect::<Vec<_>>(),
             }));
         }
     }
@@ -512,6 +528,7 @@ fn save(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> Tool
     let event = Event {
         uuid: memories.new_version(id.as_str()),
         parent: None,
+        merges: Vec::new(),
         action: Action::Upsert { record },
     };
     within_limits(caller, &project, &memory, &event)?;
@@ -530,6 +547,7 @@ fn update(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> To
         .get(&id)
         .ok_or_else(|| format!("no memory with id {} in {project}", id.as_str()))?;
 
+    let merges = merged_rivals(arguments, entry, &id)?;
     let mut record = entry.record.clone();
     if let Some(description) = optional(arguments, "description") {
         record.description = description;
@@ -551,11 +569,49 @@ fn update(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> To
         // The version this writer saw. Without it a second agent's edit would look like a fresh
         // record rather than a concurrent one, and the loser would be silently overwritten.
         parent: Some(entry.version.clone()),
+        merges,
         action: Action::Upsert { record },
     };
     within_limits(caller, &project, &memory, &event)?;
     memories.append(&project, &event)?;
-    Ok(json!({ "updated": id.as_str(), "version": event.uuid, "parent": entry.version }))
+    Ok(json!({
+        "updated": id.as_str(),
+        "version": event.uuid,
+        "parent": entry.version,
+        "merged": event.merges,
+    }))
+}
+
+/// The rivals an update says it merged. Only current rivals of this record: a version that is
+/// not one was settled by someone else meanwhile, or never belonged here, and the caller has to
+/// read the record again rather than close something it did not see.
+fn merged_rivals(
+    arguments: &Value,
+    entry: &vibememory_core::memory::Entry,
+    id: &RecordId,
+) -> Result<Vec<String>, String> {
+    let Some(list) = arguments.get("merges") else {
+        return Ok(Vec::new());
+    };
+    let list = list
+        .as_array()
+        .ok_or_else(|| "merges is a list of rival versions".to_owned())?;
+    let mut merges = Vec::new();
+    for version in list {
+        let version = version
+            .as_str()
+            .ok_or_else(|| "merges is a list of rival versions".to_owned())?;
+        if !entry.rivals.iter().any(|(rival, _)| rival == version) {
+            return Err(format!(
+                "{version} is not a rival version of {}; read it again with memory_get",
+                id.as_str()
+            ));
+        }
+        if !merges.iter().any(|merged| merged == version) {
+            merges.push(version.to_owned());
+        }
+    }
+    Ok(merges)
 }
 
 fn delete(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolResult {
@@ -571,6 +627,13 @@ fn delete(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> To
     let event = Event {
         uuid: memories.new_version(id.as_str()),
         parent: Some(entry.version.clone()),
+        // Forgetting is about the record, not one of its versions: the rivals this server sees go
+        // with it. One written concurrently with the delete still wins, as any concurrent edit does
+        merges: entry
+            .rivals
+            .iter()
+            .map(|(version, _)| version.clone())
+            .collect(),
         action: Action::Delete {
             id: id.clone(),
             agent: agent.to_owned(),

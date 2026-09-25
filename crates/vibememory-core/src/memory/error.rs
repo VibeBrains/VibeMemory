@@ -69,6 +69,15 @@ pub enum MemoryError {
         /// Which field.
         field: &'static str,
     },
+    /// `merged` names a version the journal does not hold — a typo, most likely. Merging it would
+    /// close nothing, and the rival would come back with the next projection as if ignored.
+    #[error("{path}: merged names {version:?}, which is no version of this memory")]
+    UnknownMergedVersion {
+        /// The document.
+        path: String,
+        /// The name that was not found.
+        version: String,
+    },
 }
 
 impl MemoryError {
@@ -77,6 +86,7 @@ impl MemoryError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::InvalidId { .. } => "invalidId",
+            Self::UnknownMergedVersion { .. } => "unknownMergedVersion",
             Self::UnknownKind { .. } => "unknownKind",
             Self::UnknownStatus { .. } => "unknownStatus",
             Self::InvalidTitle { .. } => "invalidTitle",
