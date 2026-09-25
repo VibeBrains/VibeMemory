@@ -240,7 +240,7 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         Err(problem) => result.problems.push(problem),
     }
 
-    match commit_own_outbox(store, machine_id, stamp) {
+    match commit_own_outbox(store, &engine_dir_of(store), machine_id, stamp) {
         Ok(files) => result.outbox_committed = files,
         Err(problem) => result.problems.push(problem),
     }
@@ -686,6 +686,7 @@ fn project_memory(store: &Path, machine_id: &str, stamp: &str) -> Result<Vec<Str
     let Ok(projects) = std::fs::read_dir(store.join("projects")) else {
         return Ok(Vec::new());
     };
+    let kept = crate::held::Kept::read(&engine_dir_of(store));
     let mut projected = Vec::new();
     for project in projects.filter_map(Result::ok) {
         let journal = project.path().join(crate::memory::JOURNAL_FILE);
@@ -693,7 +694,7 @@ fn project_memory(store: &Path, machine_id: &str, stamp: &str) -> Result<Vec<Str
             continue;
         }
         let memory_dir = project.path().join("memory");
-        let synced = crate::memory::sync(&memory_dir, &journal, stamp, machine_id)?;
+        let synced = crate::memory::sync(&memory_dir, &journal, stamp, machine_id, &kept)?;
         if !synced.written.is_empty() || !synced.removed.is_empty() || synced.imported > 0 {
             projected.push(project.file_name().to_string_lossy().into_owned());
         }
@@ -911,18 +912,24 @@ fn publish_outbox(
 /// Commits this machine's outbox: `links.json`, `live.json`, `tails.json`, the cards, the
 /// tombstones. The hooks write these files but do not commit them — a hook has ten seconds and
 /// no business running git commits — so until the tick does, nothing this machine says reaches
-/// the others. Only its own directory is staged, by path; never `git add -A`.
-fn commit_own_outbox(store: &Path, machine_id: &str, stamp: &str) -> Result<usize, String> {
+/// the others. Only its own directory is staged, file by file and screened like everything else
+/// (`crate::held::stage`): a Desktop card copies prompts and titles, and a token pasted there stays
+/// on this machine too.
+fn commit_own_outbox(
+    store: &Path,
+    engine_dir: &Path,
+    machine_id: &str,
+    stamp: &str,
+) -> Result<usize, String> {
     let own = format!("machines/{machine_id}");
     if !store.join(&own).is_dir() {
         return Ok(0);
     }
     let changed = git::changed_paths(store, &own, TIMEOUT)?;
+    let changed = crate::held::stage(engine_dir, store, &changed, stamp, TIMEOUT)?;
     if changed.is_empty() {
         return Ok(0);
     }
-    git::run_with_timeout(git::command(store, &["add", "--", &own]), TIMEOUT)?
-        .ok_or_else(|| "git refused to stage the outbox".to_owned())?;
     let message = format!("vibememory: outbox of {machine_id} at {stamp}");
     git::run_with_timeout(
         git::command(store, &["commit", "--quiet", "-m", &message]),
@@ -954,17 +961,11 @@ fn commit_shared_files(
         .into_iter()
         .filter(|path| !belongs_to_live_session(path, live))
         .collect();
-    // A session file that holds an agent token stays on this machine (`crate::held`).
-    let passed = crate::held::screen(engine_dir, store, &candidates, stamp)?;
-    let ours: Vec<&str> = passed.iter().map(String::as_str).collect();
+    // A file that holds an agent token stays on this machine (`crate::held`); the rest goes in
+    // with the very bytes that were checked.
+    let ours = crate::held::stage(engine_dir, store, &candidates, stamp, TIMEOUT)?;
     if ours.is_empty() {
         return Ok(0);
-    }
-    for chunk in ours.chunks(200) {
-        let mut args = vec!["add", "--"];
-        args.extend(chunk.iter().copied());
-        git::run_with_timeout(git::command(store, &args), TIMEOUT)?
-            .ok_or_else(|| "git refused to stage shared files".to_owned())?;
     }
     let message = format!("vibememory: {} shared file(s) at {stamp}", ours.len());
     git::run_with_timeout(

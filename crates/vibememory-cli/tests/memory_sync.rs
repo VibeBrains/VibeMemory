@@ -17,6 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use support::TempDir;
+use vibememory_cli::held::Kept;
 use vibememory_cli::memory::{
     JOURNAL_FILE, MemoryLocation, memory_dir, quarantine, quarantined, settings_memory_dir, sync,
 };
@@ -117,7 +118,7 @@ fn a_written_document_becomes_a_record_and_is_projected_back() {
     )
     .expect("write");
 
-    let synced = sync(&memory, &journal, STAMP, AGENT).expect("sync");
+    let synced = sync(&memory, &journal, STAMP, AGENT, &Kept::default()).expect("sync");
     assert_eq!(synced.imported, 1, "the edit became a version");
     assert!(synced.rejected.is_empty(), "{:?}", synced.rejected);
     assert!(
@@ -139,12 +140,19 @@ fn reading_an_untouched_projection_writes_nothing() {
         document("store-naming", "First.", None),
     )
     .expect("write");
-    sync(&memory, &journal, STAMP, AGENT).expect("first");
+    sync(&memory, &journal, STAMP, AGENT, &Kept::default()).expect("first");
     let journal_after_first = fs::read(&journal).expect("read journal");
 
     // The hook runs on every stop; a projection nobody touched may not produce a version each
     // time, or the journal would grow without anybody writing anything.
-    let again = sync(&memory, &journal, "2026-09-05T12:00:00Z", AGENT).expect("second");
+    let again = sync(
+        &memory,
+        &journal,
+        "2026-09-05T12:00:00Z",
+        AGENT,
+        &Kept::default(),
+    )
+    .expect("second");
     assert_eq!(again.imported, 0, "nothing changed, so nothing was written");
     assert!(again.written.is_empty(), "{:?}", again.written);
     assert_eq!(
@@ -163,13 +171,20 @@ fn an_edit_made_after_the_projection_becomes_a_new_version() {
         document("store-naming", "First.", None),
     )
     .expect("write");
-    sync(&memory, &journal, STAMP, AGENT).expect("first");
+    sync(&memory, &journal, STAMP, AGENT, &Kept::default()).expect("first");
 
     let projected = fs::read_to_string(memory.join("store-naming.md")).expect("read");
     let edited = projected.replace("First.", "Second, edited by a person.");
     fs::write(memory.join("store-naming.md"), edited).expect("write edit");
 
-    let synced = sync(&memory, &journal, "2026-09-05T12:00:00Z", AGENT).expect("second");
+    let synced = sync(
+        &memory,
+        &journal,
+        "2026-09-05T12:00:00Z",
+        AGENT,
+        &Kept::default(),
+    )
+    .expect("second");
     assert_eq!(synced.imported, 1, "the edit is a version, not a loss");
     assert!(
         fs::read_to_string(memory.join("store-naming.md"))
@@ -210,12 +225,19 @@ fn a_delete_from_another_machine_removes_the_projection_instead_of_being_undone(
         document("store-naming", "First.", None),
     )
     .expect("write");
-    sync(&memory, &journal, STAMP, AGENT).expect("first");
+    sync(&memory, &journal, STAMP, AGENT, &Kept::default()).expect("first");
     let version = projected_version(&memory, "store-naming.md");
     arrive_delete(&journal, "store-naming", &version);
     let journal_with_delete = fs::read(&journal).expect("read journal");
 
-    let synced = sync(&memory, &journal, "2026-09-05T12:00:00Z", AGENT).expect("second");
+    let synced = sync(
+        &memory,
+        &journal,
+        "2026-09-05T12:00:00Z",
+        AGENT,
+        &Kept::default(),
+    )
+    .expect("second");
     assert_eq!(synced.imported, 0, "the file left behind is not an edit");
     assert_eq!(synced.removed, vec!["store-naming.md".to_owned()]);
     assert!(!memory.join("store-naming.md").exists());
@@ -226,7 +248,14 @@ fn a_delete_from_another_machine_removes_the_projection_instead_of_being_undone(
         "resurrecting the record would append an upsert here"
     );
 
-    let again = sync(&memory, &journal, "2026-09-05T12:30:00Z", AGENT).expect("third");
+    let again = sync(
+        &memory,
+        &journal,
+        "2026-09-05T12:30:00Z",
+        AGENT,
+        &Kept::default(),
+    )
+    .expect("third");
     assert_eq!(again.imported, 0);
     assert!(again.removed.is_empty(), "{:?}", again.removed);
 }
@@ -240,7 +269,7 @@ fn an_edit_that_outlived_a_delete_keeps_the_record() {
         document("store-naming", "First.", None),
     )
     .expect("write");
-    sync(&memory, &journal, STAMP, AGENT).expect("first");
+    sync(&memory, &journal, STAMP, AGENT, &Kept::default()).expect("first");
     let version = projected_version(&memory, "store-naming.md");
     let projected = fs::read_to_string(memory.join("store-naming.md")).expect("read");
     fs::write(
@@ -250,7 +279,14 @@ fn an_edit_that_outlived_a_delete_keeps_the_record() {
     .expect("edit");
     arrive_delete(&journal, "store-naming", &version);
 
-    let synced = sync(&memory, &journal, "2026-09-05T12:00:00Z", AGENT).expect("second");
+    let synced = sync(
+        &memory,
+        &journal,
+        "2026-09-05T12:00:00Z",
+        AGENT,
+        &Kept::default(),
+    )
+    .expect("second");
     assert_eq!(
         synced.imported, 1,
         "somebody wrote it after the delete saw it"
@@ -270,7 +306,7 @@ fn a_document_that_cannot_be_read_is_reported_and_left_alone() {
     let broken = memory.join("broken.md");
     fs::write(&broken, b"no frontmatter at all\n").expect("write");
 
-    let synced = sync(&memory, &journal, STAMP, AGENT).expect("sync");
+    let synced = sync(&memory, &journal, STAMP, AGENT, &Kept::default()).expect("sync");
     assert_eq!(
         synced.rejected.len(),
         1,
@@ -373,8 +409,14 @@ fn an_imported_record_learns_which_project_it_belongs_to() {
     .expect("write");
 
     let journal = project.join("memory.jsonl");
-    vibememory_cli::memory::sync(&memory_dir, &journal, "2026-09-09T12:00:00Z", "mac-test")
-        .expect("sync");
+    vibememory_cli::memory::sync(
+        &memory_dir,
+        &journal,
+        "2026-09-09T12:00:00Z",
+        "mac-test",
+        &Kept::default(),
+    )
+    .expect("sync");
 
     let bytes = fs::read(&journal).expect("journal");
     let (events, _) = journal::parse(&bytes);
@@ -384,5 +426,40 @@ fn an_imported_record_learns_which_project_it_belongs_to() {
     assert_eq!(
         record.project, "Promed",
         "the project comes from the directory the journal lives in"
+    );
+}
+
+#[test]
+fn a_document_holding_a_kept_token_is_not_imported() {
+    let temp = TempDir::new("memory-kept-token");
+    let (memory, journal) = paths(&temp);
+    // The owner's token from before the cabinet: no shape to tell it, only its kept value.
+    let legacy = "0123456789abcdef".repeat(4);
+    let engine = temp.dir("engine");
+    fs::create_dir_all(engine.join("tokens/personal")).expect("dirs");
+    fs::write(
+        engine.join("tokens/personal/claude-code"),
+        format!("{legacy}\n"),
+    )
+    .expect("write");
+    fs::write(
+        memory.join("host-access.md"),
+        document("host-access", &format!("The token is {legacy}."), None),
+    )
+    .expect("write");
+
+    let synced = sync(&memory, &journal, STAMP, AGENT, &Kept::read(&engine)).expect("sync");
+    assert_eq!(synced.imported, 0);
+    assert_eq!(synced.rejected.len(), 1, "{:?}", synced.rejected);
+    assert!(
+        synced.rejected[0].1.contains("personal/claude-code"),
+        "{:?}",
+        synced.rejected
+    );
+    assert!(
+        !fs::read_to_string(&journal)
+            .unwrap_or_default()
+            .contains(&legacy),
+        "the value is in no journal line"
     );
 }

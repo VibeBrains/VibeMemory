@@ -332,7 +332,7 @@ pub fn apply(
     // is on disk, it is ours, and leaving it uncommitted for ever would be a migration that
     // silently never finished.
     let pending = pending_destinations(store, plan)?;
-    let passed = crate::held::screen(engine_dir, store, &pending, stamp)?;
+    let passed = crate::held::stage(engine_dir, store, &pending, stamp, TIMEOUT)?;
     run.applied.held = pending
         .iter()
         .filter(|path| !passed.contains(path))
@@ -624,13 +624,8 @@ fn pending_destinations(store: &Path, plan: &Plan) -> Result<Vec<String>, String
 
 /// Stages exactly the written paths and commits: the store may hold a live file or two by the
 /// time a re-run happens, and `git add -A` would sweep them in mid-write.
+/// Commits what `crate::held::stage` staged.
 fn commit(store: &Path, written: &[String], stamp: &str) -> Result<(), String> {
-    for chunk in written.chunks(200) {
-        let mut args: Vec<&str> = vec!["add", "--"];
-        args.extend(chunk.iter().map(String::as_str));
-        git::run_with_timeout(git::command(store, &args), TIMEOUT)?
-            .ok_or_else(|| "git refused to stage the migrated files".to_owned())?;
-    }
     let message = format!("vibememory: migrate {} file(s) at {stamp}", written.len());
     git::run_with_timeout(
         git::command(store, &["commit", "--quiet", "-m", &message]),

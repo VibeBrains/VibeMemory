@@ -123,3 +123,53 @@ fn the_owners_token_from_before_the_cabinet_is_recognised_once_it_is_kept() {
         "the value is never written down"
     );
 }
+
+/// What git prints, run in `dir`.
+fn git_out(dir: &std::path::Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("run git");
+    assert!(output.status.success(), "git {args:?}");
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+#[test]
+fn what_is_staged_is_what_was_checked() {
+    let temp = TempDir::new("held-stage");
+    let (engine, store) = (temp.dir("engine"), temp.dir("store"));
+    support::git(&store, &["init", "--quiet"]);
+    let note = "projects/Project/memory/other.md";
+    let gone = "projects/Project/memory/gone.md";
+    fs::create_dir_all(store.join("projects/Project/memory")).unwrap();
+    fs::write(store.join(note), "checked\n").unwrap();
+    fs::write(store.join(MEMORY), token_case("transcriptToolResult")).unwrap();
+    fs::write(store.join(gone), "was here\n").unwrap();
+    support::git(&store, &["add", gone]);
+    fs::remove_file(store.join(gone)).unwrap();
+
+    let paths = [note.to_owned(), MEMORY.to_owned(), gone.to_owned()];
+    let staged = held::stage(
+        &engine,
+        &store,
+        &paths,
+        STAMP,
+        std::time::Duration::from_secs(30),
+    )
+    .expect("stage");
+    assert_eq!(staged, [note, gone]);
+    // Written again after the check: the index keeps the bytes that were checked.
+    fs::write(store.join(note), "written after the check\n").unwrap();
+    assert_eq!(git_out(&store, &["show", &format!(":{note}")]), "checked\n");
+    let listed = git_out(&store, &["ls-files"]);
+    assert!(
+        !listed.contains("gone.md"),
+        "a gone file leaves the index: {listed}"
+    );
+    assert!(
+        !listed.contains(MEMORY),
+        "the file with a token is not staged: {listed}"
+    );
+    assert!(Held::read(&engine).files.contains_key(MEMORY));
+}

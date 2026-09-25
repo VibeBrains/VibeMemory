@@ -620,20 +620,24 @@ pub fn apply(layout: &Layout, actions: &[Action], dry_run: bool) -> Applied {
 
 /// Stages exactly these paths and commits when the index then differs from HEAD. Never
 /// `git add -A`: the store may already hold a live transcript or two.
-fn commit_scaffolding(store: &Path, paths: &[String]) -> Result<(), String> {
+fn commit_scaffolding(layout: &Layout, store: &Path, paths: &[String]) -> Result<(), String> {
     let timeout = std::time::Duration::from_mins(1);
-    let existing: Vec<&str> = paths
+    let existing: Vec<String> = paths
         .iter()
-        .map(String::as_str)
         .filter(|path| store.join(path).exists())
+        .cloned()
         .collect();
-    if existing.is_empty() {
+    // Screened like every commit of the engine: a managed copy may hold a token no shape tells
+    let staged = crate::held::stage(
+        &layout.engine_dir,
+        store,
+        &existing,
+        &crate::clock::now(),
+        timeout,
+    )?;
+    if staged.is_empty() {
         return Ok(());
     }
-    let mut args = vec!["add", "--"];
-    args.extend(existing.iter().copied());
-    crate::git::run_with_timeout(crate::git::command(store, &args), timeout)?
-        .ok_or_else(|| "git refused to stage the scaffolding".to_owned())?;
     let has_head = crate::git::run_with_timeout(
         crate::git::command(store, &["rev-parse", "--verify", "--quiet", "HEAD"]),
         timeout,
@@ -696,7 +700,7 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
         }
         Step::Hooks => write_hooks(layout),
         Step::ScaffoldCommitted { machine_id } => {
-            commit_scaffolding(&store, &scaffolding_paths(machine_id))
+            commit_scaffolding(layout, &store, &scaffolding_paths(machine_id))
         }
         Step::SkillsLink => make_link(
             &store.join("config/skills"),

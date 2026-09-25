@@ -1066,3 +1066,31 @@ fn the_scheduled_task_runs_the_tick_after_logon_every_two_minutes_and_at_unlock(
         .collect();
     assert_eq!(String::from_utf16(&units).expect("utf-16"), task);
 }
+
+#[test]
+fn install_does_not_commit_a_managed_copy_holding_a_kept_token() {
+    let temp = TempDir::new("install-kept-token");
+    let layout = layout(&temp);
+    let _ = apply(&layout, &plan(&layout, &config(), &[]), false);
+    // The owner's token from before the cabinet has no shape; it is known by its kept value.
+    let legacy = "0123456789abcdef".repeat(4);
+    let kept = layout.engine_dir.join("tokens/personal");
+    fs::create_dir_all(&kept).expect("dirs");
+    fs::write(kept.join("claude-code"), format!("{legacy}\n")).expect("write");
+    fs::write(
+        layout.store().join("config/settings.json"),
+        format!("{{\"env\":{{\"TOKEN\":\"{legacy}\"}}}}\n"),
+    )
+    .expect("write");
+
+    let _ = apply(&layout, &plan(&layout, &config(), &[]), false);
+    let output = std::process::Command::new("git")
+        .args(["log", "-p", "--all"])
+        .current_dir(layout.store())
+        .output()
+        .expect("git log");
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains(&legacy),
+        "the kept value is in no commit"
+    );
+}

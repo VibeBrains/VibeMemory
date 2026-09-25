@@ -89,7 +89,9 @@ pub struct Synced {
 /// Brings the projection and the journal into agreement, edits first.
 ///
 /// `stamp` and `agent` go into every event this run creates: the core has no clock and no idea
-/// who is asking.
+/// who is asking. An edit that holds the value of a token this machine keeps (`kept`) is not
+/// imported: the core refuses a token of the cabinet by its shape, but the owner's token from
+/// before the cabinet has none, and the journal is committed as it is.
 ///
 /// # Errors
 ///
@@ -101,6 +103,7 @@ pub fn sync(
     journal_path: &Path,
     stamp: &str,
     agent: &str,
+    kept: &crate::held::Kept,
 ) -> Result<Synced, String> {
     let mut memory = load(journal_path)?;
     let mut synced = Synced {
@@ -141,6 +144,26 @@ pub fn sync(
     for (name, error) in import.rejected {
         synced.rejected.push((name, error.to_string()));
     }
+    let mut holding = Vec::new();
+    import.events.retain(|event| {
+        let found = journal::encode(event)
+            .map(|line| kept.found_in(&line))
+            .unwrap_or_default();
+        if found.is_empty() {
+            return true;
+        }
+        let name = event.id().as_str().to_owned();
+        let named: Vec<&str> = found.iter().map(String::as_str).collect();
+        holding.push((
+            name,
+            format!(
+                "holds agent token {}, kept on this machine; save it without the token",
+                named.join(", ")
+            ),
+        ));
+        false
+    });
+    synced.rejected.extend(holding);
     if !import.events.is_empty() {
         append(journal_path, &import.events)?;
         synced.imported = import.events.len();

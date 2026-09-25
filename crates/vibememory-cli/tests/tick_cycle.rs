@@ -1340,3 +1340,30 @@ fn an_ended_session_holding_an_agent_token_stays_on_this_machine() {
         "the secret is never written down: {written}"
     );
 }
+
+#[test]
+fn a_card_of_this_machine_holding_an_agent_token_stays_on_this_machine() {
+    let temp = TempDir::new("tick-held-card");
+    let pair = two_machines(&temp);
+    // A Desktop card copies the prompts the person typed, and one of them held a token.
+    let cards = pair.mac.join("machines/mac-test/desktop");
+    fs::create_dir_all(&cards).expect("dirs");
+    let card = "machines/mac-test/desktop/local_1.json";
+    fs::write(pair.mac.join(card), token_case("transcriptToolResult")).expect("write");
+    fs::write(cards.join("local_2.json"), "{\"title\":\"plain\"}\n").expect("write");
+
+    let ticked = tick(&pair.mac, &temp);
+    let output = std::process::Command::new("git")
+        .args(["ls-tree", "-r", "--name-only", "HEAD"])
+        .current_dir(&pair.mac)
+        .output()
+        .expect("ls-tree");
+    let tree = String::from_utf8_lossy(&output.stdout);
+    assert!(!tree.contains("local_1.json"), "{tree} {ticked:?}");
+    assert!(
+        tree.contains("machines/mac-test/desktop/local_2.json"),
+        "{tree}"
+    );
+    let held = vibememory_cli::held::Held::read(pair.mac.parent().expect("engine dir"));
+    assert!(held.files.contains_key(card), "{:?}", held.files);
+}

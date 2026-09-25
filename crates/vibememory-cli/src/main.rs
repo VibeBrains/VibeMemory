@@ -765,7 +765,8 @@ fn sync_memory(
         .ok()
         .and_then(|dir| dir.parent().map(|project| project.join(JOURNAL_FILE)))?;
 
-    let synced = match sync(&memory_dir, &journal, stamp, &config.machine_id) {
+    let kept = vibememory_cli::held::Kept::read(&layout.engine_dir);
+    let synced = match sync(&memory_dir, &journal, stamp, &config.machine_id, &kept) {
         Ok(synced) => synced,
         Err(error) => return Some(format!("VibeMemory could not synchronise memory: {error}")),
     };

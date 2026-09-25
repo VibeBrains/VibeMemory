@@ -226,9 +226,113 @@ fn is_memory_journal(path: &str) -> bool {
     )
 }
 
+/// A file of the store as git records it: its bytes and its mode.
+pub struct Content {
+    /// What git stores: the file's bytes, or a link's target.
+    pub bytes: Vec<u8>,
+    /// `100644`, `100755` or `120000`.
+    pub mode: &'static str,
+}
+
+impl Content {
+    /// The file at `path` as git would record it, without following a link; `None` when it is gone.
+    fn read(path: &Path) -> Result<Option<Self>, String> {
+        let metadata = match std::fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("{}: {error}", path.display())),
+        };
+        if metadata.file_type().is_symlink() {
+            let target =
+                std::fs::read_link(path).map_err(|error| format!("{}: {error}", path.display()))?;
+            return Ok(Some(Self {
+                bytes: target.to_string_lossy().replace('\\', "/").into_bytes(),
+                mode: LINK_MODE,
+            }));
+        }
+        let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+        Ok(Some(Self {
+            bytes,
+            mode: if is_executable(&metadata) {
+                EXECUTABLE_MODE
+            } else {
+                FILE_MODE
+            },
+        }))
+    }
+}
+
+/// git's mode of a plain file.
+const FILE_MODE: &str = "100644";
+/// git's mode of an executable file.
+const EXECUTABLE_MODE: &str = "100755";
+/// git's mode of a symbolic link.
+const LINK_MODE: &str = "120000";
+
+#[cfg(unix)]
+fn is_executable(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn is_executable(_metadata: &std::fs::Metadata) -> bool {
+    false
+}
+
 /// Of `paths` — store-relative, `/`-separated, about to be committed — the ones that may be: a file
 /// that holds a token is kept back and recorded, one that no longer does is released. A memory
-/// journal passes as it is.
+/// journal passes as it is. `passed` is told each path that may be committed, with the content
+/// that was read for the decision, or `None` for a file that is gone.
+///
+/// # Errors
+///
+/// A file that cannot be read, a list that cannot be written, or what `passed` says.
+pub fn screen_each(
+    engine_dir: &Path,
+    store: &Path,
+    paths: &[String],
+    stamp: &str,
+    mut passed: impl FnMut(&str, Option<&Content>) -> Result<(), String>,
+) -> Result<Vec<String>, String> {
+    let mut held = Held::read(engine_dir);
+    let before = held.clone();
+    let kept = Kept::read(engine_dir);
+    let mut committed = Vec::new();
+    for path in paths {
+        let file = store.join(path);
+        if is_memory_journal(path) {
+            passed(path, Content::read(&file)?.as_ref())?;
+            committed.push(path.clone());
+            continue;
+        }
+        let seen = Seen::of(&file);
+        if seen.is_some() && held.files.get(path).and_then(|held| held.seen) == seen {
+            continue;
+        }
+        let Some(content) = Content::read(&file)? else {
+            // A file gone since it was listed has nothing to commit and nothing to hold.
+            held.files.remove(path);
+            passed(path, None)?;
+            committed.push(path.clone());
+            continue;
+        };
+        let tokens = kept.found_in(&content.bytes);
+        if tokens.is_empty() {
+            held.files.remove(path);
+            passed(path, Some(&content))?;
+            committed.push(path.clone());
+        } else {
+            hold(engine_dir, &mut held, path, tokens, seen, stamp)?;
+        }
+    }
+    if held != before {
+        held.write(engine_dir)?;
+    }
+    Ok(committed)
+}
+
+/// Of `paths`, the ones that may be committed (`screen_each`), without staging anything.
 ///
 /// # Errors
 ///
@@ -239,42 +343,59 @@ pub fn screen(
     paths: &[String],
     stamp: &str,
 ) -> Result<Vec<String>, String> {
-    let mut held = Held::read(engine_dir);
-    let before = held.clone();
-    let kept = Kept::read(engine_dir);
-    let mut passed = Vec::new();
-    for path in paths {
-        if is_memory_journal(path) {
-            passed.push(path.clone());
-            continue;
-        }
-        let file = store.join(path);
-        let seen = Seen::of(&file);
-        if seen.is_some() && held.files.get(path).and_then(|held| held.seen) == seen {
-            continue;
-        }
-        let bytes = match std::fs::read(&file) {
-            Ok(bytes) => bytes,
-            // A file gone since it was listed has nothing to commit and nothing to hold.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                held.files.remove(path);
-                passed.push(path.clone());
-                continue;
-            }
-            Err(error) => return Err(format!("{}: {error}", file.display())),
+    screen_each(engine_dir, store, paths, stamp, |_, _| Ok(()))
+}
+
+/// Stages every path of `paths` that may be committed (`screen_each`) with exactly the bytes that
+/// were checked: into the object database by `hash-object -w --stdin`, then into the index. A file
+/// written again between the check and `git add` would otherwise go in unchecked. A file that is
+/// gone leaves the index. Returns the staged paths; committing them is the caller's.
+///
+/// # Errors
+///
+/// A file that cannot be read, or git that refused.
+pub fn stage(
+    engine_dir: &Path,
+    store: &Path,
+    paths: &[String],
+    stamp: &str,
+    timeout: std::time::Duration,
+) -> Result<Vec<String>, String> {
+    let mut entries = Vec::new();
+    let mut gone = Vec::new();
+    let staged = screen_each(engine_dir, store, paths, stamp, |path, content| {
+        let Some(content) = content else {
+            gone.extend_from_slice(path.as_bytes());
+            gone.push(0);
+            return Ok(());
         };
-        let tokens = kept.found_in(&bytes);
-        if tokens.is_empty() {
-            held.files.remove(path);
-            passed.push(path.clone());
-        } else {
-            hold(engine_dir, &mut held, path, tokens, seen, stamp)?;
-        }
+        let blob = crate::git::run_with_input(
+            crate::git::command(store, &["hash-object", "-w", "--stdin"]),
+            &content.bytes,
+            timeout,
+        )?
+        .ok_or_else(|| format!("git refused to store {path}"))?;
+        entries.extend_from_slice(format!("{} {blob}\t{path}", content.mode).as_bytes());
+        entries.push(0);
+        Ok(())
+    })?;
+    if !entries.is_empty() {
+        crate::git::run_with_input(
+            crate::git::command(store, &["update-index", "-z", "--index-info"]),
+            &entries,
+            timeout,
+        )?
+        .ok_or_else(|| "git refused to index what was checked".to_owned())?;
     }
-    if held != before {
-        held.write(engine_dir)?;
+    if !gone.is_empty() {
+        crate::git::run_with_input(
+            crate::git::command(store, &["update-index", "--force-remove", "-z", "--stdin"]),
+            &gone,
+            timeout,
+        )?
+        .ok_or_else(|| "git refused to take gone files out of the index".to_owned())?;
     }
-    Ok(passed)
+    Ok(staged)
 }
 
 /// Records that `path` is kept back for `tokens`, found by a caller that read it itself: the `Stop`
