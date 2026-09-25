@@ -18,6 +18,7 @@ docs/
 │   ├── hostStatusSpec.md   # спека отчёта хоста: applied.json, host.json и ответ status участнику
 │   ├── hostSetup.md        # хост стора: ключ, bare-репозиторий и зеркало, привязка машины, команды хоста, бэкап сторов команд
 │   ├── linksFixtures.md    # как добавить кейс в fixtures/links/, два раздела файла, годные подделки
+│   ├── localeSpec.md       # спека языкового файла кабинета для модели: ключи, подстановки, тон, проверка
 │   ├── mergeFixtures.md    # как добавить кейс в fixtures/merge/, скраббер транскриптов, грамматика сценариев
 │   ├── namingFixtures.md   # как добавить кейс в fixtures/naming/, метки provenance, оракул, новая версия CLI
 │   ├── teamSetup.md        # участник memory-команды: программы, connect, регистрация агента, doctor, disconnect
