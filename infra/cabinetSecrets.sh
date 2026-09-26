@@ -38,7 +38,6 @@ ask RESEND_API_KEY "Ключ Resend (re_…)" hidden
 ask FROM_EMAIL_ADDRESS "Адрес отправителя писем (домен подтверждён в Resend)" visible
 ask TELEGRAM_BOT_TOKEN "Токен бота Telegram" hidden
 ask TELEGRAM_CHAT_ID "Чат Telegram для тревог (число)" visible
-ask SUPPORT_URL "Ссылка «поддержать» (https://…)" visible
 [ "${#lines[@]}" -gt 0 ] || { printf 'Ничего не введено — .env не тронут\n'; exit 0; }
 
 printf '%s\n' "${lines[@]}" | ssh "${SSH_OPTIONS[@]}" "$sshAlias" 'bash -c '"'"'
