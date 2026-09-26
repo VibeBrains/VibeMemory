@@ -170,26 +170,7 @@ pub fn keep_key(
         set_clone(&clone, &ssh, &record.git_url()).map_err(failed)?;
         false
     } else {
-        let mut command = crate::git::command(
-            &state_dir,
-            &["-c", &format!("core.sshCommand={ssh}"), "clone", "--quiet"],
-        );
-        // the store's own settings from the first moment: git writes its defaults at init, and
-        // `core.autocrlf` must hold before the first file is checked out
-        for (key, value, _why) in crate::install::GIT_SETTINGS {
-            command.arg("-c").arg(format!("{key}={value}"));
-        }
-        command.arg(record.git_url()).arg(&clone);
-        match crate::git::run_capturing(command, CLONE_TIMEOUT).map_err(failed)? {
-            Ok(_) => {}
-            Err(stderr) => {
-                return Err(failed(format!(
-                    "the team's store could not be cloned: {}",
-                    vibememory_core::terminal::printable(&stderr)
-                )));
-            }
-        }
-        set_clone(&clone, &ssh, &record.git_url()).map_err(failed)?;
+        clone_store(&state_dir, &record, &record.git_url()).map_err(failed)?;
         true
     };
     Ok(ConnectedStore {
@@ -197,6 +178,35 @@ pub fn keep_key(
         clone,
         cloned,
     })
+}
+
+/// Clones a team's store — from `source`, its host's address in every real use — into its state
+/// directory with its own ssh and the store's settings from
+/// the first moment: git writes its defaults at init, and `core.autocrlf` must hold before the
+/// first file is checked out.
+pub(crate) fn clone_store(
+    state_dir: &Path,
+    record: &StoreRecord,
+    source: &str,
+) -> Result<PathBuf, String> {
+    let clone = state_dir.join("store");
+    let ssh = ssh_command(state_dir);
+    let mut command = crate::git::command(
+        state_dir,
+        &["-c", &format!("core.sshCommand={ssh}"), "clone", "--quiet"],
+    );
+    for (key, value, _why) in crate::install::GIT_SETTINGS {
+        command.arg("-c").arg(format!("{key}={value}"));
+    }
+    command.arg(source).arg(&clone);
+    if let Err(stderr) = crate::git::run_capturing(command, CLONE_TIMEOUT)? {
+        return Err(format!(
+            "the team's store could not be cloned: {}",
+            vibememory_core::terminal::printable(&stderr)
+        ));
+    }
+    set_clone(&clone, &ssh, &record.git_url())?;
+    Ok(clone)
 }
 
 /// The clone's own ssh: this team's key and host keys only, the user's configuration not read,

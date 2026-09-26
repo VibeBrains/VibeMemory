@@ -116,6 +116,14 @@ pub fn keep(clone: &Path, paths: &[String]) -> Result<(), String> {
     write_block(clone, &text, &all)
 }
 
+/// Every path the clone keeps on this machine only.
+#[must_use]
+pub fn kept_paths(clone: &Path) -> Vec<String> {
+    read(clone)
+        .map(|text| kept(&text).into_iter().collect())
+        .unwrap_or_default()
+}
+
 /// Whether a path of the clone is kept on this machine only.
 #[must_use]
 pub fn is_local(clone: &Path, relative: &str) -> bool {

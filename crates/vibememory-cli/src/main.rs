@@ -50,6 +50,8 @@ fn main() -> ExitCode {
         Some("import") => relink_command(&args.collect::<Vec<String>>(), true),
         Some("forget") => forget_command(args.next().as_deref()),
         Some("session") => session_command(&args.collect::<Vec<String>>()),
+        Some("project") => project_command(&args.collect::<Vec<String>>()),
+        Some("store") => store_command(&args.collect::<Vec<String>>()),
         Some("merge-driver") => merge_driver_command(&args.collect::<Vec<String>>()),
         Some("hook") => match args.next().as_deref() {
             Some("session-start") => session_start_hook(),
@@ -599,12 +601,48 @@ fn print_connected(
 /// `disconnect <team>`: the team's tokens off this machine, and what is left to do elsewhere —
 /// revoke them in the cabinet, and remove the client registered in `~/.claude.json`, which the
 /// engine never writes.
+/// What leaving a team with sessions did, and what is left to do in the cabinet and the config.
+fn report_left(team: &str, left: &vibememory_cli::team_ops::Left) {
+    for name in &left.brought_back {
+        println!("back     {name}: your sessions and memory are in the personal store again");
+    }
+    for name in &left.unlinked {
+        println!("unlinked {name}: the team's project; its files stay in the archive");
+    }
+    println!("archive  {}", left.archive.display());
+    println!(
+        "revoke   machine key {} in {}/team/{team}: until then it still opens the team",
+        vibememory_core::terminal::printable(&left.key_id),
+        vibememory_core::terminal::printable(&left.cabinet)
+    );
+    println!("config   remove stores.{team} from config.json: its directories are yours again");
+}
+
 fn disconnect_command(args: &[String]) -> ExitCode {
     let [team] = args else {
         eprintln!("usage: vibememory disconnect <team>");
         return ExitCode::from(2);
     };
-    let done = match vibememory_cli::connect::disconnect(&layout(), team) {
+    let layout = layout();
+    // a team with sessions first: its projects come back before the tokens go
+    let left_sessions = vibememory_cli::team_connect::connected_teams(&layout).contains(team);
+    if left_sessions {
+        let Ok(config) = read_config(&layout) else {
+            eprintln!(
+                "disconnect: config.json does not read, so the team's projects cannot be placed"
+            );
+            return ExitCode::FAILURE;
+        };
+        match vibememory_cli::team_ops::leave(&layout, &config, team, &vibememory_cli::clock::now())
+        {
+            Ok(left) => report_left(team, &left),
+            Err(error) => {
+                eprintln!("disconnect: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let done = match vibememory_cli::connect::disconnect(&layout, team) {
         Ok(done) => done,
         Err(error) => {
             eprintln!("disconnect: {error}");
@@ -612,7 +650,9 @@ fn disconnect_command(args: &[String]) -> ExitCode {
         }
     };
     if done.removed.is_empty() && done.left.is_empty() {
-        println!("no token of team {team} is kept on this machine");
+        if !left_sessions {
+            println!("no token of team {team} is kept on this machine");
+        }
         return ExitCode::SUCCESS;
     }
     for path in &done.removed {
@@ -733,6 +773,87 @@ fn install(dry_run: bool) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+/// `store reclone <team>`: the team's clone made anew after its host refused what it held.
+fn store_command(args: &[String]) -> ExitCode {
+    let [verb, team] = args else {
+        eprintln!("usage: vibememory store reclone <team>");
+        return ExitCode::from(2);
+    };
+    if verb != "reclone" {
+        eprintln!("usage: vibememory store reclone <team>");
+        return ExitCode::from(2);
+    }
+    let layout = layout();
+    match vibememory_cli::team_ops::reclone(&layout, team, &vibememory_cli::clock::now()) {
+        Ok(done) => {
+            let applied = vibememory_cli::install::apply(
+                &layout,
+                &vibememory_cli::install::plan_team(&layout, team),
+                false,
+            );
+            for (what, error) in &applied.failed {
+                eprintln!("store reclone: {what} \u{2014} {error}");
+            }
+            println!(
+                "recloned: team {team}; {} file(s) carried over, the refused clone is in {}",
+                done.carried.len(),
+                done.rejected.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("store reclone: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `project move <dir> --to <team>|personal`: a project between the personal store and a team's —
+/// see `project_move` for what goes and what stays.
+fn project_command(args: &[String]) -> ExitCode {
+    let [verb, dir, flag, to] = args else {
+        eprintln!("usage: vibememory project move <dir> --to <team>|personal");
+        return ExitCode::from(2);
+    };
+    if verb != "move" || flag != "--to" {
+        eprintln!("usage: vibememory project move <dir> --to <team>|personal");
+        return ExitCode::from(2);
+    }
+    let layout = layout();
+    let config = match read_config(&layout) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("config: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let real =
+        std::fs::canonicalize(dir).map_or_else(|_| dir.clone(), |path| path.display().to_string());
+    let cwd = canonical_cwd(&real, session_start::host_syntax());
+    let portable = portable_cwd(&config, &cwd);
+    let stamp = vibememory_cli::clock::now();
+    let moved = if to == "personal" {
+        vibememory_cli::project_move::to_personal(&layout, &config, &cwd, &portable)
+    } else {
+        vibememory_cli::project_move::to_team(&layout, &config, &cwd, &portable, to, &stamp)
+    };
+    match moved {
+        Ok(report) => {
+            println!(
+                "moved: {} to {to} — {} file(s), {} of them memory; the next tick sends what is shared",
+                report.name,
+                report.copied.len(),
+                report.memory_versions
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("project move: {error}");
+            ExitCode::FAILURE
+        }
     }
 }
 
