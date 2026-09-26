@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Puts the owner's own values into the cabinet's .env on the host: the Resend key the cabinet sends
-# mail with, the Telegram bot and chat urgent host alerts go to, and the support page's link.
+# mail with and the Telegram bot and chat urgent host alerts go to.
 #
 # Runs on the OWNER'S machine, in a terminal. Secrets are read without echo and travel to the host
 # through ssh's stdin — never as an argument, never into a file here, never printed; the host merges
