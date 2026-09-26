@@ -21,7 +21,7 @@ ssh-сеанс; повторный запуск безопасен и печат
    берёт готовый дамп: иначе бэкап молча остался бы без базы. Тогда он так и пишет — запустите
    `backupSetup.sh`, затем этот скрипт ещё раз.
 5. `./infra/cabinetPassword.sh` — пароль владельца, вводит сам владелец.
-6. `./infra/cabinetSecrets.sh` — ключ Resend, бот Telegram, ссылка «поддержать», вводит сам владелец.
+6. `./infra/cabinetSecrets.sh` — ключ Resend и бот Telegram, вводит сам владелец; ключ и домен отправителя скрипт сперва проверяет в Resend.
 7. Релиз: `./infra/releaseBuild.sh` на Mac, `infra\releaseBuild.ps1` на GPD, затем
    `./infra/hostRelease.sh <версия>`.
 
