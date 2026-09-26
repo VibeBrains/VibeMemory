@@ -1516,6 +1516,15 @@ fn tick_command(args: &[String]) -> ExitCode {
         match tick_team(&layout, &config, &roots, &team, released, &moments) {
             Ok(Some(team_ticked)) => {
                 report_tick(&team_ticked, config.max_deletions_per_tick);
+                if team_ticked.store_cycle == vibememory_cli::tick::StoreCycle::SessionsOff {
+                    // the store holds memory only now: the moved projects come back, the clone is
+                    // archived; a live session makes this wait for a later tick
+                    match vibememory_cli::team_ops::leave(&layout, &config, &team, &stamp) {
+                        Ok(left) => report_left(&team, &left),
+                        Err(error) => println!("team {team}: leaving waits: {error}"),
+                    }
+                    continue;
+                }
                 if let Some(pause) = &team_ticked.pause {
                     println!("{}", pause_advice(&layout, &team, &pause.code));
                 }
@@ -1749,6 +1758,9 @@ fn report_tick(ticked: &vibememory_cli::tick::Ticked, max_deletions: usize) {
         }
         vibememory_cli::tick::StoreCycle::Recovered => {
             println!("store cycle recovered: fetching, merging and pushing again");
+        }
+        vibememory_cli::tick::StoreCycle::SessionsOff => {
+            println!("the team's sessions are switched off: this machine leaves its store");
         }
     }
     let managed = &ticked.managed;

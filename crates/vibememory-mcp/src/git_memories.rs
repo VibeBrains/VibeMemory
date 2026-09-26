@@ -311,6 +311,105 @@ impl GitMemories {
         attempt
     }
 
+    /// Rewrites `main` as a single new commit holding only the paths `keep` lets stay, with the
+    /// store's generation raised, and answers the new generation — or `None` when nothing outside
+    /// `keep` was there and the store is left as it is. The branch moves only from the commit that
+    /// was read: a write landing in between keeps its commit, and the next application tries again.
+    /// The old history is not removed here: the caller expires it and packs the store.
+    ///
+    /// # Errors
+    ///
+    /// What git refused.
+    pub fn rewrite_keeping(
+        &self,
+        keep: impl Fn(&str) -> bool,
+        message: &str,
+    ) -> Result<Option<u64>, String> {
+        let Some(old) = self.main_commit()? else {
+            return Ok(None);
+        };
+        let listed = self.text(&["ls-tree", "-r", "--full-tree", old.as_str()], &[])?;
+        let entries: Vec<(&str, &str)> = listed
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .collect();
+        if entries.iter().all(|(_, path)| keep(path)) {
+            return Ok(None);
+        }
+        let current = self
+            .text(
+                &[
+                    "cat-file",
+                    "blob",
+                    &format!("{old}:{}", crate::purge::GENERATION_FILE),
+                ],
+                &[],
+            )
+            .ok();
+        let generation = crate::purge::next_generation(current.as_deref());
+        let blob = text_of(&self.git(
+            &["hash-object", "-w", "--stdin"],
+            Some(format!("{generation}\n").as_bytes()),
+            &[],
+        )?);
+        let index = std::env::temp_dir().join(format!(
+            "vibememory-mcp-purge-{}-{}",
+            std::process::id(),
+            next_index()
+        ));
+        let index_path = index.to_string_lossy().into_owned();
+        let attempt = (|| -> Result<Option<u64>, String> {
+            let with_index = [("GIT_INDEX_FILE", index_path.as_str())];
+            self.git(&["read-tree", "--empty"], None, &with_index)?;
+            for (meta, path) in &entries {
+                if !keep(path) || *path == crate::purge::GENERATION_FILE {
+                    continue;
+                }
+                let mut fields = meta.split_whitespace();
+                let (Some(mode), Some(_), Some(object)) =
+                    (fields.next(), fields.next(), fields.next())
+                else {
+                    continue;
+                };
+                self.git(
+                    &[
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        &format!("{mode},{object},{path}"),
+                    ],
+                    None,
+                    &with_index,
+                )?;
+            }
+            self.git(
+                &[
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    &format!("100644,{blob},{}", crate::purge::GENERATION_FILE),
+                ],
+                None,
+                &with_index,
+            )?;
+            let tree = self.text(&["write-tree"], &with_index)?;
+            let email = format!("vibememory-mcp@{}.invalid", self.writer);
+            let identity = [
+                ("GIT_AUTHOR_NAME", self.writer.as_str()),
+                ("GIT_AUTHOR_EMAIL", email.as_str()),
+                ("GIT_COMMITTER_NAME", self.writer.as_str()),
+                ("GIT_COMMITTER_EMAIL", email.as_str()),
+            ];
+            // no parent: the sessions' history must not stay reachable
+            let commit = self.text(&["commit-tree", tree.as_str(), "-m", message], &identity)?;
+            self.move_branch(&commit, &old)
+                .map_err(|why| format!("git refused to move {BRANCH} to {commit}: {why}"))?;
+            Ok(Some(generation))
+        })();
+        let _ = std::fs::remove_file(&index);
+        attempt
+    }
+
     /// Moves the branch from `old` to `new`, and only if it is still at `old`.
     ///
     /// Through a `HEAD` of its own. Git locks `HEAD` whenever it moves the branch `HEAD` names, and

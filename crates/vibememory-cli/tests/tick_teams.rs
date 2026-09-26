@@ -442,3 +442,109 @@ fn a_push_too_big_for_the_host_goes_in_portions() {
         .unwrap();
     assert_eq!(head.stdout, remote.stdout, "every commit reached the host");
 }
+
+/// The team's host behind a team clone of the setup, with the clone's history pushed to it.
+fn hosted(temp: &TempDir, setup: &Setup) -> (std::path::PathBuf, std::path::PathBuf) {
+    let team_store = setup.engine.join("stores/acme/store");
+    let bare = temp.dir("acme.git");
+    git(
+        &bare,
+        &["init", "--bare", "--quiet", "--initial-branch=main"],
+    );
+    git(&team_store, &["branch", "-M", "main"]);
+    git(
+        &team_store,
+        &["remote", "add", "origin", &bare.display().to_string()],
+    );
+    git(&team_store, &["push", "--quiet", "-u", "origin", "main"]);
+    (team_store, bare)
+}
+
+fn head(repo: &Path) -> Vec<u8> {
+    std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .unwrap()
+        .stdout
+}
+
+#[test]
+fn a_store_rewritten_to_a_new_generation_is_left_not_merged() {
+    let temp = TempDir::new("tick-teams-generation");
+    let setup = setup(&temp);
+    let (team_store, bare) = hosted(&temp, &setup);
+    // the host switched the team's sessions off: a new root commit with the next generation
+    let rewritten = temp.dir("rewritten");
+    git(&rewritten, &["init", "--quiet", "--initial-branch=main"]);
+    git(
+        &rewritten,
+        &["config", "user.email", "test@example.invalid"],
+    );
+    git(&rewritten, &["config", "user.name", "test"]);
+    fs::write(
+        rewritten.join(vibememory_core::team_store::GENERATION_FILE),
+        "1\n",
+    )
+    .unwrap();
+    git(&rewritten, &["add", "."]);
+    git(
+        &rewritten,
+        &["commit", "--quiet", "-m", "sessions switched off"],
+    );
+    git(
+        &rewritten,
+        &[
+            "push",
+            "--quiet",
+            "--force",
+            &bare.display().to_string(),
+            "main",
+        ],
+    );
+    let before = head(&team_store);
+
+    let ticked = tick(&setup, Some("acme"));
+    assert_eq!(
+        ticked.store_cycle,
+        vibememory_cli::tick::StoreCycle::SessionsOff,
+        "{ticked:?}"
+    );
+    assert!(!ticked.merged);
+    assert_eq!(
+        head(&team_store),
+        before,
+        "nothing of the new generation is merged in"
+    );
+    assert!(ticked.problems.is_empty());
+}
+
+#[test]
+fn a_host_refusing_as_a_memory_team_means_sessions_off_not_a_pause() {
+    let temp = TempDir::new("tick-teams-memory-team");
+    let setup = setup(&temp);
+    let (team_store, bare) = hosted(&temp, &setup);
+    let hook = bare.join("hooks/pre-receive");
+    fs::write(
+        &hook,
+        "#!/bin/sh\necho 'vibememory: pushDenied' >&2\necho 'acme is a memory team: only the memory server writes its store' >&2\nexit 1\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fs::write(team_store.join("change"), "x").unwrap();
+    git(&team_store, &["add", "change"]);
+    git(&team_store, &["commit", "--quiet", "-m", "local change"]);
+
+    let ticked = tick(&setup, Some("acme"));
+    assert_eq!(
+        ticked.store_cycle,
+        vibememory_cli::tick::StoreCycle::SessionsOff,
+        "{ticked:?}"
+    );
+    assert_eq!(ticked.pause, None);
+    assert!(ticked.problems.is_empty());
+}

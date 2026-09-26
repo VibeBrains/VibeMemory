@@ -29,6 +29,7 @@ pub mod http;
 pub mod layout;
 pub mod memories;
 pub mod protocol;
+pub mod purge;
 pub mod push_scan;
 pub mod receive;
 pub mod shell;

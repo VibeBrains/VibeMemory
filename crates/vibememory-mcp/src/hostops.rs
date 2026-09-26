@@ -793,7 +793,7 @@ fn apply_once(paths: &HostPaths, apply_paths: &ApplyPaths) -> (ExitCode, Option<
         ));
     }
     problems.extend(plan.problems);
-    failed |= run_steps(&plan.steps, paths, apply_paths, &mut problems);
+    failed |= run_steps(&plan.steps, &snapshot, paths, apply_paths, &mut problems);
     for (slug, team) in snapshot.teams.iter().filter(|(_, team)| team.adopted) {
         let repo = team.repository(slug, &paths.teams);
         if !repo.is_dir() {
@@ -921,6 +921,7 @@ fn refused(
 /// Each failure becomes an `applyFailed` problem; returns whether there was one.
 fn run_steps(
     steps: &[Step],
+    snapshot: &Snapshot,
     paths: &HostPaths,
     apply_paths: &ApplyPaths,
     problems: &mut Vec<Problem>,
@@ -928,14 +929,25 @@ fn run_steps(
     let mut failed = false;
     for step in steps {
         let (slug, outcome) = match step {
-            Step::Create { slug } | Step::Keep { slug } => (
-                slug,
-                settle_store(
-                    &paths.teams.join(store_dir(slug)),
-                    slug,
-                    &apply_paths.store_init,
-                ),
-            ),
+            Step::Create { slug } | Step::Keep { slug } => {
+                let repo = paths.teams.join(store_dir(slug));
+                let settled = settle_store(&repo, slug, &apply_paths.store_init);
+                // a team whose sessions are off keeps its memory only
+                let sessions_off = snapshot
+                    .teams
+                    .get(slug)
+                    .is_some_and(|team| team.mode == Some(crate::access::Mode::Memory));
+                let outcome = match settled {
+                    Ok(done) if sessions_off => {
+                        purge_sessions(&repo, slug).map(|purged| match (done, purged) {
+                            (Some(done), Some(purged)) => Some(format!("{done}; {purged}")),
+                            (done, purged) => done.or(purged),
+                        })
+                    }
+                    other => other,
+                };
+                (slug, outcome)
+            }
             Step::Retire { slug, to } => (slug, retire(&paths.teams, slug, to)),
         };
         match outcome {
@@ -1017,6 +1029,30 @@ fn settle_store(repo: &Path, slug: &str, store_init: &Path) -> Result<Option<Str
         (true, true) => Some(format!("{GITATTRIBUTES_PATH} brought to the engine's text")),
         (true, false) => None,
     })
+}
+
+/// Takes a team's sessions off its store once they are switched off: `main` rewritten to its memory
+/// and the host's own files, the generation raised, the old history expired and packed away — git
+/// gives the room back only then. Says what it did, if anything.
+fn purge_sessions(repo: &Path, slug: &str) -> Result<Option<String>, String> {
+    let git = GitMemories::new(repo.to_path_buf(), APPLY_WRITER.to_owned());
+    let Some(generation) = git.rewrite_keeping(
+        crate::purge::kept_without_sessions,
+        &format!("vibememory: sessions of team {slug} switched off"),
+    )?
+    else {
+        return Ok(None);
+    };
+    git_memories::run(
+        repo,
+        &["reflog", "expire", "--expire=now", "--all"],
+        None,
+        &[],
+    )?;
+    git_memories::run(repo, &["gc", "--prune=now", "--quiet"], None, &[])?;
+    Ok(Some(format!(
+        "sessions switched off: history rewritten to memory, generation {generation}"
+    )))
 }
 
 /// Renames a deleted team's store; nothing of it is removed.

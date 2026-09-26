@@ -23,6 +23,9 @@ pub enum Remedy {
     Reclone,
     /// The host itself is short of something for now: the next tick simply tries again.
     Transient,
+    /// The team's sessions are switched off: its store is memory only now, written by the memory
+    /// server alone and exported to its owner and admins. The machine leaves the store.
+    SessionsOff,
 }
 
 /// The prefix git puts before every line the host writes.
@@ -62,6 +65,7 @@ pub fn remedy(code: &str) -> Remedy {
             Remedy::Reclone
         }
         "diskReserve" | "hostFailure" | "snapshotUnusable" => Remedy::Transient,
+        "pushDenied" | "exportDenied" => Remedy::SessionsOff,
         _ => Remedy::Cabinet,
     }
 }

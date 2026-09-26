@@ -17,6 +17,7 @@ fn remedy_name(remedy: Remedy) -> &'static str {
         Remedy::Cabinet => "cabinet",
         Remedy::Reclone => "reclone",
         Remedy::Transient => "transient",
+        Remedy::SessionsOff => "sessionsOff",
     }
 }
 

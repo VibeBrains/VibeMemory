@@ -1168,3 +1168,80 @@ fn an_archive_holds_the_journal_and_the_memory_as_files_and_waits_for_the_cabine
     assert!(!run(&["export"], &host, &[], None).status.success());
     assert!(!exports.join(format!("{ghost}.zip")).exists());
 }
+
+/// A team whose sessions were switched off keeps its memory alone: the transcripts and the
+/// machines' directories leave `main` and its history, the generation rises once, and applying the
+/// same snapshot again changes nothing.
+#[test]
+fn switching_sessions_off_leaves_the_memory_and_frees_the_rest() {
+    let host = host("purge");
+    let repo = host.teams.join("vibebrains.git");
+    bare_with(
+        &repo,
+        &[
+            (".gitattributes", "* merge=union\n"),
+            ("projects/App/memory.jsonl", "{\"id\":\"m1\"}\n"),
+            ("projects/App/memory/MEMORY.md", "index\n"),
+            (
+                "projects/App/11111111-1111-4111-8111-111111111111.jsonl",
+                "a session nobody needs any more\n",
+            ),
+            ("machines/alice-laptop/live.json", "{}"),
+        ],
+    );
+    let session = bare(
+        &repo,
+        &[
+            "rev-parse",
+            "main:projects/App/11111111-1111-4111-8111-111111111111.jsonl",
+        ],
+    );
+
+    let applied = apply(&host);
+    assert!(
+        applied.status.success(),
+        "access-apply: {}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    let tree = bare(&repo, &["ls-tree", "-r", "--name-only", "main"]);
+    assert_eq!(
+        tree.lines().collect::<Vec<_>>(),
+        [
+            ".gitattributes",
+            ".vibememory-generation",
+            "projects/App/memory.jsonl",
+            "projects/App/memory/MEMORY.md"
+        ]
+    );
+    assert_eq!(
+        bare(&repo, &["cat-file", "blob", "main:.vibememory-generation"]),
+        "1"
+    );
+    assert_eq!(
+        bare(&repo, &["rev-list", "--count", "main"]),
+        "1",
+        "no history behind it"
+    );
+    let gone = Command::new("git")
+        .args([
+            "--git-dir",
+            repo.to_str().expect("utf-8"),
+            "cat-file",
+            "-e",
+            &session,
+        ])
+        .status()
+        .expect("git");
+    assert!(
+        !gone.success(),
+        "the session's object is gone from the store"
+    );
+
+    let head = bare(&repo, &["rev-parse", "main"]);
+    assert!(apply(&host).status.success());
+    assert_eq!(
+        bare(&repo, &["rev-parse", "main"]),
+        head,
+        "a second application changes nothing"
+    );
+}

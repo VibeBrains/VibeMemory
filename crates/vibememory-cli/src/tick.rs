@@ -54,6 +54,9 @@ pub enum StoreCycle {
     Paused,
     /// Tried and worked, and the run before the failures was long enough ago to say so.
     Recovered,
+    /// The team's sessions are switched off — the host refused this machine as a memory team does,
+    /// or rewrote the store to a new generation. Nothing was merged; the caller leaves the store.
+    SessionsOff,
 }
 
 /// What one tick did, in the order it did it.
@@ -201,9 +204,13 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
     let mut result = Ticked::default();
     let allowed = state.store_cycle_allowed();
     if allowed {
-        fetch_and_merge(store, machine_id, &mut result);
+        fetch_and_merge(store, machine_id, !personal, &mut result);
     } else {
         result.store_cycle = StoreCycle::Paused;
+    }
+    // the team closed its sessions: nothing more is done in a store this machine is about to leave
+    if result.store_cycle == StoreCycle::SessionsOff {
+        return result;
     }
 
     let live = live_sessions(store, machine_id);
@@ -320,11 +327,22 @@ fn push_or_pause(
             result.pushed = pushed;
             result.pause = None;
         }
+        Err(problem) if refused_as_memory_team(&problem) => {
+            result.store_cycle = StoreCycle::SessionsOff;
+        }
         Err(problem) => match paused_by_host(&problem, stamp, recheck_at) {
             Some(pause) => result.pause = Some(pause),
             None => result.problems.push(problem),
         },
     }
+}
+
+/// Whether a refusal says the team is a memory team now: its sessions were switched off.
+fn refused_as_memory_team(problem: &str) -> bool {
+    vibememory_core::push_refusal::parse(problem).is_some_and(|refusal| {
+        vibememory_core::push_refusal::remedy(&refusal.code)
+            == vibememory_core::push_refusal::Remedy::SessionsOff
+    })
 }
 
 /// A refusal of the host that pauses the store, rather than a failure the back-off counts: the
@@ -380,16 +398,39 @@ fn exchange_personal(
 }
 
 /// Fetches from the remote. No remote at all is not a problem: a store can be local for a while.
-fn fetch(store: &Path) -> bool {
+fn fetch(store: &Path) -> Result<bool, String> {
     if !has_remote(store) {
-        return false;
+        return Ok(false);
     }
     // A refusal here is the network, a locked repository, a rejected key: all of them mean
-    // "later", and the tick runs again in two minutes.
-    matches!(
-        git::run_with_timeout(git::command(store, &["fetch", "--quiet", REMOTE]), TIMEOUT),
-        Ok(Some(_))
-    )
+    // "later", and the tick runs again in two minutes — except a team's host saying the team's
+    // sessions are off, which the caller reads from the words
+    match git::run_capturing(git::command(store, &["fetch", "--quiet", REMOTE]), TIMEOUT) {
+        Ok(Ok(_)) => Ok(true),
+        Ok(Err(said)) => Err(said),
+        Err(problem) => Err(problem),
+    }
+}
+
+/// The generation a commit's tree names, if any.
+fn generation_at(store: &Path, commit: &str) -> Option<String> {
+    let spec = format!("{commit}:{}", vibememory_core::team_store::GENERATION_FILE);
+    git::run_with_timeout(git::command(store, &["show", &spec]), TIMEOUT)
+        .ok()
+        .flatten()
+}
+
+/// Whether what a team's host said, or what it now holds, means the team's sessions are off: a
+/// refusal of a memory team, or a store the host rewrote to a generation this clone is not of.
+fn sessions_switched_off(store: &Path, fetched: &Result<bool, String>) -> bool {
+    match fetched {
+        Err(said) => refused_as_memory_team(said),
+        Ok(true) => {
+            let theirs = generation_at(store, &format!("{REMOTE}/{BRANCH}"));
+            theirs.is_some() && theirs != generation_at(store, "HEAD")
+        }
+        Ok(false) => false,
+    }
 }
 
 /// What the merge step decided.
@@ -504,8 +545,14 @@ fn take_real_directories(
 /// does locally (putting back a vanished transcript, the heartbeat, projecting memory) runs on
 /// every tick regardless. A rail that stopped the work which *saves* data would be worse than the
 /// failure it is backing off from.
-fn fetch_and_merge(store: &Path, machine_id: &str, result: &mut Ticked) {
-    result.fetched = fetch(store);
+fn fetch_and_merge(store: &Path, machine_id: &str, team: bool, result: &mut Ticked) {
+    let fetched = fetch(store);
+    result.fetched = matches!(fetched, Ok(true));
+    // a team store rewritten or closed to this machine is left, never merged into
+    if team && sessions_switched_off(store, &fetched) {
+        result.store_cycle = StoreCycle::SessionsOff;
+        return;
+    }
     match merge_if_safe(store, machine_id) {
         Ok(Merge::Merged) => result.merged = true,
         Ok(Merge::HeldBack { sessions }) => result.held_back = sessions,

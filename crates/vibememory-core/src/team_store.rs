@@ -11,6 +11,11 @@ use crate::naming::is_slug;
 /// The version of the record this engine writes and reads.
 pub const RECORD_VERSION: u64 = 1;
 
+/// The file of a store's generation: a number the host raises each time it rewrites the store's
+/// history — when the team's sessions are switched off — so a machine holding an older clone knows
+/// it must not merge into the new one.
+pub const GENERATION_FILE: &str = ".vibememory-generation";
+
 /// The mode of a team whose sessions are on: the only one a machine clones the store of.
 pub const SYNC_MODE: &str = "sync";
 

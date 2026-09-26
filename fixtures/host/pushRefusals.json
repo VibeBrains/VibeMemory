@@ -89,6 +89,30 @@
       "note": "Only a code of letters and digits counts: a line of prose after the mark is not one.",
       "stderr": "remote: vibememory: something went wrong\nTo vibememory.ru:teams/acme.git\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs to 'vibememory.ru:teams/acme.git'\n",
       "expect": null
+    },
+    {
+      "id": "pushDenied",
+      "provenance": "computed",
+      "note": "A team whose sessions were switched off is a memory team: the host takes no push from a machine, which leaves the store.",
+      "stderr": "remote: vibememory: pushDenied\nremote: acme is a memory team: only the memory server writes its store\nTo vibememory.ru:teams/acme.git\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs to 'vibememory.ru:teams/acme.git'\n",
+      "expect": {
+        "code": "pushDenied",
+        "lines": [
+          "acme is a memory team: only the memory server writes its store"
+        ],
+        "remedy": "sessionsOff"
+      }
+    },
+    {
+      "id": "exportDenied",
+      "provenance": "computed",
+      "note": "A member's fetch of a memory team is refused the same way: sessions off, the machine leaves.",
+      "stderr": "vibememory: exportDenied\nacme is a memory team: only its owner or an admin exports its store\nfatal: Could not read from remote repository.\n",
+      "expect": {
+        "code": "exportDenied",
+        "lines": [],
+        "remedy": "sessionsOff"
+      }
     }
   ]
 }
