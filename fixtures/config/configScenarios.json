@@ -142,6 +142,101 @@
       "expect": {
         "error": "missing"
       }
+    },
+    {
+      "id": "team-store",
+      "provenance": "computed",
+      "note": "Машина в личном сторе и в одной команде: раздел stores, как его пишет connect.",
+      "text": "{\"machineId\": \"mac-main\", \"remote\": \"r\", \"stores\": {\"acme\": {\"remote\": \"vm-acme\", \"cabinet\": \"https://app.example.com\", \"member\": \"alice\", \"storeName\": \"alice-mac\", \"cwd\": [\"/Users/o/work/acme/**\"]}}}",
+      "expect": {
+        "ok": {
+          "machineId": "mac-main",
+          "roots": {},
+          "desktopStore": "auto",
+          "stores": {
+            "acme": "alice-mac"
+          }
+        }
+      }
+    },
+    {
+      "id": "team-store-no-cwd",
+      "provenance": "computed",
+      "note": "Команда без проектов на этой машине: cwd по умолчанию пуст, сессии остаются личными.",
+      "text": "{\"machineId\": \"mac-main\", \"remote\": \"r\", \"stores\": {\"acme\": {\"remote\": \"vm-acme\", \"cabinet\": \"https://app.example.com\", \"member\": \"alice\", \"storeName\": \"alice-mac\"}}}",
+      "expect": {
+        "ok": {
+          "machineId": "mac-main",
+          "roots": {},
+          "desktopStore": "auto",
+          "stores": {
+            "acme": "alice-mac"
+          }
+        }
+      }
+    },
+    {
+      "id": "team-store-empty-remote",
+      "provenance": "computed",
+      "note": "Пустой remote — push в никуда на каждом тике: отказ при старте.",
+      "text": "{\"machineId\": \"mac-main\", \"remote\": \"r\", \"stores\": {\"acme\": {\"remote\": \" \", \"cabinet\": \"https://app.example.com\", \"member\": \"alice\", \"storeName\": \"alice-mac\", \"cwd\": [\"/Users/o/work/acme/**\"]}}}",
+      "expect": {
+        "error": "store"
+      }
+    },
+    {
+      "id": "team-store-member-not-slug",
+      "provenance": "computed",
+      "note": "member подписывает версии памяти и должен быть слагом, как ник в кабинете.",
+      "text": "{\"machineId\": \"mac-main\", \"remote\": \"r\", \"stores\": {\"acme\": {\"remote\": \"vm-acme\", \"cabinet\": \"https://app.example.com\", \"member\": \"Alice Smith\", \"storeName\": \"alice-mac\", \"cwd\": [\"/Users/o/work/acme/**\"]}}}",
+      "expect": {
+        "error": "store"
+      }
+    },
+    {
+      "id": "team-store-name-not-slug",
+      "provenance": "computed",
+      "note": "storeName — каталог machines/<storeName>/ на хосте: не слаг хост отвергнет на каждом push.",
+      "text": "{\"machineId\": \"mac-main\", \"remote\": \"r\", \"stores\": {\"acme\": {\"remote\": \"vm-acme\", \"cabinet\": \"https://app.example.com\", \"member\": \"alice\", \"storeName\": \"../alice\", \"cwd\": [\"/Users/o/work/acme/**\"]}}}",
+      "expect": {
+        "error": "store"
+      }
+    },
+    {
+      "id": "team-store-id-not-slug",
+      "provenance": "computed",
+      "note": "Идентификатор стора — каталог на диске и репозиторий на хосте: только слаг.",
+      "text": "{\"machineId\": \"mac-main\", \"remote\": \"r\", \"stores\": {\"Acme Team\": {\"remote\": \"vm-acme\", \"cabinet\": \"https://app.example.com\", \"member\": \"alice\", \"storeName\": \"alice-mac\", \"cwd\": [\"/Users/o/work/acme/**\"]}}}",
+      "expect": {
+        "error": "naming"
+      }
+    },
+    {
+      "id": "team-store-relative-cwd",
+      "provenance": "computed",
+      "note": "Шаблон cwd команды в том же диалекте, что nameOverrides: относительный путь отвергается.",
+      "text": "{\"machineId\": \"mac-main\", \"remote\": \"r\", \"stores\": {\"acme\": {\"remote\": \"vm-acme\", \"cabinet\": \"https://app.example.com\", \"member\": \"alice\", \"storeName\": \"alice-mac\", \"cwd\": [\"work/acme\"]}}}",
+      "expect": {
+        "error": "naming"
+      }
+    },
+    {
+      "id": "team-store-unknown-key",
+      "provenance": "computed",
+      "note": "Опечатка в ключе стора — правило, которого нет: отказ, как для корня конфига.",
+      "text": "{\"machineId\": \"mac-main\", \"remote\": \"r\", \"stores\": {\"acme\": {\"remote\": \"vm-acme\", \"cabinet\": \"https://app.example.com\", \"member\": \"alice\", \"storeName\": \"alice-mac\", \"cwd\": [\"/Users/o/work/acme/**\"], \"storname\": \"x\"}}}",
+      "expect": {
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "team-store-empty-cabinet",
+      "provenance": "computed",
+      "note": "Без адреса кабинета connect --refresh и doctor не знают, куда вести при паузе стора.",
+      "text": "{\"machineId\": \"mac-main\", \"remote\": \"r\", \"stores\": {\"acme\": {\"remote\": \"vm-acme\", \"cabinet\": \"\", \"member\": \"alice\", \"storeName\": \"alice-mac\"}}}",
+      "expect": {
+        "error": "store"
+      }
     }
   ]
 }

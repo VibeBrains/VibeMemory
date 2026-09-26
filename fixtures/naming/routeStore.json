@@ -1,0 +1,75 @@
+{
+  "description": "StoreRoutes::compile + route: which store a working directory belongs to. `ok` is `{ \"team\": id }` for a team store or `{ \"personal\": true }` for the personal store.",
+  "cases": [
+    {
+      "id": "noStores",
+      "provenance": "computed",
+      "note": "Without a stores section every session stays in the personal store.",
+      "input": { "cwd": "/Users/o/work/app", "syntax": "posix", "stores": {} },
+      "expect": { "ok": { "personal": true } }
+    },
+    {
+      "id": "subtreeMatches",
+      "provenance": "computed",
+      "note": "A subtree pattern takes the directory itself and everything under it.",
+      "input": { "cwd": "/Users/o/work/acme/api", "syntax": "posix", "stores": { "acme": ["/Users/o/work/acme/**"] } },
+      "expect": { "ok": { "team": "acme" } }
+    },
+    {
+      "id": "literalIsExact",
+      "provenance": "computed",
+      "note": "A literal pattern names one directory: its child stays personal, as with nameOverrides.",
+      "input": { "cwd": "/Users/o/work/acme/api", "syntax": "posix", "stores": { "acme": ["/Users/o/work/acme"] } },
+      "expect": { "ok": { "personal": true } }
+    },
+    {
+      "id": "otherProjectPersonal",
+      "provenance": "computed",
+      "note": "A directory outside every pattern stays in the personal store.",
+      "input": { "cwd": "/Users/o/private/diary", "syntax": "posix", "stores": { "acme": ["/Users/o/work/acme/**"] } },
+      "expect": { "ok": { "personal": true } }
+    },
+    {
+      "id": "twoPatternsOneStore",
+      "provenance": "computed",
+      "note": "Two patterns of the same store matching one directory are not ambiguous.",
+      "input": { "cwd": "/Users/o/work/acme/api", "syntax": "posix", "stores": { "acme": ["/Users/o/work/**", "/Users/o/work/acme/**"] } },
+      "expect": { "ok": { "team": "acme" } }
+    },
+    {
+      "id": "twoStoresAmbiguous",
+      "provenance": "computed",
+      "note": "Patterns of two stores matching one directory: a session is never split, the owner narrows a pattern.",
+      "input": { "cwd": "/Users/o/work/acme/api", "syntax": "posix", "stores": { "acme": ["/Users/o/work/acme/**"], "beta": ["/Users/o/work/**"] } },
+      "expect": { "error": "ambiguousStore" }
+    },
+    {
+      "id": "windowsCaseInsensitive",
+      "provenance": "unverified",
+      "note": "A Windows pattern matches without regard to case, as ignoreCwd does; not yet run on a Windows machine (stage 4).",
+      "input": { "cwd": "d:/Work/Acme/api", "syntax": "windows", "stores": { "acme": ["D:/work/acme/**"] } },
+      "expect": { "ok": { "team": "acme" } }
+    },
+    {
+      "id": "relativeCwd",
+      "provenance": "computed",
+      "note": "A relative working directory anchors nothing.",
+      "input": { "cwd": "work/acme", "syntax": "posix", "stores": { "acme": ["/Users/o/work/acme/**"] } },
+      "expect": { "error": "relativeCwd" }
+    },
+    {
+      "id": "storeIdNotSlug",
+      "provenance": "computed",
+      "note": "A store id names a directory and a host repository: it must be a slug.",
+      "input": { "cwd": "/Users/o/work/acme", "syntax": "posix", "stores": { "Acme/..": ["/Users/o/work/acme"] } },
+      "expect": { "error": "configInvalid" }
+    },
+    {
+      "id": "relativePattern",
+      "provenance": "computed",
+      "note": "A pattern must be absolute, as in nameOverrides.",
+      "input": { "cwd": "/Users/o/work/acme", "syntax": "posix", "stores": { "acme": ["work/acme"] } },
+      "expect": { "error": "configInvalid" }
+    }
+  ]
+}

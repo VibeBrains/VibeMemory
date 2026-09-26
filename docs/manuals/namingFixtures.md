@@ -1,6 +1,6 @@
 # Как работать с фикстурами имён (`fixtures/naming/`)
 
-Все ожидания о кодировке `projects/<enc>` и об имени стора живут в четырёх JSON-файлах;
+Все ожидания о кодировке `projects/<enc>`, об имени стора и о выборе стора команды живут в JSON-файлах;
 драйвер — `crates/vibememory-core/tests/naming_fixtures.rs`. Новое правило или новый край —
 это новый кейс, а не новый unit-тест с литеральным путём.
 
@@ -12,6 +12,7 @@
 | `encodeCwd.json` | `encode_cwd` | `{ "cwd" }` | строка enc |
 | `resolveStoreName.json` | `resolve_store_name` | `{ "cwd", "syntax", "projectDirName"?, "git"?, "config"?, "existing"? }` | `{ "named": { "name", "source" } }` или `{ "ignored": { "pattern" \| "projectDirName" } }` |
 | `namingConfig.json` | `NamingConfig::from_raw` | `{ "config": { "nameOverrides"?, "ignoreCwd"? } }` | `true` |
+| `routeStore.json` | `StoreRoutes::compile` + `route` | `{ "cwd", "syntax", "stores": { "<id>": [шаблон] } }` | `{ "team": id }` или `{ "personal": true }` |
 
 `git` в `resolveStoreName.json` — запись `GitProbe`:
 `{ "ran": { "commonDir": "<stdout или null>", "dotGit": "notFound" | { "found": { "dir": { "path" } } } | { "found": { "file": { "path", "content" } } } | { "unknown": { "reason" } } } }`
@@ -39,7 +40,8 @@
 - Ошибка сравнивается по коду (`NamingError::code()`), не по тексту. Коды:
   `malformedTranscriptPath`, `invalidEncSlug`, `relativeCwd`, `rootCwd`, `gitUnavailable`,
   `dotGitProbeFailed`, `gitRefused`, `gitLayoutMismatch`, `unrecognizedGitLayout`, `emptyRepoName`,
-  `malformedDotGitFile`, `invalidStoreName`, `storeNameCollision`, `ambiguousOverride`, `configInvalid`.
+  `malformedDotGitFile`, `invalidStoreName`, `storeNameCollision`, `ambiguousOverride`, `ambiguousStore`,
+  `configInvalid`.
 - Не-ASCII — только `\u`-экранированием (`"caf\u00e9"`, `"cafe\u0301"`): NFC и NFD должны быть
   различимы глазами. Session id — синтетические UUID (кроме изолированных прогонов CLI, где
   реальный id ничего не идентифицирует); содержимого транскриптов в фикстурах нет.

@@ -101,6 +101,14 @@ pub enum NamingError {
         /// The matching patterns, in configuration order.
         patterns: Vec<String>,
     },
+    /// `stores.<id>.cwd` patterns of more than one store match the working directory.
+    #[error("working directory {cwd} matches the cwd patterns of several stores: {stores:?}")]
+    AmbiguousStore {
+        /// The working directory.
+        cwd: String,
+        /// The matching stores, in configuration order.
+        stores: Vec<String>,
+    },
     /// `config.json` holds an invalid naming rule.
     #[error("config.json {field}: {reason}")]
     ConfigInvalid {
@@ -130,6 +138,7 @@ impl NamingError {
             Self::InvalidStoreName { .. } => "invalidStoreName",
             Self::StoreNameCollision { .. } => "storeNameCollision",
             Self::AmbiguousOverride { .. } => "ambiguousOverride",
+            Self::AmbiguousStore { .. } => "ambiguousStore",
             Self::ConfigInvalid { .. } => "configInvalid",
         }
     }

@@ -63,6 +63,12 @@ pub const LAUNCHD_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 /// The files of the config directory the store keeps a copy of.
 pub const MANAGED_FILES: &[&str] = &["CLAUDE.md", "settings.json"];
 
+/// The clone's directory name inside its state directory, the same for every store.
+const STORE_DIR: &str = "store";
+
+/// The directory under `<engine>` that holds one state directory per team store.
+const TEAM_STORES_DIR: &str = "stores";
+
 /// Where everything lives on this machine.
 #[derive(Debug, Clone)]
 pub struct Layout {
@@ -76,7 +82,24 @@ impl Layout {
     /// The store clone: `<engine>/store`.
     #[must_use]
     pub fn store(&self) -> PathBuf {
-        self.engine_dir.join("store")
+        self.engine_dir.join(STORE_DIR)
+    }
+
+    /// The state directory of a team store: `<engine>/stores/<id>`. It holds the clone and the
+    /// team's own tick state, quarantine and notes, as `<engine>` does for the personal store —
+    /// so a pause or a failure of one team never counts against another or the personal store.
+    /// `id` is a slug: the configuration refuses anything else.
+    #[must_use]
+    pub fn team_state_dir(&self, id: &str) -> PathBuf {
+        self.engine_dir.join(TEAM_STORES_DIR).join(id)
+    }
+
+    /// The clone of a team store: `<engine>/stores/<id>/store`. The clone's parent is its state
+    /// directory, the same relation the personal clone has to `<engine>`: every tool that finds
+    /// its state as the clone's parent works for both.
+    #[must_use]
+    pub fn team_store(&self, id: &str) -> PathBuf {
+        self.team_state_dir(id).join(STORE_DIR)
     }
 
     /// This machine's layout, from the environment.

@@ -15,8 +15,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use vibememory_core::naming::{
     GitProbe, IgnoreReason, NamingConfig, NamingError, NamingInput, PathSyntax, RawNamingConfig,
-    Resolution, StoreName, canonical_cwd, conflict_copies, enc_from_transcript_path, encode_cwd,
-    resolve_store_name,
+    Resolution, StoreName, StoreRoutes, canonical_cwd, conflict_copies, enc_from_transcript_path,
+    encode_cwd, resolve_store_name,
 };
 
 const ENC_FROM_TRANSCRIPT_PATH: &str =
@@ -26,6 +26,7 @@ const RESOLVE_STORE_NAME: &str = include_str!("../../../fixtures/naming/resolveS
 const NAMING_CONFIG: &str = include_str!("../../../fixtures/naming/namingConfig.json");
 const CANONICAL_CWD: &str = include_str!("../../../fixtures/naming/canonicalCwd.json");
 const CONFLICT_COPIES: &str = include_str!("../../../fixtures/naming/conflictCopies.json");
+const ROUTE_STORE: &str = include_str!("../../../fixtures/naming/routeStore.json");
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -105,6 +106,16 @@ struct CanonicalInput {
 #[serde(deny_unknown_fields)]
 struct NameInput {
     name: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RouteInput {
+    cwd: String,
+    syntax: PathSyntax,
+    /// Store id to its patterns; read sorted by id, which the cases may rely on: whether a directory
+    /// is ambiguous does not depend on the order of the stores
+    stores: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -280,6 +291,23 @@ fn conflict_copies_fixtures() {
 fn naming_config_fixtures() {
     let failures = check("namingConfig.json", NAMING_CONFIG, |input: &ConfigInput| {
         NamingConfig::from_raw(&input.config).map(|_| json!(true))
+    });
+    assert_no_failures(&failures);
+}
+
+#[test]
+fn route_store_fixtures() {
+    let failures = check("routeStore.json", ROUTE_STORE, |input: &RouteInput| {
+        let stores: Vec<(String, Vec<String>)> = input
+            .stores
+            .iter()
+            .map(|(id, patterns)| (id.clone(), patterns.clone()))
+            .collect();
+        let routes = StoreRoutes::compile(&stores)?;
+        Ok(match routes.route(&input.cwd, input.syntax)? {
+            Some(team) => json!({ "team": team }),
+            None => json!({ "personal": true }),
+        })
     });
     assert_no_failures(&failures);
 }

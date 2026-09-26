@@ -12,7 +12,9 @@
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
-use vibememory_core::naming::{NamingConfig, NamingError, PathSyntax, RawNamingConfig};
+use vibememory_core::naming::{
+    NamingConfig, NamingError, PathSyntax, RawNamingConfig, StoreRoutes, is_slug,
+};
 
 /// Where the store of Desktop descriptors is. Written as a string: `"auto"`, or the directory
 /// itself when the search would guess wrong.
@@ -40,6 +42,27 @@ impl From<String> for DesktopStore {
     }
 }
 
+/// A team store this machine takes part in, as `connect` writes it: `stores.<id>` of the file.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TeamStore {
+    /// The git remote of the team's repository on the host — an alias of this machine's
+    /// `~/.ssh/config` block, so the key and `known_hosts` of the team are used and nothing else.
+    pub remote: String,
+    /// The cabinet's address: where `connect --refresh` asks, and what `doctor` names when the
+    /// store is paused.
+    pub cabinet: String,
+    /// The member's handle: it signs every memory version this machine writes into the team.
+    pub member: String,
+    /// This machine's name in the team: its directory `machines/<storeName>/`, the only one of
+    /// that tree the host lets it push.
+    pub store_name: String,
+    /// Working directories whose sessions and memory belong to the team, in the dialect of
+    /// `nameOverrides`: a literal path matches exactly, a subtree needs `/**`.
+    #[serde(default)]
+    pub cwd: Vec<String>,
+}
+
 /// The configuration exactly as written, before validation.
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields, default)]
@@ -62,6 +85,8 @@ pub struct RawConfig {
     /// default; it is the owner's policy, because one person forgets single sessions and another
     /// drops a whole project.
     pub max_deletions_per_tick: Option<usize>,
+    /// Team stores by id — the team's slug. Absent on a machine that uses its personal store only.
+    pub stores: BTreeMap<String, TeamStore>,
     /// `nameOverrides` and `ignoreCwd`, validated by the core.
     #[serde(flatten)]
     pub naming: RawNamingConfig,
@@ -87,6 +112,16 @@ pub enum ConfigError {
         name: String,
         /// What was written.
         path: String,
+    },
+    /// A field of a team store is empty or not a slug where it names a directory.
+    #[error("config.json: stores.{store}.{field} {reason}")]
+    Store {
+        /// The store's id.
+        store: String,
+        /// The field's name as written in the file.
+        field: &'static str,
+        /// What is wrong with it.
+        reason: &'static str,
     },
     /// The naming rules did not validate.
     #[error(transparent)]
@@ -115,6 +150,10 @@ pub struct Config {
     pub naming: NamingConfig,
     /// How many transcripts one tick may remove before holding.
     pub max_deletions_per_tick: usize,
+    /// Team stores by id.
+    pub stores: BTreeMap<String, TeamStore>,
+    /// Which store a working directory belongs to, compiled from `stores.<id>.cwd`.
+    pub routes: StoreRoutes,
 }
 
 impl Config {
@@ -162,6 +201,15 @@ impl Config {
                 field: "signingIdentity",
             });
         }
+        for (id, store) in &raw.stores {
+            check_store(id, store)?;
+        }
+        let routes = StoreRoutes::compile(
+            &raw.stores
+                .iter()
+                .map(|(id, store)| (id.clone(), store.cwd.clone()))
+                .collect::<Vec<_>>(),
+        )?;
         let mut roots = BTreeMap::new();
         for (name, path) in raw.roots {
             let canonical = vibememory_core::naming::canonical_cwd(&path, syntax);
@@ -182,8 +230,34 @@ impl Config {
             max_deletions_per_tick: raw
                 .max_deletions_per_tick
                 .unwrap_or(crate::guard::DEFAULT_MAX_DELETIONS_PER_TICK),
+            stores: raw.stores,
+            routes,
         })
     }
+}
+
+/// A team store names a remote to push to, a cabinet to ask and two slugs that become a signature
+/// and a directory on the host: an empty value would push nowhere, a non-slug would be refused by
+/// the host on every push — both are the owner's typo, told at start rather than every tick.
+fn check_store(id: &str, store: &TeamStore) -> Result<(), ConfigError> {
+    let problem = |field: &'static str, reason: &'static str| ConfigError::Store {
+        store: id.to_owned(),
+        field,
+        reason,
+    };
+    if store.remote.trim().is_empty() {
+        return Err(problem("remote", "is required"));
+    }
+    if store.cabinet.trim().is_empty() {
+        return Err(problem("cabinet", "is required"));
+    }
+    if !is_slug(&store.member) {
+        return Err(problem("member", "must be a slug"));
+    }
+    if !is_slug(&store.store_name) {
+        return Err(problem("storeName", "must be a slug"));
+    }
+    Ok(())
 }
 
 /// Whether a canonical path names a place rather than a direction: `/a`, `D:/a`, `//server/share`.
