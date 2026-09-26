@@ -13,6 +13,7 @@ readonly DEFAULT_APP_DOMAIN=app.vibememory.ru
 readonly DEFAULT_MCP_PORT=8787
 readonly DEFAULT_CABINET_PORT=3000
 readonly RELEASES=/srv/vibememory/releases
+readonly SITE=/srv/vibememory/site
 # A lost SYN is retried instead of failing the run: the path to the host drops a connection now and
 # then, and every step here is safe to repeat.
 readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=4)
@@ -50,7 +51,7 @@ done
 
 rendered=$(sed -e "s|{{DOMAIN}}|$domain|g" -e "s|{{APP_DOMAIN}}|$appDomain|g" \
   -e "s|{{MCP_PORT}}|$mcpPort|g" -e "s|{{CABINET_PORT}}|$cabinetPort|g" \
-  -e "s|{{RELEASES}}|$RELEASES|g" "$TEMPLATE")
+  -e "s|{{RELEASES}}|$RELEASES|g" -e "s|{{SITE}}|$SITE|g" "$TEMPLATE")
 case "$rendered" in *'{{'*) fail "в шаблоне осталась неподставленная переменная" ;; esac
 
 printf '%s\n' "$rendered" | ssh "${SSH_OPTIONS[@]}" "$sshAlias" "bash -c $(printf '%q' '
@@ -61,6 +62,7 @@ cat > "$candidate"
 command -v caddy >/dev/null || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq caddy >/dev/null
 # the releases directory exists before Caddy serves it, even if empty
 sudo test -d /srv/vibememory/releases || sudo install -d -o root -g root -m 755 /srv/vibememory/releases
+sudo test -d /srv/vibememory/site || sudo install -d -o root -g root -m 755 /srv/vibememory/site
 caddyfile=/etc/caddy/Caddyfile
 if sudo cmp -s "$candidate" "$caddyfile"; then
   echo "Caddy: без изменений ($(systemctl is-active caddy))"
