@@ -138,6 +138,19 @@ fn link_of(setup: &Setup, cwd: &str) -> Option<PathBuf> {
     .ok()
 }
 
+/// The files git tracks in a clone.
+fn tracked(clone: &Path) -> Vec<String> {
+    let output = std::process::Command::new("git")
+        .args(["ls-files"])
+        .current_dir(clone)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
 #[test]
 fn each_store_takes_in_only_its_own_projects() {
     let temp = TempDir::new("tick-teams-routing");
@@ -177,6 +190,38 @@ fn each_store_takes_in_only_its_own_projects() {
         moved.is_file(),
         "the team's transcript is in the team's clone"
     );
+
+    // the session from before the project went to the team stays on this machine: in the clone
+    // for `--resume`, out of git
+    let clone = fs::canonicalize(setup.engine.join("stores/acme/store")).unwrap();
+    let old = format!(
+        "projects/{}/{TEAM_SESSION}.jsonl",
+        linked.file_name().unwrap().to_string_lossy()
+    );
+    assert!(vibememory_cli::local_only::is_local(&clone, &old));
+    assert!(
+        tracked(&clone).iter().all(|path| path != &old),
+        "{:?}",
+        tracked(&clone)
+    );
+
+    // a session started after that is the team's
+    let new = format!(
+        "projects/{}/33333333-3333-4333-8333-333333333333.jsonl",
+        linked.file_name().unwrap().to_string_lossy()
+    );
+    fs::write(
+        clone.join(&new),
+        format!(
+            "{}\n",
+            serde_json::json!({ "uuid": "n1", "cwd": setup.team_cwd })
+        ),
+    )
+    .unwrap();
+    let later = tick(&setup, Some("acme"));
+    assert!(later.problems.is_empty(), "{later:?}");
+    assert!(tracked(&clone).contains(&new), "{:?}", tracked(&clone));
+    assert!(!tracked(&clone).contains(&old));
 
     // a second personal run leaves the team's project where it is
     let again = tick(&setup, None);

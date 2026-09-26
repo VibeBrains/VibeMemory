@@ -64,11 +64,11 @@ fn stdin_that_cannot_be_read_is_named_not_guessed() {
 fn a_missing_link_is_created_and_points_into_the_store() {
     let temp = TempDir::new("hook-link");
     let layout = layout(&temp);
-    let decision = decide(&layout, &enc(), Some(&name()), None);
+    let decision = decide(&layout, &layout.store(), &enc(), Some(&name()), None);
     assert!(matches!(decision, Decision::Link { .. }));
     assert_eq!(decision.additional_context(), None, "silence is normal");
 
-    perform(&layout, &decision).expect("perform");
+    perform(&layout, &layout.store(), &decision).expect("perform");
     assert_eq!(
         fs::read_link(link_path(&layout)).expect("read link"),
         layout.store().join("projects").join("Project")
@@ -88,12 +88,17 @@ fn a_missing_link_is_created_and_points_into_the_store() {
 fn an_existing_correct_link_is_left_alone_and_says_nothing() {
     let temp = TempDir::new("hook-already");
     let layout = layout(&temp);
-    perform(&layout, &decide(&layout, &enc(), Some(&name()), None)).expect("first");
+    perform(
+        &layout,
+        &layout.store(),
+        &decide(&layout, &layout.store(), &enc(), Some(&name()), None),
+    )
+    .expect("first");
 
-    let again = decide(&layout, &enc(), Some(&name()), None);
+    let again = decide(&layout, &layout.store(), &enc(), Some(&name()), None);
     assert!(matches!(again, Decision::AlreadyLinked { .. }));
     assert_eq!(again.additional_context(), None);
-    perform(&layout, &again).expect("second");
+    perform(&layout, &layout.store(), &again).expect("second");
     // Silence is not the same as learning nothing: this session's transcript proves the link, and
     // the proof has to be recorded even though there was nothing to create. A machine whose links
     // were all made by the migration otherwise never confirms one, and importing or repairing a
@@ -113,7 +118,7 @@ fn a_link_pointing_elsewhere_is_never_re_aimed() {
     fs::create_dir_all(link_path(&layout).parent().expect("parent")).expect("projects");
     support::link_dir(&elsewhere, &link_path(&layout));
 
-    let decision = decide(&layout, &enc(), Some(&name()), None);
+    let decision = decide(&layout, &layout.store(), &enc(), Some(&name()), None);
     let Decision::Disagreement { found, .. } = &decision else {
         panic!("expected a disagreement, got {decision:?}");
     };
@@ -131,7 +136,7 @@ fn a_link_pointing_elsewhere_is_never_re_aimed() {
         "it must not name a command that does not exist yet: {said}"
     );
 
-    perform(&layout, &decision).expect("perform");
+    perform(&layout, &layout.store(), &decision).expect("perform");
     assert_eq!(
         fs::read_link(link_path(&layout)).expect("read link"),
         elsewhere,
@@ -147,7 +152,7 @@ fn a_real_directory_with_transcripts_is_left_for_the_tick() {
     fs::create_dir_all(&real).expect("real dir");
     fs::write(real.join("old-session.jsonl"), b"{}\n").expect("transcript");
 
-    let decision = decide(&layout, &enc(), Some(&name()), None);
+    let decision = decide(&layout, &layout.store(), &enc(), Some(&name()), None);
     assert!(matches!(decision, Decision::ImportNeeded { .. }));
     assert!(
         decision
@@ -156,7 +161,7 @@ fn a_real_directory_with_transcripts_is_left_for_the_tick() {
             .contains("nothing is lost")
     );
 
-    perform(&layout, &decision).expect("perform");
+    perform(&layout, &layout.store(), &decision).expect("perform");
     assert!(
         real.join("old-session.jsonl").exists(),
         "a transcript nobody imported may not be destroyed"
@@ -176,9 +181,9 @@ fn an_empty_real_directory_becomes_a_link() {
     // the directory and a `memory` subdirectory, no transcript.
     fs::create_dir_all(real.join("memory")).expect("real dir");
 
-    let decision = decide(&layout, &enc(), Some(&name()), None);
+    let decision = decide(&layout, &layout.store(), &enc(), Some(&name()), None);
     assert!(matches!(decision, Decision::Link { .. }), "{decision:?}");
-    perform(&layout, &decision).expect("perform");
+    perform(&layout, &layout.store(), &decision).expect("perform");
     assert!(real.is_symlink(), "an empty directory may be replaced");
 }
 
@@ -186,10 +191,16 @@ fn an_empty_real_directory_becomes_a_link() {
 fn an_ignored_working_directory_produces_nothing() {
     let temp = TempDir::new("hook-ignored");
     let layout = layout(&temp);
-    let decision = decide(&layout, &enc(), None, Some("ignoreCwd matched /"));
+    let decision = decide(
+        &layout,
+        &layout.store(),
+        &enc(),
+        None,
+        Some("ignoreCwd matched /"),
+    );
     assert!(matches!(decision, Decision::Ignored { .. }));
     assert_eq!(decision.additional_context(), None);
-    perform(&layout, &decision).expect("perform");
+    perform(&layout, &layout.store(), &decision).expect("perform");
     assert!(
         !link_path(&layout).exists(),
         "an ignored directory gets no link and no store"

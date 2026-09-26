@@ -103,11 +103,12 @@ impl Decision {
 
 /// Decides what to do for one session, reading only what is already on this disk.
 ///
-/// `resolved` is the store name the core produced, or `None` when the core said to ignore this
-/// working directory.
+/// `store` is the clone the session belongs to — personal or a team's. `resolved` is the store
+/// name the core produced, or `None` when the core said to ignore this working directory.
 #[must_use]
 pub fn decide(
     layout: &Layout,
+    store: &Path,
     enc: &EncSlug,
     resolved: Option<&StoreName>,
     ignored_reason: Option<&str>,
@@ -120,7 +121,7 @@ pub fn decide(
         };
     };
     let link = layout.config_dir.join("projects").join(enc.as_str());
-    let target = layout.store().join("projects").join(name.as_str());
+    let target = store.join("projects").join(name.as_str());
 
     match std::fs::symlink_metadata(&link) {
         Err(_) => Decision::Link {
@@ -172,17 +173,18 @@ fn directory_is_empty(path: &Path) -> bool {
     })
 }
 
-/// Carries out a decision. Only [`Decision::Link`] does anything at all.
+/// Carries out a decision in `store`, the clone [`decide`] was asked about. Only
+/// [`Decision::Link`] does anything at all.
 ///
 /// # Errors
 ///
 /// The text of what went wrong. The caller still exits 0: a hook that fails the session it was
 /// meant to help is worse than a session without synchronisation.
-pub fn perform(layout: &Layout, decision: &Decision) -> Result<(), String> {
+pub fn perform(layout: &Layout, store: &Path, decision: &Decision) -> Result<(), String> {
     let Decision::Link { enc, name } = decision else {
         return Ok(());
     };
-    let target = layout.store().join("projects").join(name);
+    let target = store.join("projects").join(name);
     let link = layout.config_dir.join("projects").join(enc);
 
     std::fs::create_dir_all(&target).map_err(|error| error.to_string())?;

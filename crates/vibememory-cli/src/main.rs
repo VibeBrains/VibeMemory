@@ -704,12 +704,17 @@ fn session_start_hook() -> ExitCode {
         }
     };
     let cwd = canonical_cwd(&input.cwd, syntax);
+    // The store the working directory is routed to: the personal one, or a connected team's
+    let store = match vibememory_cli::stores::for_cwd(&layout, &config, &cwd, syntax) {
+        Ok(store) => store,
+        Err(reason) => return say(&format!("VibeMemory: {reason}")),
+    };
     // The rule the memory server names its project by, too: see `project::resolve`.
-    let resolution = vibememory_cli::project::resolve(&layout.store(), &config.naming, &cwd);
+    let resolution = vibememory_cli::project::resolve(&store.clone, &config.naming, &cwd);
 
     let decision = match resolution {
         Ok(Resolution::Named { name, .. }) => {
-            session_start::decide(&layout, &enc, Some(&name), None)
+            session_start::decide(&layout, &store.clone, &enc, Some(&name), None)
         }
         Ok(Resolution::Ignored { reason }) => {
             let reason = match reason {
@@ -718,23 +723,23 @@ fn session_start_hook() -> ExitCode {
                     format!("CLAUDE_CODE_PROJECT_DIR_NAME is {name}")
                 }
             };
-            session_start::decide(&layout, &enc, None, Some(&reason))
+            session_start::decide(&layout, &store.clone, &enc, None, Some(&reason))
         }
         Err(error) => return say(&format!("VibeMemory could not name this project: {error}")),
     };
 
     // Before anything else that could take time: from this moment the tick knows the working
     // directory is busy, whatever the session goes on to do.
-    if let Ok(store) = std::fs::canonicalize(layout.store()) {
+    if let Ok(clone) = std::fs::canonicalize(&store.clone) {
         let _ = vibememory_cli::hook::stop::record_live(
-            &store,
-            &config.machine_id,
+            &clone,
+            &store.machine_id,
             &input.session_id,
             &portable_cwd(&config, &cwd),
             &vibememory_cli::clock::now(),
         );
     }
-    if let Err(error) = session_start::perform(&layout, &decision) {
+    if let Err(error) = session_start::perform(&layout, &store.clone, &decision) {
         return say(&format!(
             "VibeMemory could not put the link in place: {error}"
         ));
@@ -743,8 +748,8 @@ fn session_start_hook() -> ExitCode {
     // `transcript_path` is what proves it: the encoding came from the CLI, not from our guess.
     if let Some(name) = decision.store_name() {
         let _ = links_file::record(
-            &layout.store(),
-            &config.machine_id,
+            &store.clone,
+            &store.machine_id,
             &links_file::Observation {
                 enc: enc.as_str(),
                 name,
@@ -813,24 +818,28 @@ fn session_progress_hook(ended: bool) -> ExitCode {
         Err(error) => return say(&format!("VibeMemory is not configured: {error}")),
     };
 
-    // The transcript is reached through the link, so its real path is inside the store — unless
-    // this session is one the hook could not link, and then there is nothing to commit here.
-    let Ok(store) = std::fs::canonicalize(layout.store()) else {
-        return ExitCode::SUCCESS;
-    };
+    // The transcript is reached through the link, so its real path is inside a store's clone —
+    // the personal one or a team's — unless this session is one the hook could not link, and then
+    // there is nothing to commit here.
     let transcript = std::path::PathBuf::from(&input.transcript_path);
     let Ok(real) = std::fs::canonicalize(&transcript) else {
         return ExitCode::SUCCESS;
     };
-    let Ok(relative) = real.strip_prefix(&store) else {
+    let Some((owner, relative)) = vibememory_cli::stores::for_file(&layout, &config, &real) else {
         // A session in a real directory: the tick imports it, and saying so on every stop would
         // be noise, since SessionStart already said it once.
         return ExitCode::SUCCESS;
     };
+    let store = owner.clone.clone();
+    let relative_text = relative.to_string_lossy().replace('\\', "/");
+    // a session from before the project went to the team stays on this machine, resumed or not
+    if owner.team.is_some() && vibememory_cli::local_only::is_local(&store, &relative_text) {
+        return ExitCode::SUCCESS;
+    }
     let relative = relative.to_string_lossy().replace('\\', "/");
     let stamp = vibememory_cli::clock::now();
 
-    let kept = vibememory_cli::held::Kept::read(&layout.engine_dir);
+    let kept = vibememory_cli::held::Kept::read(&owner.state_dir);
     let stopped = match commit_snapshot(&store, &real, &relative, &stamp, &kept) {
         Ok(stopped) => stopped,
         Err(error) => {
@@ -841,9 +850,9 @@ fn session_progress_hook(ended: bool) -> ExitCode {
     };
     // Kept back when it holds an agent token; the next session hears of it, `doctor` lists it.
     let held = if stopped.held.is_empty() {
-        vibememory_cli::held::release(&layout.engine_dir, &relative)
+        vibememory_cli::held::release(&owner.state_dir, &relative)
     } else {
-        vibememory_cli::held::hold_found(&layout.engine_dir, &relative, stopped.held, &stamp)
+        vibememory_cli::held::hold_found(&owner.state_dir, &relative, stopped.held, &stamp)
     };
     if let Err(error) = held {
         return say(&format!(
@@ -853,7 +862,7 @@ fn session_progress_hook(ended: bool) -> ExitCode {
     let cwd = portable_cwd(&config, &input.cwd);
     if let Err(error) = record_progress(
         &store,
-        &config.machine_id,
+        &owner.machine_id,
         &input.session_id,
         &cwd,
         &real,
@@ -861,7 +870,7 @@ fn session_progress_hook(ended: bool) -> ExitCode {
     ) {
         return say(&format!("VibeMemory could not record progress: {error}"));
     }
-    if ended && let Err(error) = record_end(&store, &config.machine_id, &input.session_id) {
+    if ended && let Err(error) = record_end(&store, &owner.machine_id, &input.session_id) {
         return say(&format!("VibeMemory could not close this session: {error}"));
     }
     // Memory is synchronised on the same events as the transcript: edits first, then the
@@ -871,7 +880,7 @@ fn session_progress_hook(ended: bool) -> ExitCode {
 
     // A push that does not happen costs nothing here: the commit is already on this disk, and the
     // tick pushes again in two minutes.
-    let _ = push_if_due(&store, &layout.engine_dir, epoch_seconds(), PUSH_DEBOUNCE);
+    let _ = push_if_due(&store, &owner.state_dir, epoch_seconds(), PUSH_DEBOUNCE);
     match notes {
         Some(message) => say(&message),
         None => ExitCode::SUCCESS,

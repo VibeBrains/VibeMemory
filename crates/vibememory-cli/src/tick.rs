@@ -1112,6 +1112,22 @@ fn import_real_directories(
             engine_dir,
             stamp,
         ) {
+            // What a team's store takes in from a directory that was already here is the
+            // sessions from before the project went to the team: they stay on this machine
+            if machine.team.is_some() {
+                let local: Vec<String> = outcome
+                    .copied
+                    .iter()
+                    .map(|file| format!("projects/{}/{file}", name.as_str()))
+                    .collect();
+                if let Err(problem) = crate::local_only::keep(store, &local) {
+                    ignored.push(IgnoredDirectory {
+                        reason: format!("its old sessions could not be kept local: {problem}"),
+                        transcripts: outcome.copied.len(),
+                        enc: enc.clone(),
+                    });
+                }
+            }
             imported.push(format!(
                 "{enc} -> projects/{} ({} file(s))",
                 name.as_str(),
