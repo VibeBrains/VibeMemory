@@ -1053,3 +1053,100 @@ fn an_application_waits_for_the_one_under_way() {
     lock.unlock().expect("unlock");
     assert!(child.wait().expect("wait").success());
 }
+
+/// The journal of the memory fixtures' `oneRecordProjected`: one record, as the store keeps it.
+fn fixture_journal() -> String {
+    let cases = support::fixture("fixtures/memory/memoryScenarios.json");
+    let case = cases["cases"]
+        .as_array()
+        .expect("cases")
+        .iter()
+        .find(|case| case["id"] == "oneRecordProjected")
+        .expect("oneRecordProjected");
+    case["journal"]
+        .as_array()
+        .expect("journal")
+        .iter()
+        .fold(String::new(), |mut journal, line| {
+            journal.push_str(line.as_str().expect("line"));
+            journal.push('\n');
+            journal
+        })
+}
+
+#[test]
+fn the_report_says_when_a_team_was_last_reached() {
+    let host = host("activity");
+    let activity = layout::activity_dir(&host.teams);
+    fs::create_dir_all(&activity).expect("activity");
+    fs::write(activity.join("vibebrains"), b"").expect("touch");
+    assert!(apply(&host).status.success());
+    let report = json_file(&layout::report_file(&host.access));
+    assert!(
+        report["teams"]["vibebrains"]["lastAccessAt"]
+            .as_str()
+            .is_some_and(|at| at.ends_with('Z')),
+        "{report}"
+    );
+    // never reached: the key is left out rather than guessed
+    assert!(
+        report["teams"]["syncteam"].get("lastAccessAt").is_none(),
+        "{report}"
+    );
+}
+
+#[test]
+fn an_archive_holds_the_journal_and_the_memory_as_files_and_waits_for_the_cabinet() {
+    let host = host("export");
+    let journal = fixture_journal();
+    bare_with(
+        &host.teams.join("acme.git"),
+        &[("projects/VibeMemory/memory.jsonl", &journal)],
+    );
+    let exports = layout::exports_dir(&host.teams);
+    fs::create_dir_all(&exports).expect("exports");
+    let id = "0f8c2a9e-4b1d-4c7e-9a3f-5d6e7f8a9b0c";
+    fs::write(exports.join(format!("{id}.request")), br#"{"slug":"acme"}"#).expect("request");
+    // a name that is no request id is not the cabinet's, and is left alone
+    fs::write(exports.join("not-an-id.request"), br#"{"slug":"acme"}"#).expect("stray");
+
+    let output = run(&["export"], &host, &[], None);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let path = exports.join(format!("{id}.zip"));
+    assert_eq!(
+        fs::metadata(&path).expect("archive").permissions().mode() & 0o777,
+        0o640,
+        "the cabinet reads it through the shared group"
+    );
+    let mut zip = zip::ZipArchive::new(fs::File::open(&path).expect("open")).expect("zip");
+    let mut read = |name: &str| {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name(name).expect(name), &mut text).expect(name);
+        text
+    };
+    assert_eq!(
+        read("VibeMemory/memory.jsonl"),
+        journal,
+        "the journal goes back into a store unchanged"
+    );
+    assert!(read("VibeMemory/memory/MEMORY.md").contains("store-naming.md"));
+    assert!(read("VibeMemory/memory/store-naming.md").contains("never the worktree"));
+    assert!(read("README.txt").contains("acme"));
+    assert!(!exports.join("not-an-id.zip").exists());
+    // the request is the cabinet's file: the host leaves it for the cabinet to take away
+    assert!(exports.join(format!("{id}.request")).exists());
+
+    // a team with no live store gets no archive, and the run says it failed
+    let ghost = "1a2b3c4d-0000-4000-8000-000000000001";
+    fs::write(
+        exports.join(format!("{ghost}.request")),
+        br#"{"slug":"ghost"}"#,
+    )
+    .expect("ghost");
+    assert!(!run(&["export"], &host, &[], None).status.success());
+    assert!(!exports.join(format!("{ghost}.zip")).exists());
+}

@@ -82,6 +82,9 @@ pub struct RepoFacts {
     /// What each project of `main` holds and who wrote to it last.
     #[serde(default)]
     pub project_facts: BTreeMap<String, ProjectFacts>,
+    /// When the memory server was last asked for the team, reads included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_access_at: Option<String>,
 }
 
 /// One project of a store: what the owner of a team looks at to tell a live project from a stale one.
@@ -147,6 +150,10 @@ pub struct TeamReport {
     /// What each project holds and who wrote to it last.
     #[serde(default)]
     pub project_facts: BTreeMap<String, ProjectFacts>,
+    /// When the memory server was last asked for the team, reads included: with the last commit,
+    /// what tells a team in use from an abandoned one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_access_at: Option<String>,
 }
 
 /// A deleted team's renamed directory.
@@ -256,6 +263,7 @@ pub fn host_report(
                                 size_bytes: repo.size_bytes,
                                 last_commit_at: repo.last_commit_at,
                                 project_facts: repo.project_facts,
+                                last_access_at: repo.last_access_at,
                             },
                         );
                     }
@@ -285,6 +293,7 @@ pub fn host_report(
                         size_bytes: repo.size_bytes,
                         last_commit_at: repo.last_commit_at,
                         project_facts: repo.project_facts,
+                        last_access_at: repo.last_access_at,
                     },
                 );
             }

@@ -157,6 +157,17 @@ impl GitMemories {
         .map(Some)
     }
 
+    /// A project's journal on `main` as the store keeps it, byte for byte; empty when it has none.
+    ///
+    /// # Errors
+    ///
+    /// What git refused.
+    pub fn journal_bytes(&self, project: &str) -> Result<Vec<u8>, String> {
+        Ok(self
+            .blob(BRANCH, &journal_path(project))?
+            .unwrap_or_default())
+    }
+
     /// One attempt to append `line` to a project's journal on top of `main` as it is now.
     ///
     /// # Errors

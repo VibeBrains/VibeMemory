@@ -184,6 +184,14 @@ JSON
   echo "2/7 Снимок прав собран: личный стор, член $owner, строка tk_legacy с отпечатком токена"
 fi
 
+# When each team was last reached: the server touches a file a team, the report reads its time.
+# The cabinet's archive requests and the host's archives: the same shared group as the snapshot,
+# sticky, so each side removes only its own files.
+activity=$(dirname "$teams")/activity
+exports=$(dirname "$teams")/exports
+sudo install -d -o vmgit -g vmgit -m 0750 "$activity"
+sudo install -d -o root -g vmaccess -m 3770 "$exports"
+
 unit=/etc/systemd/system/vibememory-mcp.service
 unitText="[Unit]
 Description=VibeMemory memory server over HTTP (behind Caddy)
@@ -197,7 +205,7 @@ RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=$repo $teams
+ReadWritePaths=$repo $teams $activity
 ReadOnlyPaths=$(dirname "$access")
 
 [Install]
@@ -309,6 +317,38 @@ Persistent=true
 
 [Install]
 WantedBy=timers.target"
+putUnit vibememory-export.service "[Unit]
+Description=VibeMemory: build the memory archives the cabinet asked for
+
+[Service]
+Type=oneshot
+User=vmgit
+UMask=0007
+ExecStart=$serverBin export --access $access --teams $teams
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=$exports"
+putUnit vibememory-export.path "[Unit]
+Description=VibeMemory: build an archive whenever the cabinet asks for one
+
+[Path]
+PathChanged=$exports
+Unit=vibememory-export.service
+
+[Install]
+WantedBy=multi-user.target"
+# the path unit answers a request at once; the timer removes old archives and catches a missed one
+putUnit vibememory-export.timer "[Unit]
+Description=VibeMemory: archives every hour
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target"
 putUnit vibememory-teams-repack.service "[Unit]
 Description=VibeMemory: nightly repacking of the team stores
 
@@ -333,7 +373,7 @@ Persistent=true
 WantedBy=timers.target"
 [ "$reload" = 0 ] || sudo systemctl daemon-reload
 sudo systemctl enable --now --quiet vibememory-access-apply.path vibememory-access-catch-up.timer \
-  vibememory-status.timer vibememory-teams-repack.timer
+  vibememory-status.timer vibememory-teams-repack.timer vibememory-export.path vibememory-export.timer
 # Applied once now rather than at the cabinet's first publication: vmgit's keys and the host's
 # report exist from the start.
 sudo systemctl start vibememory-access-apply.service ||

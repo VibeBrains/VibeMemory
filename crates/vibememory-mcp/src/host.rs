@@ -69,7 +69,13 @@ pub struct Host {
     cabinet: Option<String>,
     loaded: Mutex<Loaded>,
     locks: Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>,
+    /// When each team's activity file was last touched by this process
+    touched: Mutex<HashMap<String, std::time::Instant>>,
 }
+
+/// A team's activity file is touched at most this often: the report reads it hourly, and a file
+/// written on every request would be a write on every read.
+const TOUCH_EVERY: std::time::Duration = std::time::Duration::from_mins(10);
 
 /// A lock whose holder panicked still guards consistent data here: the snapshot is replaced
 /// whole, and a repository is moved only by a compare-and-swap of `main`.
@@ -163,6 +169,7 @@ impl Host {
                 state: Ok(snapshot),
             }),
             locks: Mutex::new(HashMap::new()),
+            touched: Mutex::new(HashMap::new()),
         })
     }
 
@@ -203,6 +210,27 @@ impl Host {
         loaded.state.clone()
     }
 
+    /// Notes that a team was reached: its activity file's time is when. Best effort — a file that
+    /// cannot be written costs only the report's answer, never the request.
+    fn touch(&self, slug: &str) {
+        let now = std::time::Instant::now();
+        {
+            let mut touched = held(&self.touched);
+            if touched
+                .get(slug)
+                .is_some_and(|last| now.duration_since(*last) < TOUCH_EVERY)
+            {
+                return;
+            }
+            touched.insert(slug.to_owned(), now);
+        }
+        let file = layout::activity_dir(&self.teams).join(slug);
+        // the write truncates the file, and the truncation moves its time: that time is the answer
+        if let Err(error) = std::fs::write(&file, b"") {
+            eprintln!("vibememory-mcp: {}: {error}", file.display());
+        }
+    }
+
     /// The write lock of one repository: writes of one team go one after another, so none of
     /// them spends its attempts on a `main` another request of this server just moved.
     fn lock_of(&self, repo: &Path) -> Arc<Mutex<()>> {
@@ -224,6 +252,7 @@ impl Door for Host {
         let Some(team) = snapshot.teams.get(&token.team) else {
             return Admission::Unknown;
         };
+        self.touch(&token.team);
         let writes = if token.role == TokenRole::Reader {
             Writes::ReaderToken
         } else if team.writable {

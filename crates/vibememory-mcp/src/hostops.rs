@@ -1094,8 +1094,12 @@ fn write_report(paths: &HostPaths) -> Result<(), String> {
 /// What the report is made of.
 fn gather(paths: &HostPaths, snapshot: Option<&Snapshot>) -> Result<Facts, String> {
     let mut repos = BTreeMap::new();
+    let activity = layout::activity_dir(&paths.teams);
     for name in directory_names(&paths.teams)? {
-        let facts = repo_facts(&paths.teams.join(&name));
+        let mut facts = repo_facts(&paths.teams.join(&name));
+        if let Some(layout::TeamDir::Store(slug)) = layout::team_dir(&name) {
+            facts.last_access_at = last_access(&activity, &slug);
+        }
         repos.insert(name, facts);
     }
     let mut adopted = BTreeMap::new();
@@ -1106,7 +1110,9 @@ fn gather(paths: &HostPaths, snapshot: Option<&Snapshot>) -> Result<Facts, Strin
     {
         let repo = team.repository(slug, &paths.teams);
         if repo.is_dir() {
-            adopted.insert(slug.clone(), repo_facts(&repo));
+            let mut facts = repo_facts(&repo);
+            facts.last_access_at = last_access(&activity, slug);
+            adopted.insert(slug.clone(), facts);
         }
     }
     let backup = match read_json::<Backup>(&layout::backup_file(&paths.access)) {
@@ -1128,6 +1134,138 @@ fn gather(paths: &HostPaths, snapshot: Option<&Snapshot>) -> Result<Facts, Strin
     })
 }
 
+/// How long an archive waits on the host for the cabinet to hand it out.
+const EXPORT_KEEP: std::time::Duration = std::time::Duration::from_hours(30 * 24);
+/// The tag of the export's lines in the journal.
+const EXPORT_TAG: &str = "vibememory-export";
+
+/// A request the cabinet leaves in the exports directory: `<id>.request` naming the team.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExportRequest {
+    slug: String,
+}
+
+/// Whether a request's id is one the cabinet makes: a uuid, so a name can never climb out of the
+/// directory or collide with an archive of another request.
+fn is_request_id(id: &str) -> bool {
+    id.len() == 36
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+}
+
+/// Builds the archives the cabinet asked for and prunes the old ones.
+///
+/// Every `<id>.request` without its `<id>.zip` gets one: the memory of the named live team, written
+/// to a part file and renamed, so the cabinet never reads half an archive. The request stays — it is
+/// the cabinet's file, and the directory's sticky bit keeps each side to its own; the cabinet takes
+/// it away once the archive is there. An archive older than [`EXPORT_KEEP`] is removed.
+#[must_use]
+pub fn export(paths: &HostPaths) -> ExitCode {
+    let dir = layout::exports_dir(&paths.teams);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            journal(&format!("{EXPORT_TAG}: {}: {error}", dir.display()));
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut failed = false;
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // the archives are named by this command alone, in lower case
+        if Path::new(&name)
+            .extension()
+            .is_some_and(|extension| extension == "zip")
+        {
+            let old = entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .ok()
+                .and_then(|modified| modified.elapsed().ok())
+                .is_some_and(|age| age > EXPORT_KEEP);
+            if old && std::fs::remove_file(entry.path()).is_ok() {
+                journal(&format!(
+                    "{EXPORT_TAG}: {name} kept its time and is removed"
+                ));
+            }
+            continue;
+        }
+        let Some(id) = name.strip_suffix(".request") else {
+            continue;
+        };
+        if !is_request_id(id) || dir.join(format!("{id}.zip")).exists() {
+            continue;
+        }
+        match build_archive(paths, &dir, id, &entry.path()) {
+            Ok(slug) => journal(&format!("{EXPORT_TAG}: archive {id} of {slug} is ready")),
+            Err(why) => {
+                journal(&format!("{EXPORT_TAG}: archive {id}: {why}"));
+                failed = true;
+            }
+        }
+    }
+    if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+/// One archive: the team's journals and their markdown, in `<id>.zip`, readable by the cabinet.
+fn build_archive(
+    paths: &HostPaths,
+    dir: &Path,
+    id: &str,
+    request: &Path,
+) -> Result<String, String> {
+    let bytes = std::fs::read(request).map_err(|error| error.to_string())?;
+    let ExportRequest { slug } =
+        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    if !crate::access::is_name(&slug) {
+        return Err(format!("{slug:?} is no team's name"));
+    }
+    let repo = paths.teams.join(layout::store_dir(&slug));
+    if !repo.is_dir() {
+        return Err(format!("team {slug} has no live store"));
+    }
+    let git = GitMemories::new(repo, APPLY_WRITER.to_owned());
+    let mut journals = Vec::new();
+    for project in crate::memories::Memories::projects(&git)? {
+        let journal = git.journal_bytes(&project)?;
+        journals.push((project, journal));
+    }
+    let files = crate::export::archive_files(&slug, &vibememory_cli::clock::now(), &journals);
+    let part = dir.join(format!("{id}.zip.part"));
+    let file = std::fs::File::create(&part).map_err(|error| error.to_string())?;
+    crate::export::write_zip(file, &files)?;
+    // the cabinet reads it through the shared group
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&part, std::fs::Permissions::from_mode(0o640))
+            .map_err(|error| error.to_string())?;
+    }
+    std::fs::rename(&part, dir.join(format!("{id}.zip"))).map_err(|error| error.to_string())?;
+    Ok(slug)
+}
+
+/// When the memory server last touched the team's activity file.
+fn last_access(activity: &Path, slug: &str) -> Option<String> {
+    let modified = std::fs::metadata(activity.join(slug))
+        .ok()?
+        .modified()
+        .ok()?;
+    let seconds = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    i64::try_from(seconds)
+        .ok()
+        .map(vibememory_cli::clock::iso8601)
+}
+
 /// Size, projects, last commit and the `machines/` hint of one repository.
 fn repo_facts(repo: &Path) -> RepoFacts {
     let git = GitMemories::new(repo.to_path_buf(), APPLY_WRITER.to_owned());
@@ -1139,6 +1277,7 @@ fn repo_facts(repo: &Path) -> RepoFacts {
             last_commit_at: None,
             machines: false,
             project_facts: BTreeMap::new(),
+            last_access_at: None,
         };
     };
     let text = |args: &[&str]| {
@@ -1159,6 +1298,7 @@ fn repo_facts(repo: &Path) -> RepoFacts {
         last_commit_at,
         machines,
         project_facts,
+        last_access_at: None,
     }
 }
 

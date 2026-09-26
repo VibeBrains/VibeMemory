@@ -88,6 +88,18 @@ pub fn backup_file(access: &Path) -> PathBuf {
     access.with_file_name(BACKUP_NAME)
 }
 
+/// When each team was last reached, beside `teams/`: one empty file a team, its time the answer.
+#[must_use]
+pub fn activity_dir(teams: &Path) -> PathBuf {
+    teams.with_file_name("activity")
+}
+
+/// Archives of teams' memory, beside `teams/`: the cabinet puts a request, the host the archive.
+#[must_use]
+pub fn exports_dir(teams: &Path) -> PathBuf {
+    teams.with_file_name("exports")
+}
+
 /// What a directory under `teams/` is, by its name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TeamDir {

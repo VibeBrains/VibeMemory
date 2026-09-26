@@ -109,6 +109,7 @@ fn main() -> ExitCode {
             return hostops::access_apply(&host_paths(), &apply_paths, catch_up);
         }
         Some("status") => return hostops::status(&host_paths()),
+        Some("export") => return hostops::export(&host_paths()),
         _ => {}
     }
 

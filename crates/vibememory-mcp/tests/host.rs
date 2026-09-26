@@ -548,3 +548,35 @@ fn a_read_only_team_says_where_its_grant_is_renewed() {
     let (_, refused, _) = call(&stand, ALICE, "memory_search", &json!({ "query": "" }));
     assert!(!refused, "reading goes on");
 }
+
+#[test]
+fn a_team_reached_by_a_token_is_noted_once_and_a_missing_directory_costs_nothing() {
+    let stand = stand("activity", None);
+    let activity = stand.temp.0.join("activity");
+    // without the directory the request still gets its answer: noting is best effort
+    assert_eq!(status_of(&stand, LEGACY).0, 200);
+    fs::create_dir_all(&activity).expect("activity");
+    let stand = stand_again(stand);
+    assert_eq!(status_of(&stand, LEGACY).0, 200);
+    let noted = activity.join("personal");
+    let first = fs::metadata(&noted)
+        .expect("noted")
+        .modified()
+        .expect("time");
+    // a second request within the window writes nothing: reads must not become writes
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    assert_eq!(status_of(&stand, LEGACY).0, 200);
+    assert_eq!(
+        fs::metadata(&noted)
+            .expect("noted")
+            .modified()
+            .expect("time"),
+        first
+    );
+}
+
+/// The same stand with a fresh server: what one process remembers of touched files starts empty.
+fn stand_again(stand: Stand) -> Stand {
+    let host = Host::open(stand.access.clone(), stand.temp.0.join("teams"), None).expect("open");
+    Stand { host, ..stand }
+}

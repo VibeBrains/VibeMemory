@@ -225,6 +225,7 @@ env[FROM_EMAIL_NAME]="${env[FROM_EMAIL_NAME]:-VibeMemory}"
 env[VIBEMEMORY_MCP_BIN]="$serverBin"
 env[ACCESS_DIR]=/srv/vibememory/access
 env[RELEASES_DIR]=/srv/vibememory/releases
+env[EXPORTS_DIR]=/srv/vibememory/exports
 env[MCP_URL]="https://$domain/mcp"
 env[SSH_HOST]="$domain"
 envText=$(for key in $(printf '%s\n' "${!env[@]}" | sort); do printf '%s=%s\n' "$key" "${env[$key]}"; done)
@@ -423,7 +424,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/srv/vibememory/access /home/vmcab
+ReadWritePaths=/srv/vibememory/access /srv/vibememory/exports /home/vmcab
 
 [Install]
 WantedBy=multi-user.target"
