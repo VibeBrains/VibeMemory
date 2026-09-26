@@ -557,7 +557,7 @@
         "projects/Acme/s1.jsonl"
       ],
       "sizes": {
-        "repoBytes": 10737417240
+        "repoBytes": 52427800
       },
       "withTokens": [
         "projects/Acme/s1.jsonl"
@@ -736,7 +736,7 @@
         "projects/Acme/s1.jsonl"
       ],
       "sizes": {
-        "repoBytes": 10737417240
+        "repoBytes": 52427800
       },
       "expect": {
         "code": "quota"
@@ -759,7 +759,7 @@
         "projects/Acme/s1.jsonl"
       ],
       "sizes": {
-        "repoBytes": 10737352704
+        "repoBytes": 52363264
       },
       "expect": {
         "code": "ok"

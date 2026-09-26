@@ -144,9 +144,9 @@
           "syncteam": {
             "mode": "sync",
             "role": "admin",
-            "writable": false,
+            "writable": true,
             "sizeBytes": null,
-            "quotaBytes": 10737418240,
+            "quotaBytes": 52428800,
             "lastCommitAt": null
           },
           "vibebrains": {
@@ -154,7 +154,7 @@
             "role": "member",
             "writable": true,
             "sizeBytes": 40960,
-            "quotaBytes": 10737418240,
+            "quotaBytes": 1073741824,
             "lastCommitAt": "2026-09-23T09:12:40Z"
           }
         },

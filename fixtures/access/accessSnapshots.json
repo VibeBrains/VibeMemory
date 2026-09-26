@@ -27,8 +27,7 @@
         "limits": {
           "maxRecords": 5000,
           "maxRecordBytes": 65536,
-          "quotaBytes": 10737418240,
-          "seats": 5
+          "quotaBytes": 1073741824
         },
         "members": {
           "borodatych": "owner",
@@ -37,12 +36,11 @@
       },
       "syncteam": {
         "mode": "sync",
-        "writable": false,
+        "writable": true,
         "limits": {
           "maxRecords": 5000,
           "maxRecordBytes": 65536,
-          "quotaBytes": 10737418240,
-          "seats": 5
+          "quotaBytes": 52428800
         },
         "members": {
           "borodatych": "owner",
@@ -792,7 +790,7 @@
     {
       "id": "seatsAbsentIsUnlimited",
       "provenance": "computed",
-      "note": "A team pays for its store, not for its people: without seats it takes any number of members.",
+      "note": "A team pays for its store, not for its people: the base already has no seats, and dropping them again changes nothing.",
       "patch": {
         "teams": {
           "vibebrains": {
