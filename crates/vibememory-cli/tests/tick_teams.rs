@@ -388,3 +388,57 @@ fn a_host_refusal_for_the_teams_reasons_pauses_pushes_and_an_hour_later_it_asks_
         None
     );
 }
+
+#[test]
+fn a_push_too_big_for_the_host_goes_in_portions() {
+    let temp = TempDir::new("tick-teams-portions");
+    let setup = setup(&temp);
+    let team_store = setup.engine.join("stores/acme/store");
+    let bare = temp.dir("acme.git");
+    git(
+        &bare,
+        &["init", "--bare", "--quiet", "--initial-branch=main"],
+    );
+    git(&team_store, &["branch", "-M", "main"]);
+    git(
+        &team_store,
+        &["remote", "add", "origin", &bare.display().to_string()],
+    );
+    git(&team_store, &["push", "--quiet", "-u", "origin", "main"]);
+    // the host takes no pack over 4 KiB
+    git(&bare, &["config", "receive.maxInputSize", "4096"]);
+    // thirty commits of bytes that do not compress: far over the limit together, well under it
+    // one by one
+    let mut noise: u64 = 0x9e37_79b9_7f4a_7c15;
+    for commit in 0..30 {
+        let bytes: Vec<u8> = (0..1024)
+            .map(|_| {
+                noise ^= noise << 13;
+                noise ^= noise >> 7;
+                noise ^= noise << 17;
+                noise.to_le_bytes()[0]
+            })
+            .collect();
+        fs::write(team_store.join(format!("blob-{commit}")), bytes).unwrap();
+        git(&team_store, &["add", "."]);
+        git(
+            &team_store,
+            &["commit", "--quiet", "-m", &format!("offline {commit}")],
+        );
+    }
+
+    let ticked = tick(&setup, Some("acme"));
+    assert!(ticked.problems.is_empty(), "{ticked:?}");
+    assert!(ticked.pushed);
+    let head = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&team_store)
+        .output()
+        .unwrap();
+    let remote = std::process::Command::new("git")
+        .args(["rev-parse", "main"])
+        .current_dir(&bare)
+        .output()
+        .unwrap();
+    assert_eq!(head.stdout, remote.stdout, "every commit reached the host");
+}

@@ -702,10 +702,55 @@ fn push(store: &Path) -> Result<bool, String> {
         TIMEOUT,
     )? {
         Ok(_) => Ok(true),
+        Err(said) if said.contains(PACK_TOO_LARGE) => push_in_portions(store),
         Err(said) => Err(format!(
             "push to {REMOTE} refused with {ahead} commit(s) waiting: {said}"
         )),
     }
+}
+
+/// What git says when a push is bigger than the host takes in one go (`receive.maxInputSize`).
+const PACK_TOO_LARGE: &str = "pack exceeds maximum allowed size";
+
+/// The first portion of commits a too-large push is split into.
+const FIRST_PORTION: usize = 64;
+
+/// A push too big for the host in one go — a machine back after weeks offline — sent as a run of
+/// smaller pushes, oldest first: each portion pushes the commit it ends at, and a portion the
+/// host still finds too big is halved. Only a single commit too big for the host is a failure.
+fn push_in_portions(store: &Path) -> Result<bool, String> {
+    let listed = git::run_with_timeout(
+        git::command(
+            store,
+            &["rev-list", "--reverse", &format!("{REMOTE}/{BRANCH}..HEAD")],
+        ),
+        TIMEOUT,
+    )?
+    .ok_or_else(|| "the commits waiting to be pushed could not be listed".to_owned())?;
+    let commits: Vec<&str> = listed.lines().filter(|line| !line.is_empty()).collect();
+    let mut sent = 0;
+    let mut portion = FIRST_PORTION;
+    while sent < commits.len() {
+        let end = (sent + portion).min(commits.len());
+        let Some(last) = commits.get(end - 1) else {
+            break;
+        };
+        let refspec = format!("{last}:refs/heads/{BRANCH}");
+        match git::run_capturing(
+            git::command(store, &["push", "--quiet", REMOTE, &refspec]),
+            TIMEOUT,
+        )? {
+            Ok(_) => sent = end,
+            Err(said) if said.contains(PACK_TOO_LARGE) && portion > 1 => portion /= 2,
+            Err(said) => {
+                return Err(format!(
+                    "push to {REMOTE} in portions stopped after {sent} of {} commit(s): {said}",
+                    commits.len()
+                ));
+            }
+        }
+    }
+    Ok(true)
 }
 
 /// Whether the store has a remote configured at all.

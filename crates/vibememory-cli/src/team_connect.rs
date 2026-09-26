@@ -315,3 +315,76 @@ pub fn connected_teams(layout: &Layout) -> Vec<String> {
     teams.sort();
     teams
 }
+
+/// What `doctor` says about one team store beyond the plan's steps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamFacts {
+    /// The team.
+    pub team: String,
+    /// The cabinet the record names, for the advice; empty when the record does not read.
+    pub cabinet: String,
+    /// What is wrong on this machine: a missing clone, key or host list, a key others may read.
+    pub problems: Vec<String>,
+    /// The pause the host put the store under, if any.
+    pub pause: Option<crate::guard::StorePause>,
+    /// Failing runs in a row of this store's tick.
+    pub failures: u32,
+}
+
+/// The facts of every connected team.
+#[must_use]
+pub fn team_facts(layout: &Layout) -> Vec<TeamFacts> {
+    connected_teams(layout)
+        .into_iter()
+        .map(|team| {
+            let state_dir = layout.team_state_dir(&team);
+            let mut problems = Vec::new();
+            let cabinet = match read_record(layout, &team) {
+                Ok(record) => record.cabinet,
+                Err(error) => {
+                    problems.push(format!("store record: {error}"));
+                    String::new()
+                }
+            };
+            if !layout.team_store(&team).join(".git").is_dir() {
+                problems.push("the clone is missing: connect again with a new code".to_owned());
+            }
+            let key = state_dir.join(KEY_FILE);
+            if key.is_file() {
+                if let Some(problem) = key_rights_problem(&key) {
+                    problems.push(problem);
+                }
+            } else {
+                problems
+                    .push("the machine key is missing: connect again with a new code".to_owned());
+            }
+            if !state_dir.join(KNOWN_HOSTS_FILE).is_file() {
+                problems.push(format!(
+                    "the host's keys are missing: `vibememory connect --refresh {team}`"
+                ));
+            }
+            let state = crate::guard::TickState::read(&state_dir);
+            TeamFacts {
+                team,
+                cabinet,
+                problems,
+                pause: state.pause,
+                failures: state.consecutive_failures,
+            }
+        })
+        .collect()
+}
+
+/// A private key others may read is a key ssh itself refuses, and a key anybody could copy.
+#[cfg(unix)]
+fn key_rights_problem(key: &Path) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(key).ok()?.permissions().mode() & 0o777;
+    (mode & 0o077 != 0).then(|| format!("the machine key is readable by others (mode {mode:o})"))
+}
+
+/// On Windows the rights are an access list `connect` narrowed; ssh checks it itself.
+#[cfg(not(unix))]
+fn key_rights_problem(_key: &Path) -> Option<String> {
+    None
+}

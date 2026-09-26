@@ -205,6 +205,7 @@ fn report(strict: bool, json: bool) -> ExitCode {
         None => {}
     }
     wrong += print_tokens(&tokens);
+    wrong += print_teams(&layout);
     if strict && wrong > 0 {
         eprintln!(
             "{wrong} of {} steps are not in place",
@@ -213,6 +214,59 @@ fn report(strict: bool, json: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
+}
+
+/// The team stores as the JSON report carries them.
+fn teams_json(teams: &[vibememory_cli::team_connect::TeamFacts]) -> serde_json::Value {
+    serde_json::Value::Array(
+        teams
+            .iter()
+            .map(|facts| {
+                serde_json::json!({
+                    "team": facts.team,
+                    "cabinet": facts.cabinet,
+                    "problems": facts.problems,
+                    "pause": facts.pause.as_ref().map(|pause| serde_json::json!({
+                        "code": pause.code,
+                        "lines": pause.lines,
+                        "since": pause.since,
+                        "recheckAt": pause.recheck_at,
+                    })),
+                    "failures": facts.failures,
+                })
+            })
+            .collect(),
+    )
+}
+
+/// The team stores: each connected team, what is wrong with its files, and its pause with what to
+/// do about it. Answers how many teams need a person.
+fn print_teams(layout: &Layout) -> usize {
+    let mut wrong = 0;
+    for facts in vibememory_cli::team_connect::team_facts(layout) {
+        let line = match &facts.pause {
+            Some(pause) => format!(
+                "paused since {} ({}), asks again at {}",
+                pause.since, pause.code, pause.recheck_at
+            ),
+            None if facts.failures > 0 => format!("{} failing run(s) in a row", facts.failures),
+            None => "in step".to_owned(),
+        };
+        println!("team     {} — {line}", facts.team);
+        if let Some(pause) = &facts.pause {
+            println!(
+                "         {}",
+                pause_advice(layout, &facts.team, &pause.code)
+            );
+        }
+        for problem in &facts.problems {
+            println!("         {problem}");
+        }
+        if facts.pause.is_some() || !facts.problems.is_empty() {
+            wrong += 1;
+        }
+    }
+    wrong
 }
 
 /// The credentials section: each kept token, and what is wrong with its files. Answers how many
@@ -2059,7 +2113,18 @@ fn report_json(
     };
     let disk_low = matches!(disk, Some(Ok(disk)) if disk.is_low());
     let tokens_wrong = tokens.iter().any(|token| !token.problems.is_empty());
-    let failed = wrong > 0 || mirror.is_some_and(Mirror::is_fault) || disk_low || tokens_wrong;
+    let teams = vibememory_cli::team_connect::team_facts(&vibememory_cli::install::Layout {
+        config_dir: std::path::PathBuf::new(),
+        engine_dir: engine_dir.to_path_buf(),
+    });
+    let teams_wrong = teams
+        .iter()
+        .any(|facts| facts.pause.is_some() || !facts.problems.is_empty());
+    let failed = wrong > 0
+        || mirror.is_some_and(Mirror::is_fault)
+        || disk_low
+        || tokens_wrong
+        || teams_wrong;
     let report = serde_json::json!({
         "machineId": config.machine_id,
         "remote": config.remote,
@@ -2069,6 +2134,7 @@ fn report_json(
         "hostDisk": disk_value,
         "credentials": tokens_json(tokens),
         "held": held_json(engine_dir),
+        "teams": teams_json(&teams),
         "ok": !failed,
     });
     match serde_json::to_string_pretty(&report) {

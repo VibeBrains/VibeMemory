@@ -163,3 +163,56 @@ fn a_machine_connecting_again_keeps_its_clone_on_the_new_key() {
         assert_eq!(mode, 0o700);
     }
 }
+
+#[test]
+fn doctor_names_what_is_wrong_with_a_team_store() {
+    let temp = TempDir::new("connect-key-doctor");
+    let layout = layout(&temp);
+    let grant = grant();
+    let clone = layout.team_store(&grant.team);
+    fs::create_dir_all(&clone).unwrap();
+    git(&clone, &["init", "--quiet"]);
+    git(
+        &clone,
+        &["remote", "add", "origin", "old@host:teams/syncteam.git"],
+    );
+    let pending = PendingKey::make(&layout).unwrap();
+    keep_key(&layout, &grant, pending, true).unwrap();
+
+    let facts = vibememory_cli::team_connect::team_facts(&layout);
+    assert_eq!(facts.len(), 1);
+    assert!(facts[0].problems.is_empty(), "{:?}", facts[0].problems);
+    assert_eq!(facts[0].pause, None);
+
+    let state = layout.team_state_dir(&grant.team);
+    fs::remove_file(state.join(KNOWN_HOSTS_FILE)).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(state.join(KEY_FILE), fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    vibememory_cli::guard::TickState {
+        pause: Some(vibememory_cli::guard::StorePause {
+            code: "readOnly".to_owned(),
+            lines: Vec::new(),
+            since: "2026-09-05T10:00:00Z".to_owned(),
+            recheck_at: "2026-09-05T11:00:00Z".to_owned(),
+        }),
+        ..vibememory_cli::guard::TickState::default()
+    }
+    .write(&state)
+    .unwrap();
+
+    let facts = vibememory_cli::team_connect::team_facts(&layout);
+    let problems = facts[0].problems.join("\n");
+    assert!(
+        problems.contains("connect --refresh syncteam"),
+        "{problems}"
+    );
+    #[cfg(unix)]
+    assert!(problems.contains("readable by others"), "{problems}");
+    assert_eq!(
+        facts[0].pause.as_ref().map(|pause| pause.code.as_str()),
+        Some("readOnly")
+    );
+}
