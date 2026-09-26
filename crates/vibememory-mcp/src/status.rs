@@ -93,6 +93,10 @@ pub struct RepoFacts {
 pub struct ProjectFacts {
     /// The bytes of its files in `main`, not of their history.
     pub size_bytes: u64,
+    /// Of those, the bytes of its memory — the journal `memory.jsonl` and the `memory/` directory;
+    /// the rest are its sessions. Absent in a report of an older host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_bytes: Option<u64>,
     /// The time of the last commit of `main` that touched it.
     pub last_commit_at: Option<String>,
     /// Who made that commit: the machine's git author, or the writer the memory server commits as.

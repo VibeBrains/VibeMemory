@@ -1310,6 +1310,7 @@ fn project_facts(
     projects: &[String],
 ) -> BTreeMap<String, ProjectFacts> {
     let mut sizes: BTreeMap<&str, u64> = BTreeMap::new();
+    let mut memory: BTreeMap<&str, u64> = BTreeMap::new();
     if let Ok(listed) = text(&["ls-tree", "-r", "-l", main, "--", "projects/"]) {
         // `<mode> <type> <object> <size>\t<path>`; a submodule has `-` for a size and adds nothing
         for line in listed.lines() {
@@ -1320,13 +1321,19 @@ fn project_facts(
                 .split_whitespace()
                 .nth(3)
                 .and_then(|size| size.parse::<u64>().ok());
-            let project = path
+            let Some((project, inside)) = path
                 .strip_prefix("projects/")
-                .and_then(|rest| rest.split('/').next());
-            if let (Some(size), Some(project)) = (size, project)
+                .and_then(|rest| rest.split_once('/'))
+            else {
+                continue;
+            };
+            if let Some(size) = size
                 && let Some(known) = projects.iter().find(|known| known.as_str() == project)
             {
                 *sizes.entry(known.as_str()).or_default() += size;
+                if is_memory_part(inside) {
+                    *memory.entry(known.as_str()).or_default() += size;
+                }
             }
         }
     }
@@ -1343,6 +1350,7 @@ fn project_facts(
                 });
             let facts = ProjectFacts {
                 size_bytes: sizes.get(project.as_str()).copied().unwrap_or_default(),
+                memory_bytes: Some(memory.get(project.as_str()).copied().unwrap_or_default()),
                 last_commit_at: seconds.map(vibememory_cli::clock::iso8601),
                 last_author: author.filter(|author| !author.is_empty()),
             };
@@ -1350,6 +1358,19 @@ fn project_facts(
         })
         .collect()
 }
+
+/// Whether a path inside a project is its memory: the journal and the `memory/` directory the
+/// memory server writes and the agents read. Everything else there is a session — a transcript and
+/// the directory of its subagents and tool results.
+fn is_memory_part(inside: &str) -> bool {
+    inside == MEMORY_JOURNAL || inside.starts_with(MEMORY_DIR_PREFIX)
+}
+
+/// The memory journal of a project, relative to the project.
+const MEMORY_JOURNAL: &str = "memory.jsonl";
+
+/// The memory directory of a project, relative to the project, with its separator.
+const MEMORY_DIR_PREFIX: &str = "memory/";
 
 /// The host's public keys: type and base64 of each `ssh_host_*_key.pub`, without the comment.
 fn host_keys() -> Vec<String> {

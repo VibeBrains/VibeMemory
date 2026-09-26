@@ -112,7 +112,17 @@ fn host(label: &str) -> Host {
     fs::create_dir_all(host.access.parent().expect("access dir")).expect("access dir");
     fs::create_dir_all(&host.teams).expect("teams");
     let personal = host.root.join("personal.git");
-    bare_with(&personal, &[("projects/VibeMemory/memory.jsonl", "{}\n")]);
+    bare_with(
+        &personal,
+        &[
+            ("projects/VibeMemory/memory.jsonl", "{}\n"),
+            ("projects/VibeMemory/memory/MEMORY.md", "m\n"),
+            (
+                "projects/VibeMemory/11111111-1111-4111-8111-111111111111.jsonl",
+                "{}\n{}\n",
+            ),
+        ],
+    );
     bare_with(
         &host.teams.join("oldteam.git"),
         &[("projects/Old/memory.jsonl", "")],
@@ -199,6 +209,31 @@ fn inode(path: &Path) -> u64 {
     fs::metadata(path).expect("metadata").ino()
 }
 
+/// What the owner reads a project by: its bytes in `main` — memory apart from sessions — when it
+/// was last written and by whom
+fn project_facts_split(project: &serde_json::Value) {
+    assert_eq!(
+        project["sizeBytes"], 11,
+        "the bytes of the journal, the memory file and the transcript: {project}"
+    );
+    assert_eq!(
+        project["memoryBytes"], 5,
+        "the journal and the memory file, not the transcript: {project}"
+    );
+    assert!(
+        project["lastCommitAt"]
+            .as_str()
+            .is_some_and(|at| at.ends_with('Z')),
+        "{project}"
+    );
+    assert!(
+        project["lastAuthor"]
+            .as_str()
+            .is_some_and(|author| !author.is_empty()),
+        "{project}"
+    );
+}
+
 #[test]
 fn apply_makes_the_stores_and_the_keys_and_reports_them() {
     let host = host("apply");
@@ -277,24 +312,7 @@ fn apply_makes_the_stores_and_the_keys_and_reports_them() {
         report["teams"]["personal"]["projects"],
         json!(["VibeMemory"])
     );
-    // What the owner reads a project by: its bytes in `main`, when it was last written and by whom
-    let project = &report["teams"]["personal"]["projectFacts"]["VibeMemory"];
-    assert_eq!(
-        project["sizeBytes"], 3,
-        "the bytes of the journal line: {project}"
-    );
-    assert!(
-        project["lastCommitAt"]
-            .as_str()
-            .is_some_and(|at| at.ends_with('Z')),
-        "{project}"
-    );
-    assert!(
-        project["lastAuthor"]
-            .as_str()
-            .is_some_and(|author| !author.is_empty()),
-        "{project}"
-    );
+    project_facts_split(&report["teams"]["personal"]["projectFacts"]["VibeMemory"]);
     assert_eq!(
         report["deleted"],
         json!([{"slug": "oldteam", "date": "2026-09-01", "sizeBytes": report["deleted"][0]["sizeBytes"]}])
