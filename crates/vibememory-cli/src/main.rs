@@ -1233,27 +1233,75 @@ fn tick_command(args: &[String]) -> ExitCode {
         desktop_store: desktop.as_deref(),
         max_deletions: config.max_deletions_per_tick,
         deletions_released: released,
+        team: None,
+        routes: &config.routes,
     };
-    let ticked = vibememory_cli::tick::run(
-        &machine,
-        &vibememory_cli::clock::now(),
-        &vibememory_cli::clock::iso8601(
-            epoch_seconds_signed()
-                - i64::try_from(vibememory_cli::tick::HEARTBEAT_STALE_AFTER.as_secs()).unwrap_or(0),
-        ),
+    let stamp = vibememory_cli::clock::now();
+    let cutoff = vibememory_cli::clock::iso8601(
+        epoch_seconds_signed()
+            - i64::try_from(vibememory_cli::tick::HEARTBEAT_STALE_AFTER.as_secs()).unwrap_or(0),
     );
+    let ticked = vibememory_cli::tick::run(&machine, &stamp, &cutoff);
     report_tick(&ticked, config.max_deletions_per_tick);
+    let mut failed = !ticked.problems.is_empty();
+    for team in vibememory_cli::team_connect::connected_teams(&layout) {
+        println!("team {team}:");
+        match tick_team(&layout, &config, &roots, &team, released, &stamp, &cutoff) {
+            Ok(Some(team_ticked)) => {
+                report_tick(&team_ticked, config.max_deletions_per_tick);
+                failed |= !team_ticked.problems.is_empty();
+            }
+            Ok(None) => println!("skipped: another tick is running for this team"),
+            Err(error) => {
+                eprintln!("team {team}: {error}");
+                failed = true;
+            }
+        }
+    }
     // Once a day, ask whether the backup still follows the host. Nobody runs `doctor` on a
     // schedule, so without this a mirror could stop following the day after it was set up and
     // nothing would ever say so.
     if let Some(state) = mirror_watch(&layout, &config) {
         println!("mirror: {state}");
     }
-    if ticked.problems.is_empty() {
-        ExitCode::SUCCESS
-    } else {
+    if failed {
         ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
+}
+
+/// One run over a team's store: its own lock and state beside its clone, the machine named by its
+/// name in the team, and no Desktop — cards stay in the personal store. `None` when another run
+/// holds the team's lock.
+fn tick_team(
+    layout: &Layout,
+    config: &Config,
+    roots: &vibememory_core::desktop::roots::Roots,
+    team: &str,
+    released: bool,
+    stamp: &str,
+    cutoff: &str,
+) -> Result<Option<vibememory_cli::tick::Ticked>, String> {
+    let record = vibememory_cli::team_connect::read_record(layout, team)?;
+    let store = std::fs::canonicalize(layout.team_store(team))
+        .map_err(|error| format!("the team's clone is not there: {error}"))?;
+    let Ok(_lock) = vibememory_cli::tick::TickLock::take(&layout.team_state_dir(team)) else {
+        return Ok(None);
+    };
+    let machine = vibememory_cli::tick::Machine {
+        store: &store,
+        config_dir: &layout.config_dir,
+        machine_id: &record.store_name,
+        roots,
+        naming: &config.naming,
+        desktop_store: None,
+        max_deletions: config.max_deletions_per_tick,
+        deletions_released: released,
+        team: Some(team),
+        routes: &config.routes,
+    };
+    Ok(Some(vibememory_cli::tick::run(&machine, stamp, cutoff)))
 }
 
 /// `relink <enc> <name> <cwd>` and `import <enc> <name> <cwd>`.

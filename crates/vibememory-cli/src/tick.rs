@@ -147,6 +147,25 @@ pub struct Machine<'a> {
     pub max_deletions: usize,
     /// Whether the person released this one run from that cap.
     pub deletions_released: bool,
+    /// The team whose store this run is over, by id; `None` for the personal store. A team store
+    /// carries sessions and memory only: the machine's history, tasks, Desktop cards and managed
+    /// copies of the configuration stay in the personal store.
+    pub team: Option<&'a str>,
+    /// Which store a working directory belongs to: a run links and takes in only the projects
+    /// routed to its own store, so a session never lands in two.
+    pub routes: &'a vibememory_core::naming::StoreRoutes,
+}
+
+/// Whether a working directory of this machine belongs to the store of this run. A directory the
+/// routes cannot place — two teams claim it — belongs to none: the hook names the conflict, and a
+/// session is never split between stores.
+fn routed_here(machine: &Machine<'_>, local_cwd: &str) -> bool {
+    let syntax = crate::hook::session_start::host_syntax();
+    let canonical = vibememory_core::naming::canonical_cwd(local_cwd, syntax);
+    machine
+        .routes
+        .route(&canonical, syntax)
+        .is_ok_and(|found| found == machine.team)
 }
 
 /// Runs one tick over the store.
@@ -163,10 +182,14 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         // `naming` is read through `machine` by `take_real_directories`, which needs the whole
         // of it; destructuring a copy here would leave two names for one thing.
         naming: _,
-        desktop_store,
+        // read by `exchange_personal`, which the personal store alone runs
+        desktop_store: _,
         max_deletions,
         deletions_released,
+        team,
+        routes: _,
     } = machine;
+    let personal = team.is_none();
     let engine_dir = engine_dir_of(store);
     let state = crate::guard::TickState::read(&engine_dir);
     let mut result = Ticked::default();
@@ -186,7 +209,7 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
 
     result.recorded_links = record_local_links(store, config_dir, machine_id, roots);
 
-    match reconcile_links(store, config_dir, machine_id, roots) {
+    match reconcile_links(machine) {
         Ok(mut outcome) => {
             result.linked.append(&mut outcome.linked);
             result.disagreements.append(&mut outcome.disagreements);
@@ -194,18 +217,8 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         Err(problem) => result.problems.push(problem),
     }
 
-    match publish_outbox(config_dir, store, machine_id, roots, stamp) {
-        Ok(moved) => result.published = moved,
-        Err(problem) => result.problems.push(problem),
-    }
-    match crate::outbox::import(config_dir, store, machine_id, roots, &live) {
-        Ok(moved) => result.imported = moved,
-        // The CLI holding its own lock is not a failure: the next tick is two minutes away.
-        Err(problem) => result.problems.push(problem),
-    }
-
-    if let Some(desktop) = desktop_store {
-        exchange_cards(desktop, store, machine_id, roots, stamp, &mut result);
+    if personal {
+        exchange_personal(machine, stamp, &live, &mut result);
     }
 
     match project_memory(store, machine_id, stamp) {
@@ -223,16 +236,18 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
     // Before `config/` is committed, so that what this machine changed in its managed copies is
     // in the store when the commit looks — and after the merge above, so that what another
     // machine changed is what gets pulled.
-    match crate::managed::reconcile(
-        &crate::install::Layout {
-            config_dir: config_dir.to_path_buf(),
-            engine_dir: engine_dir_of(store),
-        },
-        store,
-        stamp,
-    ) {
-        Ok(managed) => result.managed = managed,
-        Err(problem) => result.problems.push(problem),
+    if personal {
+        match crate::managed::reconcile(
+            &crate::install::Layout {
+                config_dir: config_dir.to_path_buf(),
+                engine_dir: engine_dir_of(store),
+            },
+            store,
+            stamp,
+        ) {
+            Ok(managed) => result.managed = managed,
+            Err(problem) => result.problems.push(problem),
+        }
     }
 
     match commit_shared_files(store, &engine_dir_of(store), &live, stamp) {
@@ -240,9 +255,11 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         Err(problem) => result.problems.push(problem),
     }
 
-    match commit_own_outbox(store, &engine_dir_of(store), machine_id, stamp) {
-        Ok(files) => result.outbox_committed = files,
-        Err(problem) => result.problems.push(problem),
+    if personal {
+        match commit_own_outbox(store, &engine_dir_of(store), machine_id, stamp) {
+            Ok(files) => result.outbox_committed = files,
+            Err(problem) => result.problems.push(problem),
+        }
     }
 
     match clear_stale_heartbeats(store, machine_id, heartbeat_cutoff) {
@@ -277,6 +294,36 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
     }
 
     result
+}
+
+/// The personal store's own exchange: the machine's history and tasks through the outbox, and
+/// Desktop's cards. A team store carries none of them.
+fn exchange_personal(
+    machine: &Machine<'_>,
+    stamp: &str,
+    live: &BTreeSet<String>,
+    result: &mut Ticked,
+) {
+    let &Machine {
+        store,
+        config_dir,
+        machine_id,
+        roots,
+        desktop_store,
+        ..
+    } = machine;
+    match publish_outbox(config_dir, store, machine_id, roots, stamp) {
+        Ok(moved) => result.published = moved,
+        Err(problem) => result.problems.push(problem),
+    }
+    match crate::outbox::import(config_dir, store, machine_id, roots, live) {
+        Ok(moved) => result.imported = moved,
+        // The CLI holding its own lock is not a failure: the next tick is two minutes away.
+        Err(problem) => result.problems.push(problem),
+    }
+    if let Some(desktop) = desktop_store {
+        exchange_cards(desktop, store, machine_id, roots, stamp, result);
+    }
 }
 
 /// Fetches from the remote. No remote at all is not a problem: a store can be local for a while.
@@ -388,14 +435,7 @@ fn take_real_directories(
     state: &crate::guard::TickState,
     result: &mut Ticked,
 ) -> Vec<IgnoredDirectory> {
-    let (imported, ignored) = import_real_directories(
-        machine.store,
-        machine.config_dir,
-        &engine_dir_of(machine.store),
-        stamp,
-        machine.roots,
-        machine.naming,
-    );
+    let (imported, ignored) = import_real_directories(machine, stamp);
     result.imported_directories = imported;
     result.ignored_directories = ignored
         .iter()
@@ -716,17 +756,19 @@ struct Reconciled {
 /// directory that does not exist here, a name this machine resolves differently, and a path
 /// already occupied. None of them is fixed automatically — the first is somebody else's project,
 /// the second is a disagreement worth a person's attention, and the third may be a live session.
-fn reconcile_links(
-    store: &Path,
-    config_dir: &Path,
-    machine_id: &str,
-    roots: &Roots,
-) -> Result<Reconciled, String> {
+fn reconcile_links(machine: &Machine<'_>) -> Result<Reconciled, String> {
+    let &Machine {
+        store,
+        config_dir,
+        machine_id,
+        roots,
+        ..
+    } = machine;
     let mut outcome = Reconciled::default();
     let own = links_file::read(store, machine_id);
 
-    for (machine, record) in links_file::read_all(store) {
-        if machine == machine_id {
+    for (other, record) in links_file::read_all(store) {
+        if other == machine_id {
             continue;
         }
         // A path this machine cannot translate names a directory it does not have.
@@ -734,6 +776,10 @@ fn reconcile_links(
             continue;
         };
         if !Path::new(&local_cwd).is_dir() {
+            continue;
+        }
+        // A project of another store is that store's run to link
+        if !routed_here(machine, &local_cwd) {
             continue;
         }
         // Our own record for the same encoded directory outranks theirs; if the names differ,
@@ -993,13 +1039,17 @@ fn belongs_to_live_session(path: &str, live: &BTreeSet<String>) -> bool {
 /// The working directory is read from the transcripts themselves: `enc` cannot be inverted, but
 /// every record carries the `cwd` it was written in.
 fn import_real_directories(
-    store: &Path,
-    config_dir: &Path,
-    engine_dir: &Path,
+    machine: &Machine<'_>,
     stamp: &str,
-    roots: &Roots,
-    naming: &vibememory_core::naming::NamingConfig,
 ) -> (Vec<String>, Vec<IgnoredDirectory>) {
+    let &Machine {
+        store,
+        config_dir,
+        roots,
+        naming,
+        ..
+    } = machine;
+    let engine_dir = &engine_dir_of(store);
     let mut imported = Vec::new();
     let mut ignored = Vec::new();
     let Ok(entries) = std::fs::read_dir(config_dir.join("projects")) else {
@@ -1018,6 +1068,10 @@ fn import_real_directories(
         let Some(cwd) = working_directory_of(&path) else {
             continue; // nothing but empty scaffolding: the hook will link it on the next start
         };
+        // taken in only by the store its working directory is routed to
+        if !routed_here(machine, &cwd) {
+            continue;
+        }
         let portable = roots.to_portable(&cwd).unwrap_or_else(|_| cwd.clone());
         let syntax = vibememory_core::naming::PathSyntax::Posix;
         let canonical = vibememory_core::naming::canonical_cwd(&cwd, syntax);

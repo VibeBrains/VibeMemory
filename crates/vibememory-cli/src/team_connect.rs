@@ -293,3 +293,20 @@ pub fn refresh(layout: &Layout, team: &str) -> Result<PathBuf, String> {
     crate::connect::write_private(&path, hosts.as_bytes())?;
     Ok(path)
 }
+
+/// The teams connected on this machine: every state directory under `<engine>/stores` that holds a
+/// store record, by id. A pending key directory (`.pending-*`) and an archived one are not teams.
+#[must_use]
+pub fn connected_teams(layout: &Layout) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(layout.engine_dir.join("stores")) else {
+        return Vec::new();
+    };
+    let mut teams: Vec<String> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| vibememory_core::naming::is_slug(name))
+        .filter(|name| layout.team_state_dir(name).join(RECORD_FILE).is_file())
+        .collect();
+    teams.sort();
+    teams
+}
