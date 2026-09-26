@@ -686,13 +686,13 @@ fn team_shapes(raw: &RawSnapshot) -> Result<(), Refusal> {
         if team.deleted.is_some() {
             continue;
         }
-        // The first two bind every live team; a team with its own repository also has a size
-        // and a number of seats.
+        // The first two bind every live team; a team with its own repository also has a size.
+        // Seats are optional: a team without them takes any number of members.
         let named = team.limits.named();
         let required = if team.adopted {
             named.get(..2).unwrap_or_default()
         } else {
-            named.as_slice()
+            named.get(..3).unwrap_or_default()
         };
         if let Some((name, _)) = required.iter().find(|(_, value)| value.is_none()) {
             return Err(refuse(

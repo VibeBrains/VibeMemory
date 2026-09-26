@@ -20,6 +20,7 @@
 
 pub mod access;
 pub mod apply;
+pub mod disk;
 pub mod git_memories;
 pub mod host;
 pub mod hostops;

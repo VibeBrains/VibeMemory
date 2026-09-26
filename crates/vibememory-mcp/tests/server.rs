@@ -839,3 +839,49 @@ fn forgetting_a_disputed_fact_forgets_its_rivals_too() {
         "the rival must not step in as the record: {gone:?}"
     );
 }
+
+#[test]
+fn a_write_past_the_team_quota_is_refused_and_forgetting_still_works() {
+    let fake = memories();
+    save_one(
+        &fake,
+        "store-naming",
+        "The name follows the git common dir.",
+    );
+    let caller = Caller {
+        limits: tools::Limits {
+            quota_bytes: Some(4096),
+            ..tools::Limits::default()
+        },
+        ..CALLER
+    };
+    let fresh = json!({
+        "project": "VibeMemory", "id": "merge-rules", "kind": "project",
+        "description": "how journals merge", "body": "Union by uuid."
+    });
+    fake.store_bytes
+        .store(4000, std::sync::atomic::Ordering::Relaxed);
+
+    let refused = tools::call("memory_save", &fresh, &caller, &fake).expect_err("past the quota");
+    assert!(refused.starts_with("quota_exceeded"), "{refused}");
+    let refused = tools::call(
+        "memory_update",
+        &json!({"project": "VibeMemory", "id": "store-naming", "body": "A longer text."}),
+        &caller,
+        &fake,
+    )
+    .expect_err("an update grows the store as well");
+    assert!(refused.starts_with("quota_exceeded"), "{refused}");
+    tools::call(
+        "memory_delete",
+        &json!({"project": "VibeMemory", "id": "store-naming"}),
+        &caller,
+        &fake,
+    )
+    .expect("forgetting is not stopped by the quota");
+
+    fake.store_bytes
+        .store(0, std::sync::atomic::Ordering::Relaxed);
+    tools::call("memory_save", &fresh, &caller, &fake)
+        .expect("room again once the store is smaller than the quota");
+}

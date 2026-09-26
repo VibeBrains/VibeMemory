@@ -249,6 +249,7 @@ impl Door for Host {
             limits: Limits {
                 max_records: team.limits.max_records,
                 max_record_bytes: team.limits.max_record_bytes,
+                quota_bytes: team.limits.quota_bytes,
             },
             cabinet: self.cabinet.clone(),
         };
@@ -334,5 +335,9 @@ impl Memories for TeamMemories {
 
     fn project_of_directory(&self, directory: &str) -> Result<DirectoryProject, String> {
         self.git.project_of_directory(directory)
+    }
+
+    fn store_bytes(&self) -> Result<u64, String> {
+        self.git.store_bytes()
     }
 }

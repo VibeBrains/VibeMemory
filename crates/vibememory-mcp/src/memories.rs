@@ -66,6 +66,13 @@ pub trait Memories {
     ///
     /// What stopped the rules from answering, or a store that cannot see the client's disk.
     fn project_of_directory(&self, directory: &str) -> Result<DirectoryProject, String>;
+
+    /// The bytes the store takes on disk: what a team's quota counts, history included.
+    ///
+    /// # Errors
+    ///
+    /// A store that cannot be measured.
+    fn store_bytes(&self) -> Result<u64, String>;
 }
 
 /// What the naming rules say about one directory.
@@ -125,6 +132,10 @@ impl<M: Memories + ?Sized> Memories for &M {
 
     fn project_of_directory(&self, directory: &str) -> Result<DirectoryProject, String> {
         (**self).project_of_directory(directory)
+    }
+
+    fn store_bytes(&self) -> Result<u64, String> {
+        (**self).store_bytes()
     }
 }
 
@@ -317,6 +328,10 @@ impl Memories for StoreMemories {
             .ok_or_else(|| "the store has no engine directory above it".to_owned())?;
         directory_project(engine_dir, &real)
     }
+
+    fn store_bytes(&self) -> Result<u64, String> {
+        Ok(crate::disk::dir_size(&self.store, None))
+    }
 }
 
 /// The uuid of a new event: machine, time, a counter for writes inside the same second, record.
@@ -347,6 +362,8 @@ pub struct FakeMemories {
     pub reads: AtomicU64,
     /// What [`Memories::project_of_directory`] answers, by directory.
     pub directories: Mutex<BTreeMap<String, DirectoryProject>>,
+    /// What [`Memories::store_bytes`] answers: the size a test gives the store.
+    pub store_bytes: AtomicU64,
 }
 
 /// A fake's lock is never held across a panic that matters: whatever it holds is still the
@@ -366,6 +383,7 @@ impl FakeMemories {
             history: Mutex::new(BTreeMap::new()),
             reads: AtomicU64::new(0),
             directories: Mutex::new(BTreeMap::new()),
+            store_bytes: AtomicU64::new(0),
         }
     }
 
@@ -462,6 +480,10 @@ impl Memories for FakeMemories {
             .get(directory)
             .cloned()
             .ok_or_else(|| format!("no answer seeded for {directory}"))
+    }
+
+    fn store_bytes(&self) -> Result<u64, String> {
+        Ok(self.store_bytes.load(Ordering::Relaxed))
     }
 }
 

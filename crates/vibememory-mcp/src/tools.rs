@@ -206,6 +206,8 @@ pub struct Limits {
     pub max_records: Option<u64>,
     /// Bytes of one version of a record, as it lands in the journal.
     pub max_record_bytes: Option<u64>,
+    /// Bytes the team's store may take on disk.
+    pub quota_bytes: Option<u64>,
 }
 
 /// Who calls and from where, fixed for the life of a session or of one request.
@@ -246,6 +248,7 @@ impl<'a> Caller<'a> {
             limits: Limits {
                 max_records: None,
                 max_record_bytes: None,
+                quota_bytes: None,
             },
             cabinet: None,
         }
@@ -354,6 +357,7 @@ fn within_limits(
     project: &str,
     memory: &Memory,
     event: &Event,
+    memories: &dyn Memories,
 ) -> Result<(), String> {
     let new = !memory.records.contains_key(event.id());
     if let Some(max) = caller.limits.max_records
@@ -366,13 +370,28 @@ fn within_limits(
             memory.records.len()
         ));
     }
-    if let Some(max) = caller.limits.max_record_bytes {
-        let size = journal::encode(event)
-            .map_err(|error| error.to_string())?
-            .len();
-        if u64::try_from(size).unwrap_or(u64::MAX) > max {
+    let size = journal::encode(event)
+        .map_err(|error| error.to_string())?
+        .len();
+    let size = u64::try_from(size).unwrap_or(u64::MAX);
+    if let Some(max) = caller.limits.max_record_bytes
+        && size > max
+    {
+        return Err(format!(
+            "entry_too_large: this version takes {size} bytes, the team's limit is {max}"
+        ));
+    }
+    // The store only grows: a forgotten memory stays in the history, so over the quota the team
+    // reads and forgets, and writes again once its plan gives it more room
+    if let Some(quota) = caller.limits.quota_bytes {
+        let taken = memories.store_bytes()?;
+        if taken.saturating_add(size) > quota {
+            let cabinet = caller
+                .cabinet
+                .map_or_else(String::new, |cabinet| format!(" at {cabinet}"));
             return Err(format!(
-                "entry_too_large: this version takes {size} bytes, the team's limit is {max}"
+                "quota_exceeded: the team's store takes {taken} bytes of its {quota}; \
+                 a bigger plan in the cabinet{cabinet} makes room"
             ));
         }
     }
@@ -531,7 +550,7 @@ fn save(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> Tool
         merges: Vec::new(),
         action: Action::Upsert { record },
     };
-    within_limits(caller, &project, &memory, &event)?;
+    within_limits(caller, &project, &memory, &event, memories)?;
     memories.append(&project, &event)?;
     Ok(json!({ "saved": id.as_str(), "version": event.uuid }))
 }
@@ -572,7 +591,7 @@ fn update(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> To
         merges,
         action: Action::Upsert { record },
     };
-    within_limits(caller, &project, &memory, &event)?;
+    within_limits(caller, &project, &memory, &event, memories)?;
     memories.append(&project, &event)?;
     Ok(json!({
         "updated": id.as_str(),

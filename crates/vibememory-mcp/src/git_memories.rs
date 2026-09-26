@@ -448,4 +448,8 @@ impl Memories for GitMemories {
     fn project_of_directory(&self, _directory: &str) -> Result<DirectoryProject, String> {
         Ok(DirectoryProject::NotVisible)
     }
+
+    fn store_bytes(&self) -> Result<u64, String> {
+        Ok(crate::disk::dir_size(&self.repo, None))
+    }
 }

@@ -790,14 +790,31 @@
       }
     },
     {
-      "id": "seatsMissing",
+      "id": "seatsAbsentIsUnlimited",
       "provenance": "computed",
-      "note": "An active team has every limit.",
+      "note": "A team pays for its store, not for its people: without seats it takes any number of members.",
       "patch": {
         "teams": {
           "vibebrains": {
             "limits": {
               "seats": null
+            }
+          }
+        }
+      },
+      "expect": {
+        "code": "ok"
+      }
+    },
+    {
+      "id": "quotaMissing",
+      "provenance": "computed",
+      "note": "A team with its own repository always has a quota: the host has nothing else to stop its store growing.",
+      "patch": {
+        "teams": {
+          "vibebrains": {
+            "limits": {
+              "quotaBytes": null
             }
           }
         }

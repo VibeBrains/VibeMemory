@@ -16,6 +16,7 @@ use vibememory_core::terminal::printable;
 
 use crate::access::{self, Snapshot};
 use crate::apply::{self, Step};
+use crate::disk::dir_size;
 use crate::git_memories::{self, GitMemories};
 use crate::host::TeamMemories;
 use crate::http::{self, Grant};
@@ -285,32 +286,6 @@ fn directory_names(dir: &Path) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
-/// Bytes of every file under `root`, symbolic links not followed, `skip` left out.
-fn dir_size(root: &Path, skip: Option<&Path>) -> u64 {
-    let mut total = 0u64;
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.filter_map(Result::ok) {
-            let path = entry.path();
-            if skip.is_some_and(|skip| path == skip) {
-                continue;
-            }
-            let Ok(metadata) = entry.metadata() else {
-                continue;
-            };
-            if metadata.is_dir() {
-                pending.push(path);
-            } else {
-                total = total.saturating_add(metadata.len());
-            }
-        }
-    }
-    total
-}
-
 /// Free and total space of the partition `path` is on, as `df` gives them.
 fn disk(path: &Path) -> Result<Disk, String> {
     let output = Command::new("df")
@@ -457,6 +432,7 @@ fn team_rights(
         limits: Limits {
             max_records: team.limits.max_records,
             max_record_bytes: team.limits.max_record_bytes,
+            quota_bytes: team.limits.quota_bytes,
         },
         cabinet: None,
     };
