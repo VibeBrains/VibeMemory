@@ -1,0 +1,165 @@
+//! The machine key branch of `connect`: the key made for every claim and dropped when the code was
+//! not for a machine, the refusals that set nothing up, and a machine connecting again — its clone
+//! pointed at the new key and the team's own `known_hosts`, the user's ssh configuration untouched.
+//! A first clone over ssh needs the host and is checked by the phase's live gate.
+
+// The test writes files, runs git and ssh-keygen and reads modes, so the purity gate is lifted here.
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::disallowed_methods,
+    clippy::disallowed_types
+)]
+
+mod support;
+
+use std::fs;
+use std::process::Command;
+
+use support::TempDir;
+use vibememory_cli::install::Layout;
+use vibememory_cli::team_connect::{
+    KEY_FILE, KNOWN_HOSTS_FILE, KeyRefusal, PendingKey, RECORD_FILE, keep_key, read_record,
+    ssh_command,
+};
+use vibememory_core::claim::{Claim, KeyGrant, read_answer};
+
+const ANSWERS: &str = include_str!("../../../fixtures/claim/claimAnswers.json");
+
+fn layout(temp: &TempDir) -> Layout {
+    Layout {
+        config_dir: temp.dir("claude"),
+        engine_dir: temp.dir("engine"),
+    }
+}
+
+/// The grant of the fixture's `key` case: team `syncteam`, sessions on.
+fn grant() -> KeyGrant {
+    let file: serde_json::Value = serde_json::from_str(ANSWERS).unwrap();
+    let case = file["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["id"] == "key")
+        .unwrap();
+    let body = case["body"]
+        .as_str()
+        .map_or_else(|| case["body"].to_string(), str::to_owned);
+    let Ok(Claim::Key(grant)) = read_answer(0, 200, &body, file["asked"].as_str().unwrap()) else {
+        panic!("the fixture's key case must read")
+    };
+    grant
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+#[test]
+fn a_key_is_made_for_the_claim_and_dropped_when_unused() {
+    let temp = TempDir::new("connect-key-pending");
+    let layout = layout(&temp);
+    let pending = PendingKey::make(&layout).unwrap();
+    assert!(
+        pending.public.starts_with("ssh-ed25519 "),
+        "{}",
+        pending.public
+    );
+    assert!(!pending.public.contains(char::is_control));
+    pending.discard();
+    // nothing of it stays: the stores directory holds no pending key and no team
+    let left: Vec<_> = fs::read_dir(layout.engine_dir.join("stores"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
+#[test]
+fn refusals_set_nothing_up() {
+    let temp = TempDir::new("connect-key-refusals");
+    let layout = layout(&temp);
+    let mut off = grant();
+    off.mode = "memory".to_owned();
+    let mut hostless = grant();
+    hostless.host_keys.clear();
+    for (grant, installed, want) in [
+        (off, true, KeyRefusal::SessionsOff),
+        (grant(), false, KeyRefusal::EngineMissing),
+        (hostless, true, KeyRefusal::NoHostKeys),
+    ] {
+        let pending = PendingKey::make(&layout).unwrap();
+        assert_eq!(keep_key(&layout, &grant, pending, installed), Err(want));
+        assert!(!layout.team_state_dir(&grant.team).exists());
+    }
+}
+
+#[test]
+fn a_machine_connecting_again_keeps_its_clone_on_the_new_key() {
+    let temp = TempDir::new("connect-key-again");
+    let layout = layout(&temp);
+    let grant = grant();
+    let clone = layout.team_store(&grant.team);
+    fs::create_dir_all(&clone).unwrap();
+    git(&clone, &["init", "--quiet"]);
+    git(
+        &clone,
+        &["remote", "add", "origin", "old@host:teams/syncteam.git"],
+    );
+    let home_ssh = temp.dir("home/.ssh");
+    fs::write(home_ssh.join("config"), "Host *\n").unwrap();
+
+    let pending = PendingKey::make(&layout).unwrap();
+    let public = pending.public.clone();
+    let store = keep_key(&layout, &grant, pending, true).unwrap();
+
+    assert!(!store.cloned);
+    assert_eq!(store.clone, clone);
+    let state = layout.team_state_dir(&grant.team);
+    assert_eq!(
+        fs::read_to_string(state.join(format!("{KEY_FILE}.pub")))
+            .unwrap()
+            .trim(),
+        public
+    );
+    let hosts = fs::read_to_string(state.join(KNOWN_HOSTS_FILE)).unwrap();
+    assert_eq!(
+        hosts,
+        format!("{} {}\n", grant.ssh_host, grant.host_keys[0])
+    );
+    let record = read_record(&layout, &grant.team).unwrap();
+    assert_eq!(record.store_name, grant.store_name);
+    assert!(state.join(RECORD_FILE).exists());
+    assert_eq!(
+        git(&clone, &["remote", "get-url", "origin"]),
+        "vmgit@vibememory.ru:teams/syncteam.git"
+    );
+    assert_eq!(
+        git(&clone, &["config", "core.sshCommand"]),
+        ssh_command(&state)
+    );
+    assert!(ssh_command(&state).starts_with("ssh -F none -i "));
+    // the person's own ssh is not read and not written
+    assert_eq!(
+        fs::read_to_string(home_ssh.join("config")).unwrap(),
+        "Host *\n"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for name in [KEY_FILE, KNOWN_HOSTS_FILE, RECORD_FILE] {
+            let mode = fs::metadata(state.join(name)).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{name}");
+        }
+        let mode = fs::metadata(&state).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+}

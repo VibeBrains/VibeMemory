@@ -325,12 +325,18 @@ fn tokens_json(tokens: &[vibememory_cli::credentials::KeptToken]) -> Vec<serde_j
 /// at the prompt or piped in — for a token and keeps it where only its owner reaches it. Prints
 /// paths and the line that registers the server — never the token.
 fn connect_command(args: &[String]) -> ExitCode {
+    if let [flag, team] = args
+        && flag == "--refresh"
+    {
+        return refresh_command(team);
+    }
     let (asked, agent) = match connect_arguments(args) {
         Ok(parsed) => parsed,
         Err(error) => {
             eprintln!("connect: {error}");
             eprintln!(
-                "usage: vibememory connect --cabinet <address> [--agent <name>], and the code at the prompt"
+                "usage: vibememory connect --cabinet <address> [--agent <name>], and the code at the prompt; \
+                 vibememory connect --refresh <team> after the host changed its key"
             );
             return ExitCode::from(2);
         }
@@ -354,44 +360,47 @@ fn connect_command(args: &[String]) -> ExitCode {
         }
     };
     let layout = layout();
-    let reply = match vibememory_cli::connect::ask_cabinet(&cabinet, &code) {
+    // a key goes with every code; without ssh-keygen only a code for a machine is refused
+    let pending = vibememory_cli::team_connect::PendingKey::make(&layout).ok();
+    let reply = match vibememory_cli::connect::ask_cabinet(
+        &cabinet,
+        &code,
+        pending.as_ref().map(|key| key.public.as_str()),
+    ) {
         Ok(reply) => reply,
         Err(error) => {
+            if let Some(pending) = pending {
+                pending.discard();
+            }
             eprintln!("connect: {error}");
             return ExitCode::FAILURE;
         }
     };
-    let grant = match vibememory_core::claim::read_answer(
-        reply.exit,
-        reply.status,
-        &reply.body,
-        &cabinet,
-    ) {
-        Ok(vibememory_core::claim::Claim::Token(grant)) => grant,
-        Ok(vibememory_core::claim::Claim::Key(grant)) => {
+    let answer =
+        vibememory_core::claim::read_answer(reply.exit, reply.status, &reply.body, &cabinet);
+    let grant = match (answer, pending) {
+        (Ok(vibememory_core::claim::Claim::Token(grant)), pending) => {
+            if let Some(pending) = pending {
+                pending.discard();
+            }
+            grant
+        }
+        (Ok(vibememory_core::claim::Claim::Key(grant)), Some(pending)) => {
+            return connect_key(&layout, &grant, pending);
+        }
+        (Ok(vibememory_core::claim::Claim::Key(grant)), None) => {
             eprintln!(
-                "connect: the code was for a machine key of team {}, and this engine connects \
-                 tokens only; revoke key {} in the cabinet",
+                "connect: the code was for a machine of team {}, and ssh-keygen could not make a \
+                 key here; revoke key {} in the cabinet, install OpenSSH and connect again",
                 grant.team, grant.key_id
             );
             return ExitCode::FAILURE;
         }
-        Err(failure) => {
-            eprintln!("connect: {failure}");
-            // curl's own line, which already names itself
-            if !reply.stderr.is_empty() {
-                eprintln!("{}", vibememory_core::terminal::printable(&reply.stderr));
+        (Err(failure), pending) => {
+            if let Some(pending) = pending {
+                pending.discard();
             }
-            // an answer the engine refused after the cabinet had said yes: the code is spent, and a
-            // token or a key may have been issued that nothing here keeps
-            if matches!(failure, vibememory_core::claim::ClaimFailure::Malformed(_))
-                && reply.status == 200
-            {
-                eprintln!(
-                    "connect: the cabinet may have issued a token or a key for this code: look at the \
-                     team's page and revoke the ones you do not recognise"
-                );
-            }
+            print_claim_failure(&failure, &reply);
             return ExitCode::FAILURE;
         }
     };
@@ -416,6 +425,86 @@ fn connect_command(args: &[String]) -> ExitCode {
     };
     print_connected(&grant, &kept);
     ExitCode::SUCCESS
+}
+
+/// `connect --refresh <team>`: the team's `known_hosts` from the cabinet, after the host changed its
+/// key.
+fn refresh_command(team: &str) -> ExitCode {
+    match vibememory_cli::team_connect::refresh(&layout(), team) {
+        Ok(path) => {
+            println!("refreshed: {} from the cabinet's host keys", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("connect --refresh: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Why a claim gave nothing, with curl's own line and — when the cabinet had said yes to an answer
+/// the engine then refused — the warning that something may have been issued.
+fn print_claim_failure(
+    failure: &vibememory_core::claim::ClaimFailure,
+    reply: &vibememory_cli::connect::CabinetReply,
+) {
+    eprintln!("connect: {failure}");
+    // curl's own line, which already names itself
+    if !reply.stderr.is_empty() {
+        eprintln!("{}", vibememory_core::terminal::printable(&reply.stderr));
+    }
+    // an answer the engine refused after the cabinet had said yes: the code is spent, and a
+    // token or a key may have been issued that nothing here keeps
+    if matches!(failure, vibememory_core::claim::ClaimFailure::Malformed(_)) && reply.status == 200
+    {
+        eprintln!(
+            "connect: the cabinet may have issued a token or a key for this code: look at the \
+                 team's page and revoke the ones you do not recognise"
+        );
+    }
+}
+
+/// A machine key answer: the key kept and the team's store cloned, or why not — with the key's id
+/// to revoke, since the cabinet registered it either way.
+fn connect_key(
+    layout: &vibememory_cli::install::Layout,
+    grant: &vibememory_core::claim::KeyGrant,
+    pending: vibememory_cli::team_connect::PendingKey,
+) -> ExitCode {
+    match vibememory_cli::team_connect::keep_key(layout, grant, pending, engine_configured(layout))
+    {
+        Ok(store) => {
+            println!(
+                "connected: team {} as {}, machine {}",
+                grant.team, grant.member, grant.store_name
+            );
+            println!(
+                "store:     {}{}",
+                store.clone.display(),
+                if store.cloned {
+                    ""
+                } else {
+                    " (kept, now on the new key)"
+                }
+            );
+            println!(
+                "next:      name the team's projects in {} under stores.{}.cwd, or move one with \
+                 `vibememory project move <dir> --to {}`",
+                layout.engine_dir.join("config.json").display(),
+                grant.team,
+                grant.team
+            );
+            ExitCode::SUCCESS
+        }
+        Err(refusal) => {
+            eprintln!("connect: {refusal}");
+            eprintln!(
+                "connect: key {} is registered for this machine in the cabinet: revoke it there",
+                grant.key_id
+            );
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// What `connect` says once the token is kept: where it lies and the line that registers it —

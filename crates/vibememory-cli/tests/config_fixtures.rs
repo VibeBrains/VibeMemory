@@ -48,7 +48,7 @@ struct Case {
 struct Expect {
     #[serde(default)]
     ok: Option<Loaded>,
-    /// One of `invalid`, `missing`, `relativeRoot`, `store`, `naming`.
+    /// One of `invalid`, `missing`, `relativeRoot`, `naming`.
     #[serde(default)]
     error: Option<String>,
 }
@@ -60,9 +60,6 @@ struct Loaded {
     roots: BTreeMap<String, String>,
     /// `auto`, or the directory named in the file.
     desktop_store: String,
-    /// Team store id to its `storeName`; absent means none.
-    #[serde(default)]
-    stores: BTreeMap<String, String>,
 }
 
 fn code(error: &ConfigError) -> &'static str {
@@ -70,7 +67,6 @@ fn code(error: &ConfigError) -> &'static str {
         ConfigError::Invalid(_) => "invalid",
         ConfigError::Missing { .. } => "missing",
         ConfigError::RelativeRoot { .. } => "relativeRoot",
-        ConfigError::Store { .. } => "store",
         ConfigError::Naming(_) => "naming",
     }
 }
@@ -114,17 +110,6 @@ fn config_scenarios() {
                     failures.push(format!(
                         "{label}: roots {:?}, expected {:?}",
                         config.roots, want.roots
-                    ));
-                }
-                let stores: BTreeMap<String, String> = config
-                    .stores
-                    .iter()
-                    .map(|(id, store)| (id.clone(), store.store_name.clone()))
-                    .collect();
-                if stores != want.stores {
-                    failures.push(format!(
-                        "{label}: stores {stores:?}, expected {:?}",
-                        want.stores
                     ));
                 }
                 let store = desktop_store_text(&config.desktop_store);

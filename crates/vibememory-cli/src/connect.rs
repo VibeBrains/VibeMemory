@@ -65,7 +65,11 @@ pub fn read_code(mut input: impl std::io::BufRead) -> Result<String, String> {
 /// [`vibememory_core::claim::read_answer`], and curl's own words on stderr for a person. The status
 /// comes after the body on a line of its own (`--write-out`): a refusal (400) and a cabinet out of
 /// step with its host (503) mean different things, and `--fail` would make both one exit code.
-pub fn ask_cabinet(cabinet: &str, code: &str) -> Result<CabinetReply, String> {
+pub fn ask_cabinet(
+    cabinet: &str,
+    code: &str,
+    public_key: Option<&str>,
+) -> Result<CabinetReply, String> {
     let url = format!("{cabinet}{CLAIM_PATH}");
     let protocol = if cabinet.starts_with("https://") {
         "=https"
@@ -95,7 +99,13 @@ pub fn ask_cabinet(cabinet: &str, code: &str) -> Result<CabinetReply, String> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("curl could not be started: {error}"))?;
-    let body = serde_json::json!({ "code": code }).to_string();
+    // a fresh public key goes with every code: only the answer says whether the code was for a
+    // machine, and a key the cabinet did not take is dropped
+    let body = match public_key {
+        Some(key) => serde_json::json!({ "code": code, "publicKey": key }),
+        None => serde_json::json!({ "code": code }),
+    }
+    .to_string();
     child
         .stdin
         .take()
@@ -194,7 +204,11 @@ pub fn keep_token(layout: &Layout, grant: &TokenGrant) -> Result<KeptToken, Stri
 
 /// Writes `bytes` beside `path`, narrows the rights, then renames over it: the file never exists
 /// in its place with wider rights than the owner's.
-fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
+///
+/// # Errors
+///
+/// The text of what went wrong; a file whose rights could not be narrowed is not left behind.
+pub fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let temporary = beside(path, ".new");
     let written = write_new(&temporary, bytes).and_then(|()| restrict_file(&temporary));
     if let Err(error) = written {
@@ -237,8 +251,13 @@ fn restrict_file(path: &Path) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+/// Narrows a directory to its owner.
+///
+/// # Errors
+///
+/// When the rights could not be set.
 #[cfg(unix)]
-fn restrict_directory(path: &Path) -> Result<(), String> {
+pub fn restrict_directory(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(PRIVATE_DIR_MODE))
         .map_err(|error| error.to_string())
@@ -253,8 +272,13 @@ fn restrict_file(path: &Path) -> Result<(), String> {
 
 /// A directory's entry is inherited by what is made in it (`(OI)(CI)`): a file created there
 /// starts with the owner alone instead of the account's default list.
+/// Narrows a directory to its owner.
+///
+/// # Errors
+///
+/// When the rights could not be set.
 #[cfg(not(unix))]
-fn restrict_directory(path: &Path) -> Result<(), String> {
+pub fn restrict_directory(path: &Path) -> Result<(), String> {
     owner_only(path, "(OI)(CI)F")
 }
 

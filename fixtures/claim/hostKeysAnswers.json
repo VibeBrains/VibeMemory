@@ -1,0 +1,68 @@
+{
+  "description": "team_store::refreshed_known_hosts: the cabinet's GET /api/agent/hostkeys against the record of storeRecords.json#written. `ok` is the new known_hosts text; `error` means the old file stays.",
+  "cases": [
+    {
+      "id": "rotated",
+      "provenance": "computed",
+      "note": "The host changed its key: the new line replaces the team's known_hosts.",
+      "body": "{\"sshHost\": \"vibememory.ru\", \"hostKeys\": [\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIERERERERERERERERERERERERERERERERERERERERERE\"]}",
+      "expect": {
+        "ok": "vibememory.ru ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIERERERERERERERERERERERERERERERERERERERERERE\n"
+      }
+    },
+    {
+      "id": "two",
+      "provenance": "computed",
+      "note": "A host announcing two keys during a rotation: both are trusted.",
+      "body": "{\"sshHost\": \"vibememory.ru\", \"hostKeys\": [\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz\", \"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIERERERERERERERERERERERERERERERERERERERERERE\"]}",
+      "expect": {
+        "ok": "vibememory.ru ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz\nvibememory.ru ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIERERERERERERERERERERERERERERERERERERERERERE\n"
+      }
+    },
+    {
+      "id": "otherHost",
+      "provenance": "computed",
+      "note": "The cabinet now names another host: not switched silently, a new code is asked.",
+      "body": "{\"sshHost\": \"evil.example\", \"hostKeys\": [\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz\"]}",
+      "expect": {
+        "error": null
+      }
+    },
+    {
+      "id": "notEd25519",
+      "provenance": "computed",
+      "note": "Only ed25519 keys are trusted, as in the claim: an ecdsa line is refused.",
+      "body": "{\"sshHost\": \"vibememory.ru\", \"hostKeys\": [\"ecdsa-sha2-nistp256 Zm9v\"]}",
+      "expect": {
+        "error": null
+      }
+    },
+    {
+      "id": "newline",
+      "provenance": "computed",
+      "note": "A key with a line break would add a line of its own choosing to known_hosts.",
+      "body": "{\"sshHost\": \"vibememory.ru\", \"hostKeys\": [\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz\\n* ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz\"]}",
+      "expect": {
+        "error": null
+      }
+    },
+    {
+      "id": "none",
+      "provenance": "computed",
+      "note": "No host key: nothing to check the host by, the old file stays.",
+      "body": "{\"sshHost\": \"vibememory.ru\", \"hostKeys\": []}",
+      "expect": {
+        "error": null
+      }
+    },
+    {
+      "id": "unknownField",
+      "provenance": "computed",
+      "note": "An answer this engine does not know whole is not acted on.",
+      "body": "{\"sshHost\": \"vibememory.ru\", \"hostKeys\": [\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz\"], \"extra\": 1}",
+      "expect": {
+        "error": null
+      }
+    }
+  ]
+}

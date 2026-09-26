@@ -33,7 +33,7 @@ const TOKEN_ID_PREFIX: &str = "tk_";
 const KEY_ID_PREFIX: &str = "mk_";
 
 /// The only machine key type there is.
-const ED25519_PREFIX: &str = "ssh-ed25519 ";
+pub const ED25519_PREFIX: &str = "ssh-ed25519 ";
 
 /// A token as the cabinet handed it over.
 #[derive(Clone, PartialEq, Eq, Deserialize)]

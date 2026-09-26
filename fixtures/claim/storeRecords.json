@@ -1,0 +1,79 @@
+{
+  "description": "StoreRecord::parse: stores/<id>/store.json as connect writes it and every tick reads it. `ok.gitUrl` is the address the clone pushes to.",
+  "cases": [
+    {
+      "id": "written",
+      "provenance": "computed",
+      "note": "The record connect writes from the key answer of claimAnswers.json#key: it reads back whole.",
+      "text": "{\"version\": 1, \"cabinet\": \"https://app.vibememory.ru\", \"team\": \"syncteam\", \"member\": \"alice\", \"machine\": \"laptop\", \"storeName\": \"alice-laptop\", \"keyId\": \"mk_3f8k1p0z\", \"sshHost\": \"vibememory.ru\", \"sshUser\": \"vmgit\", \"remote\": \"teams/syncteam.git\"}",
+      "expect": {
+        "ok": {
+          "gitUrl": "vmgit@vibememory.ru:teams/syncteam.git"
+        }
+      }
+    },
+    {
+      "id": "otherVersion",
+      "provenance": "computed",
+      "note": "A record of another engine version is not guessed at.",
+      "text": "{\"version\": 2, \"cabinet\": \"https://app.vibememory.ru\", \"team\": \"syncteam\", \"member\": \"alice\", \"machine\": \"laptop\", \"storeName\": \"alice-laptop\", \"keyId\": \"mk_3f8k1p0z\", \"sshHost\": \"vibememory.ru\", \"sshUser\": \"vmgit\", \"remote\": \"teams/syncteam.git\"}",
+      "expect": {
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "unknownField",
+      "provenance": "computed",
+      "note": "A field this engine does not know is a record it does not understand.",
+      "text": "{\"version\": 1, \"cabinet\": \"https://app.vibememory.ru\", \"team\": \"syncteam\", \"member\": \"alice\", \"machine\": \"laptop\", \"storeName\": \"alice-laptop\", \"keyId\": \"mk_3f8k1p0z\", \"sshHost\": \"vibememory.ru\", \"sshUser\": \"vmgit\", \"remote\": \"teams/syncteam.git\", \"extra\": \"x\"}",
+      "expect": {
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "missingField",
+      "provenance": "computed",
+      "note": "A half-written record stops the store rather than push without a name.",
+      "text": "{\"version\": 1, \"cabinet\": \"https://app.vibememory.ru\", \"team\": \"syncteam\", \"machine\": \"laptop\", \"storeName\": \"alice-laptop\", \"keyId\": \"mk_3f8k1p0z\", \"sshHost\": \"vibememory.ru\", \"sshUser\": \"vmgit\", \"remote\": \"teams/syncteam.git\"}",
+      "expect": {
+        "error": "invalid"
+      }
+    },
+    {
+      "id": "storeNameOther",
+      "provenance": "computed",
+      "note": "storeName is the machine's directory on the host: it must be <member>-<machine>, never another's.",
+      "text": "{\"version\": 1, \"cabinet\": \"https://app.vibememory.ru\", \"team\": \"syncteam\", \"member\": \"alice\", \"machine\": \"laptop\", \"storeName\": \"bob-laptop\", \"keyId\": \"mk_3f8k1p0z\", \"sshHost\": \"vibememory.ru\", \"sshUser\": \"vmgit\", \"remote\": \"teams/syncteam.git\"}",
+      "expect": {
+        "error": "field"
+      }
+    },
+    {
+      "id": "remoteOtherTeam",
+      "provenance": "computed",
+      "note": "The remote must be the team's own store: a hand edit could point pushes at another team.",
+      "text": "{\"version\": 1, \"cabinet\": \"https://app.vibememory.ru\", \"team\": \"syncteam\", \"member\": \"alice\", \"machine\": \"laptop\", \"storeName\": \"alice-laptop\", \"keyId\": \"mk_3f8k1p0z\", \"sshHost\": \"vibememory.ru\", \"sshUser\": \"vmgit\", \"remote\": \"teams/other.git\"}",
+      "expect": {
+        "error": "field"
+      }
+    },
+    {
+      "id": "sshHostOption",
+      "provenance": "computed",
+      "note": "The host becomes part of an ssh argument: a leading dash would be an option.",
+      "text": "{\"version\": 1, \"cabinet\": \"https://app.vibememory.ru\", \"team\": \"syncteam\", \"member\": \"alice\", \"machine\": \"laptop\", \"storeName\": \"alice-laptop\", \"keyId\": \"mk_3f8k1p0z\", \"sshHost\": \"-oProxyCommand=x\", \"sshUser\": \"vmgit\", \"remote\": \"teams/syncteam.git\"}",
+      "expect": {
+        "error": "field"
+      }
+    },
+    {
+      "id": "memberNotSlug",
+      "provenance": "computed",
+      "note": "member signs memory versions and must be a handle.",
+      "text": "{\"version\": 1, \"cabinet\": \"https://app.vibememory.ru\", \"team\": \"syncteam\", \"member\": \"Alice Smith\", \"machine\": \"laptop\", \"storeName\": \"Alice Smith-laptop\", \"keyId\": \"mk_3f8k1p0z\", \"sshHost\": \"vibememory.ru\", \"sshUser\": \"vmgit\", \"remote\": \"teams/syncteam.git\"}",
+      "expect": {
+        "error": "field"
+      }
+    }
+  ]
+}

@@ -41,4 +41,5 @@ pub mod relink;
 pub mod sha256;
 pub mod store;
 pub mod switch;
+pub mod team_connect;
 pub mod tick;

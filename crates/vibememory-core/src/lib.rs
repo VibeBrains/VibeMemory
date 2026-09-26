@@ -13,6 +13,7 @@ pub mod links;
 pub mod memory;
 pub mod merge;
 pub mod naming;
+pub mod team_store;
 pub mod terminal;
 pub mod token;
 
