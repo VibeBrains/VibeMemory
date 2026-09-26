@@ -404,6 +404,9 @@ if ! asCab "NODE_ENV=production $bun run access:seeded >/dev/null 2>&1"; then
     echo "8/9 Владельца в базе нет, адреса владельца нет: импорт ждёт --owner-email, служба не стартует"
   fi
 fi
+# The archives' directory is shared with the host's export (hostMcp.sh makes it too): whichever deploy runs first, the
+# cabinet's unit names a directory that exists — a missing one stops the unit before it starts.
+sudo install -d -o root -g vmaccess -m 3770 /srv/vibememory/exports
 unit=/etc/systemd/system/vibememory-cabinet.service
 unitText="[Unit]
 Description=VibeMemory cabinet (behind Caddy)
