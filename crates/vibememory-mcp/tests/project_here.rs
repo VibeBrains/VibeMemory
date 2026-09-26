@@ -42,16 +42,19 @@ fn only_a_project_the_store_already_holds_becomes_the_default() {
     fs::create_dir_all(&stray).expect("stray");
 
     assert_eq!(
-        project_here(&engine, &known).expect("resolve"),
+        project_here(&engine, &engine.join("store"), &known).expect("resolve"),
         Some("Known".to_owned())
     );
     // A client may start its servers anywhere; a default that creates projects would scatter
     // memory into stores nobody meant to sync.
-    assert_eq!(project_here(&engine, &stray).expect("resolve"), None);
+    assert_eq!(
+        project_here(&engine, &engine.join("store"), &stray).expect("resolve"),
+        None
+    );
 
     // The tool says why: the rules name it, the store does not hold it.
     assert_eq!(
-        directory_project(&engine, &stray).expect("resolve"),
+        directory_project(&engine, &engine.join("store"), &stray).expect("resolve"),
         DirectoryProject::Unheld {
             name: "scratch".to_owned()
         }

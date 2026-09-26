@@ -255,11 +255,12 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         Err(problem) => result.problems.push(problem),
     }
 
-    if personal {
-        match commit_own_outbox(store, &engine_dir_of(store), machine_id, stamp) {
-            Ok(files) => result.outbox_committed = files,
-            Err(problem) => result.problems.push(problem),
-        }
+    // Every store: the machine's own directory carries its heartbeats, link records and session
+    // tails, which a team's machines read as much as the owner's do. History and tasks reach it
+    // only through the personal exchange above, so a team's copy never holds them.
+    match commit_own_outbox(store, &engine_dir_of(store), machine_id, stamp) {
+        Ok(files) => result.outbox_committed = files,
+        Err(problem) => result.problems.push(problem),
     }
 
     match clear_stale_heartbeats(store, machine_id, heartbeat_cutoff) {

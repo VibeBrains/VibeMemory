@@ -166,13 +166,38 @@ pub struct TranscriptRef {
 pub struct StoreMemories {
     store: PathBuf,
     machine_id: String,
+    /// Where the engine's configuration is: the personal store's parent, but not a team store's —
+    /// that one's parent is the team's state directory.
+    engine_dir: PathBuf,
 }
 
 impl StoreMemories {
-    /// Points at a store directory on behalf of a machine.
+    /// Points at the personal store directory on behalf of a machine.
     #[must_use]
     pub fn new(store: PathBuf, machine_id: String) -> Self {
-        Self { store, machine_id }
+        let engine_dir = store.parent().map(Path::to_path_buf).unwrap_or_default();
+        Self {
+            store,
+            machine_id,
+            engine_dir,
+        }
+    }
+
+    /// Points at any store of this machine — the personal one or a team's clone — with the
+    /// engine directory named, since a team clone does not lie directly in it.
+    #[must_use]
+    pub fn in_engine(engine_dir: PathBuf, store: PathBuf, machine_id: String) -> Self {
+        Self {
+            store,
+            machine_id,
+            engine_dir,
+        }
+    }
+
+    /// The store directory this points at.
+    #[must_use]
+    pub fn store(&self) -> &Path {
+        &self.store
     }
 
     fn journal_of(&self, project: &str) -> PathBuf {
@@ -322,11 +347,7 @@ impl Memories for StoreMemories {
         // The cwd the hook path uses comes from a shell, which resolved the link already — which is
         // why this never showed up there.
         let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        let engine_dir = self
-            .store
-            .parent()
-            .ok_or_else(|| "the store has no engine directory above it".to_owned())?;
-        directory_project(engine_dir, &real)
+        directory_project(&self.engine_dir, &self.store, &real)
     }
 
     fn store_bytes(&self) -> Result<u64, String> {
@@ -493,8 +514,8 @@ impl Memories for FakeMemories {
 /// # Errors
 ///
 /// An unreadable config, or what the naming rules refused.
-pub fn project_here(engine_dir: &Path, cwd: &Path) -> Result<Option<String>, String> {
-    Ok(match directory_project(engine_dir, cwd)? {
+pub fn project_here(engine_dir: &Path, store: &Path, cwd: &Path) -> Result<Option<String>, String> {
+    Ok(match directory_project(engine_dir, store, cwd)? {
         DirectoryProject::Held { name, .. } => Some(name),
         // Only a project the store already holds. A client may start its servers in any
         // directory — measured: `/tmp` resolves to a project called `tmp` — and a default that
@@ -505,12 +526,16 @@ pub fn project_here(engine_dir: &Path, cwd: &Path) -> Result<Option<String>, Str
     })
 }
 
-/// Everything the naming rules say about `cwd`, including why there is no project.
+/// Everything the naming rules say about `cwd` in `store`, including why there is no project.
 ///
 /// # Errors
 ///
 /// An unreadable config, or what the naming rules refused.
-pub fn directory_project(engine_dir: &Path, cwd: &Path) -> Result<DirectoryProject, String> {
+pub fn directory_project(
+    engine_dir: &Path,
+    store: &Path,
+    cwd: &Path,
+) -> Result<DirectoryProject, String> {
     let text = std::fs::read_to_string(engine_dir.join("config.json"))
         .map_err(|error| format!("config.json: {error}"))?;
     let config =
@@ -518,13 +543,9 @@ pub fn directory_project(engine_dir: &Path, cwd: &Path) -> Result<DirectoryProje
             .map_err(|error| format!("config.json: {error}"))?;
     let syntax = vibememory_cli::hook::session_start::host_syntax();
     let canonical = vibememory_core::naming::canonical_cwd(&cwd.to_string_lossy(), syntax);
-    match vibememory_cli::project::resolve(&engine_dir.join("store"), &config.naming, &canonical) {
+    match vibememory_cli::project::resolve(store, &config.naming, &canonical) {
         Ok(vibememory_core::naming::Resolution::Named { name, source }) => {
-            let held = engine_dir
-                .join("store")
-                .join("projects")
-                .join(name.as_str())
-                .is_dir();
+            let held = store.join("projects").join(name.as_str()).is_dir();
             let name = name.as_str().to_owned();
             Ok(if held {
                 DirectoryProject::Held {
@@ -551,12 +572,17 @@ pub fn directory_project(engine_dir: &Path, cwd: &Path) -> Result<DirectoryProje
     }
 }
 
-/// The store of this machine, from the engine's own configuration.
+/// The store a local server started in `cwd` works in — the personal one, or the clone of the team
+/// the directory is routed to — with the member its versions are signed by in a team.
 ///
 /// # Errors
 ///
-/// What stopped the configuration from being read.
-pub fn from_engine(engine_dir: &Path, config_dir: &Path) -> Result<StoreMemories, String> {
+/// An unreadable configuration, or a directory of a team that is not connected here: the server
+/// then does not start rather than write a team's memory into the personal store.
+pub fn for_directory(
+    engine_dir: &Path,
+    cwd: &Path,
+) -> Result<(StoreMemories, Option<String>), String> {
     let text = std::fs::read_to_string(engine_dir.join("config.json"))
         .map_err(|error| format!("config.json: {error}"))?;
     // The same syntax the engine reads its own config with; the roots inside are this machine's,
@@ -564,9 +590,19 @@ pub fn from_engine(engine_dir: &Path, config_dir: &Path) -> Result<StoreMemories
     let config =
         vibememory_cli::config::Config::parse(&text, vibememory_core::naming::PathSyntax::Posix)
             .map_err(|error| format!("config.json: {error}"))?;
-    let _ = config_dir;
-    Ok(StoreMemories::new(
-        engine_dir.join("store"),
-        config.machine_id,
+    let layout = vibememory_cli::install::Layout {
+        config_dir: PathBuf::new(),
+        engine_dir: engine_dir.to_path_buf(),
+    };
+    let syntax = vibememory_cli::hook::session_start::host_syntax();
+    let canonical = vibememory_core::naming::canonical_cwd(&cwd.to_string_lossy(), syntax);
+    let store = vibememory_cli::stores::for_cwd(&layout, &config, &canonical, syntax)?;
+    let member = match &store.team {
+        Some(team) => Some(vibememory_cli::team_connect::read_record(&layout, team)?.member),
+        None => None,
+    };
+    Ok((
+        StoreMemories::in_engine(engine_dir.to_path_buf(), store.clone, store.machine_id),
+        member,
     ))
 }

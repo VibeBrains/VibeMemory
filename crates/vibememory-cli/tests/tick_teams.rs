@@ -221,6 +221,12 @@ fn each_store_takes_in_only_its_own_projects() {
     let later = tick(&setup, Some("acme"));
     assert!(later.problems.is_empty(), "{later:?}");
     assert!(tracked(&clone).contains(&new), "{:?}", tracked(&clone));
+    // the machine's own records reach the team: its teammates read the links and the heartbeats
+    assert!(
+        tracked(&clone).contains(&"machines/alice-mac/links.json".to_owned()),
+        "{:?}",
+        tracked(&clone)
+    );
     assert!(!tracked(&clone).contains(&old));
 
     // a second personal run leaves the team's project where it is

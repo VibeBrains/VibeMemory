@@ -23,7 +23,7 @@ use vibememory_mcp::host::Host;
 use vibememory_mcp::hostops::{self, ApplyPaths, HostPaths};
 use vibememory_mcp::http;
 use vibememory_mcp::layout;
-use vibememory_mcp::memories::{Memories, from_engine, project_here};
+use vibememory_mcp::memories::{Memories, for_directory, project_here};
 use vibememory_mcp::protocol;
 use vibememory_mcp::tools::Caller;
 
@@ -140,29 +140,37 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let config_dir = engine_dir.clone();
-    let memories = match from_engine(&engine_dir, &config_dir) {
-        Ok(memories) => memories,
+    // The directory the client started us in. Measured 2026-09-13: Claude Code starts its stdio
+    // servers in the session's project directory — which also decides the store: a team's project
+    // writes into the team's clone, signed as the member.
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(problem) => {
+            eprintln!("vibememory-mcp: no working directory: {problem}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let (memories, member) = match for_directory(&engine_dir, &cwd) {
+        Ok(chosen) => chosen,
         Err(problem) => {
             eprintln!("vibememory-mcp: {problem}");
             return ExitCode::FAILURE;
         }
     };
-
-    // The project of the directory the client started us in. Measured 2026-09-13: Claude Code
-    // starts its stdio servers in the session's project directory. Not finding one is not a
-    // failure — searches still work, and a write then has to name its project.
-    let project = match std::env::current_dir()
-        .map_err(|error| error.to_string())
-        .and_then(|cwd| project_here(&engine_dir, &cwd))
-    {
+    // Not finding a project is not a failure — searches still work, and a write then has to name
+    // its project.
+    let project = match project_here(&engine_dir, memories.store(), &cwd) {
         Ok(project) => project,
         Err(problem) => {
             eprintln!("vibememory-mcp: no project for this directory: {problem}");
             None
         }
     };
-    serve(&memories, &Caller::owner(&agent, project.as_deref()))
+    let caller = match member.as_deref() {
+        Some(member) => Caller::member_of_team(&agent, member, project.as_deref()),
+        None => Caller::owner(&agent, project.as_deref()),
+    };
+    serve(&memories, &caller)
 }
 
 /// Where the host's commands find the snapshot and the team stores: the host's layout, or another

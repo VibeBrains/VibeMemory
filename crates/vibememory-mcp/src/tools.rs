@@ -238,9 +238,20 @@ impl<'a> Caller<'a> {
     /// The store's owner on their own store: every right, every project, no limits, no member.
     #[must_use]
     pub const fn owner(agent: &'a str, project: Option<&'a str>) -> Self {
+        Self::signed(agent, None, project)
+    }
+
+    /// A local server in a team's project: the machine's own, writing as the member `connect`
+    /// recorded, so every version it adds to the team is signed like one written over the host.
+    #[must_use]
+    pub const fn member_of_team(agent: &'a str, member: &'a str, project: Option<&'a str>) -> Self {
+        Self::signed(agent, Some(member), project)
+    }
+
+    const fn signed(agent: &'a str, member: Option<&'a str>, project: Option<&'a str>) -> Self {
         Self {
             agent,
-            member: None,
+            member,
             project,
             writes: Writes::Allowed,
             history: true,

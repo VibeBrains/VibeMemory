@@ -174,6 +174,11 @@ pub fn keep_key(
             &state_dir,
             &["-c", &format!("core.sshCommand={ssh}"), "clone", "--quiet"],
         );
+        // the store's own settings from the first moment: git writes its defaults at init, and
+        // `core.autocrlf` must hold before the first file is checked out
+        for (key, value, _why) in crate::install::GIT_SETTINGS {
+            command.arg("-c").arg(format!("{key}={value}"));
+        }
         command.arg(record.git_url()).arg(&clone);
         match crate::git::run_capturing(command, CLONE_TIMEOUT).map_err(failed)? {
             Ok(_) => {}

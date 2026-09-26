@@ -474,6 +474,15 @@ fn connect_key(
     match vibememory_cli::team_connect::keep_key(layout, grant, pending, engine_configured(layout))
     {
         Ok(store) => {
+            // the clone's merge drivers and this machine's directory, before the first tick merges
+            let applied = vibememory_cli::install::apply(
+                layout,
+                &vibememory_cli::install::plan_team(layout, &grant.team),
+                false,
+            );
+            for (what, error) in &applied.failed {
+                eprintln!("connect: {what} — {error}");
+            }
             println!(
                 "connected: team {} as {}, machine {}",
                 grant.team, grant.member, grant.store_name

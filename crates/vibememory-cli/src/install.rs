@@ -16,7 +16,7 @@ use vibememory_core::naming::PathSyntax;
 use crate::config::Config;
 
 /// Git settings the store repository must carry, with the reason each one exists.
-const GIT_SETTINGS: &[(&str, &str, &str)] = &[
+pub const GIT_SETTINGS: &[(&str, &str, &str)] = &[
     (
         "core.autocrlf",
         "false",
@@ -190,8 +190,12 @@ fn resolve_dir(
 /// One thing that must be true about this machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
-    /// A git setting of the store repository.
+    /// A git setting of a store repository.
     GitSetting {
+        /// The team whose clone it is set in; `None` for the personal store. A team's clone needs
+        /// the merge drivers as much as the personal one: without them two members writing memory
+        /// between ticks would conflict on every run.
+        team: Option<String>,
         /// Key, e.g. `core.autocrlf`.
         key: &'static str,
         /// The value it must have. Owned, because a merge driver's value names this machine's
@@ -200,8 +204,10 @@ pub enum Step {
     },
     /// The store's `.gitattributes`, which decides how merges are driven.
     Gitattributes,
-    /// A directory the store must hold.
+    /// A directory a store must hold.
     StoreDir {
+        /// The team whose clone holds it; `None` for the personal store.
+        team: Option<String>,
         /// Relative to the store.
         relative: String,
     },
@@ -267,9 +273,15 @@ impl Step {
     #[must_use]
     pub fn describe(&self) -> String {
         match self {
-            Self::GitSetting { key, value } => format!("git config {key}={value}"),
+            Self::GitSetting { team, key, value } => match team {
+                None => format!("git config {key}={value}"),
+                Some(team) => format!("git config {key}={value} in team {team}'s store"),
+            },
             Self::Gitattributes => ".gitattributes of the store".to_owned(),
-            Self::StoreDir { relative } => format!("directory {relative}"),
+            Self::StoreDir { team, relative } => match team {
+                None => format!("directory {relative}"),
+                Some(team) => format!("directory {relative} in team {team}'s store"),
+            },
             Self::ManagedCopy { name } => format!("managed copy of {name}"),
             Self::SkillsLink => "skills link".to_owned(),
             Self::Schedule => "scheduled tick".to_owned(),
@@ -344,7 +356,7 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
     let store = layout.store();
     let mut actions = Vec::new();
 
-    push_git_settings(layout, &store, &mut actions);
+    push_git_settings(layout, &store, None, &mut actions);
     actions.push(Action {
         step: Step::Gitattributes,
         state: file_state(&store.join(".gitattributes"), GITATTRIBUTES),
@@ -352,10 +364,14 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
     for relative in store_dirs(&config.machine_id) {
         let state = dir_state(&store.join(&relative));
         actions.push(Action {
-            step: Step::StoreDir { relative },
+            step: Step::StoreDir {
+                team: None,
+                relative,
+            },
             state,
         });
     }
+    push_team_stores(layout, &mut actions);
     for name in MANAGED_FILES {
         actions.push(Action {
             step: Step::ManagedCopy { name },
@@ -683,14 +699,21 @@ fn commit_scaffolding(layout: &Layout, store: &Path, paths: &[String]) -> Result
     Ok(())
 }
 
+/// The clone a step is about: a team's, or the personal store.
+fn store_of(layout: &Layout, team: Option<&str>) -> PathBuf {
+    team.map_or_else(|| layout.store(), |team| layout.team_store(team))
+}
+
 /// Makes one step true.
 fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
     let store = layout.store();
     match step {
-        Step::GitSetting { key, value } => set_git_setting(&store, key, value),
+        Step::GitSetting { team, key, value } => {
+            set_git_setting(&store_of(layout, team.as_deref()), key, value)
+        }
         Step::Gitattributes => write_new(&store.join(".gitattributes"), GITATTRIBUTES.as_bytes()),
-        Step::StoreDir { relative } => {
-            let path = store.join(relative);
+        Step::StoreDir { team, relative } => {
+            let path = store_of(layout, team.as_deref()).join(relative);
             std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
             // A directory with nothing in it is not carried by git, and the CLI's own sweeper
             // removes empty directories under the config root.
@@ -983,10 +1006,11 @@ fn install_binary(layout: &Layout) -> Result<(), String> {
 
 /// Adds the git settings of the store: the fixed ones, then the merge drivers, whose lines name
 /// this machine's binary.
-fn push_git_settings(layout: &Layout, store: &Path, actions: &mut Vec<Action>) {
+fn push_git_settings(layout: &Layout, store: &Path, team: Option<&str>, actions: &mut Vec<Action>) {
     for (key, value, _why) in GIT_SETTINGS {
         actions.push(Action {
             step: Step::GitSetting {
+                team: team.map(str::to_owned),
                 key,
                 value: (*value).to_owned(),
             },
@@ -997,9 +1021,44 @@ fn push_git_settings(layout: &Layout, store: &Path, actions: &mut Vec<Action>) {
         let value = merge_driver_command(layout, driver);
         let state = merge_driver_state(store, key, driver, &value);
         actions.push(Action {
-            step: Step::GitSetting { key, value },
+            step: Step::GitSetting {
+                team: team.map(str::to_owned),
+                key,
+                value,
+            },
             state,
         });
+    }
+}
+
+/// What a connected team's clone needs: the git settings and merge drivers of the personal store,
+/// and this machine's directory — the one of `machines/` the host lets it push. Nothing of
+/// `config/`, and no `.gitattributes`: that file is the host's, and the clone gets it by fetch.
+/// `connect` applies it right after the clone, so the first merge already has its drivers.
+#[must_use]
+pub fn plan_team(layout: &Layout, team: &str) -> Vec<Action> {
+    let mut actions = Vec::new();
+    let Ok(record) = crate::team_connect::read_record(layout, team) else {
+        return actions;
+    };
+    let clone = layout.team_store(team);
+    push_git_settings(layout, &clone, Some(team), &mut actions);
+    let relative = format!("machines/{}", record.store_name);
+    let state = dir_state(&clone.join(&relative));
+    actions.push(Action {
+        step: Step::StoreDir {
+            team: Some(team.to_owned()),
+            relative,
+        },
+        state,
+    });
+    actions
+}
+
+/// Every connected team's plan, for `install` and `doctor`.
+fn push_team_stores(layout: &Layout, actions: &mut Vec<Action>) {
+    for team in crate::team_connect::connected_teams(layout) {
+        actions.extend(plan_team(layout, &team));
     }
 }
 
@@ -1028,7 +1087,12 @@ fn push_schedule_step(layout: &Layout, actions: &mut Vec<Action>) {
 /// would make `doctor` fail for ever on a perfectly healthy install.
 fn push_mcp_step(layout: &Layout, actions: &mut Vec<Action>) {
     let source = mcp_source();
-    if source.is_none() && !installed_named(layout, MCP_BINARY).exists() {
+    // With a team connected the step is never skipped: a local server in the team's project is
+    // how its memory is written here, and without the binary it simply does not start
+    if source.is_none()
+        && !installed_named(layout, MCP_BINARY).exists()
+        && crate::team_connect::connected_teams(layout).is_empty()
+    {
         return;
     }
     actions.push(Action {
