@@ -25,6 +25,8 @@ use vibememory_core::naming::{PathSyntax, StoreRoutes, encode_cwd};
 
 const CUTOFF: &str = "2026-09-05T00:00:00Z";
 const STAMP: &str = "2026-09-05T10:00:00Z";
+/// An hour after `STAMP`: when a pause started at `STAMP` asks the host again.
+const RECHECK: &str = "2026-09-05T11:00:00Z";
 const TEAM_SESSION: &str = "11111111-1111-4111-8111-111111111111";
 const OWN_SESSION: &str = "22222222-2222-4222-8222-222222222222";
 
@@ -98,6 +100,11 @@ fn setup(temp: &TempDir) -> Setup {
 }
 
 fn tick(setup: &Setup, team: Option<&str>) -> Ticked {
+    tick_at(setup, team, STAMP)
+}
+
+/// One run at a given moment; a pause started now asks the host again an hour later.
+fn tick_at(setup: &Setup, team: Option<&str>, stamp: &str) -> Ticked {
     let store = match team {
         None => setup.engine.join("store"),
         Some(id) => setup.engine.join("stores").join(id).join("store"),
@@ -123,8 +130,9 @@ fn tick(setup: &Setup, team: Option<&str>) -> Ticked {
         deletions_released: false,
         team,
         routes: &setup.routes,
+        recheck_at: RECHECK,
     };
-    run(&machine, STAMP, CUTOFF)
+    run(&machine, stamp, CUTOFF)
 }
 
 /// Where a session directory of `cwd` points once linked, or `None` while it is a real directory.
@@ -229,6 +237,16 @@ fn each_store_takes_in_only_its_own_projects() {
     );
     assert!(!tracked(&clone).contains(&old));
 
+    // the team's store carries sessions and memory only: a file under `config/` is not sent
+    fs::create_dir_all(clone.join("config")).unwrap();
+    fs::write(clone.join("config/settings.json"), "{}").unwrap();
+    // a session given to the team explicitly goes with the next run
+    vibememory_cli::local_only::release(&clone, TEAM_SESSION).unwrap();
+    let shared = tick(&setup, Some("acme"));
+    assert!(shared.problems.is_empty(), "{shared:?}");
+    assert!(tracked(&clone).contains(&old), "{:?}", tracked(&clone));
+    assert!(!tracked(&clone).contains(&"config/settings.json".to_owned()));
+
     // a second personal run leaves the team's project where it is
     let again = tick(&setup, None);
     assert!(again.imported_directories.is_empty(), "{again:?}");
@@ -301,4 +319,72 @@ fn a_team_run_links_no_project_of_another_store() {
     let team = tick(&setup, Some("acme"));
     assert!(team.linked.is_empty(), "{team:?}");
     assert_eq!(link_of(&setup, &setup.own_cwd), None);
+}
+
+#[test]
+fn a_host_refusal_for_the_teams_reasons_pauses_pushes_and_an_hour_later_it_asks_again() {
+    let temp = TempDir::new("tick-teams-pause");
+    let setup = setup(&temp);
+    let team_store = setup.engine.join("stores/acme/store");
+    let bare = temp.dir("acme.git");
+    git(
+        &bare,
+        &["init", "--bare", "--quiet", "--initial-branch=main"],
+    );
+    git(&team_store, &["branch", "-M", "main"]);
+    git(
+        &team_store,
+        &["remote", "add", "origin", &bare.display().to_string()],
+    );
+    git(&team_store, &["push", "--quiet", "-u", "origin", "main"]);
+    // the host's answer, as its pre-receive writes it
+    let hook = bare.join("hooks/pre-receive");
+    fs::write(
+        &hook,
+        "#!/bin/sh\necho 'vibememory: quota' >&2\necho '262144000 bytes over a quota of 209715200' >&2\nexit 1\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    fs::write(team_store.join("change"), "x").unwrap();
+    git(&team_store, &["add", "change"]);
+    git(&team_store, &["commit", "--quiet", "-m", "local change"]);
+
+    let refused = tick(&setup, Some("acme"));
+    assert!(
+        refused.problems.is_empty(),
+        "a pause is not a failure: {refused:?}"
+    );
+    let pause = refused.pause.clone().expect("paused");
+    assert_eq!(pause.code, "quota");
+    assert_eq!(pause.lines, ["262144000 bytes over a quota of 209715200"]);
+    let state = TickState::read(&setup.engine.join("stores/acme"));
+    assert_eq!(state.pause.as_ref(), Some(&pause));
+    assert_eq!(state.consecutive_failures, 0);
+    assert_eq!(
+        TickState::read(&setup.engine).pause,
+        None,
+        "the personal store is not paused"
+    );
+
+    // before the recheck nothing is pushed, and the pause stays as it began
+    fs::remove_file(&hook).unwrap();
+    let waiting = tick_at(&setup, Some("acme"), "2026-09-05T10:30:00Z");
+    assert!(!waiting.pushed);
+    assert_eq!(
+        waiting.pause.as_ref().map(|pause| pause.since.as_str()),
+        Some(STAMP)
+    );
+
+    // the plan grew: the recheck pushes and the pause ends
+    let again = tick_at(&setup, Some("acme"), RECHECK);
+    assert!(again.pushed, "{again:?}");
+    assert_eq!(again.pause, None);
+    assert_eq!(
+        TickState::read(&setup.engine.join("stores/acme")).pause,
+        None
+    );
 }

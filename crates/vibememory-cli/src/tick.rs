@@ -122,6 +122,8 @@ pub struct Ticked {
     pub store_cycle: StoreCycle,
     /// What went wrong, if anything. A tick reports and returns; it never panics a machine.
     pub problems: Vec<String>,
+    /// The pause the host put this store's pushes under, when there is one after this run.
+    pub pause: Option<crate::guard::StorePause>,
 }
 
 /// Runs one tick over the store.
@@ -147,6 +149,9 @@ pub struct Machine<'a> {
     pub max_deletions: usize,
     /// Whether the person released this one run from that cap.
     pub deletions_released: bool,
+    /// When a paused store asks its host again, if this run pauses it: the caller's clock, one
+    /// recheck interval ahead.
+    pub recheck_at: &'a str,
     /// The team whose store this run is over, by id; `None` for the personal store. A team store
     /// carries sessions and memory only: the machine's history, tasks, Desktop cards and managed
     /// copies of the configuration stay in the personal store.
@@ -188,6 +193,7 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         deletions_released,
         team,
         routes: _,
+        recheck_at,
     } = machine;
     let personal = team.is_none();
     let engine_dir = engine_dir_of(store);
@@ -250,7 +256,7 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         }
     }
 
-    match commit_shared_files(store, &engine_dir_of(store), &live, stamp) {
+    match commit_shared_files(store, &engine_dir_of(store), &live, stamp, personal) {
         Ok(files) => result.shared_files_committed = files,
         Err(problem) => result.problems.push(problem),
     }
@@ -269,14 +275,12 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
     }
 
     if allowed {
-        // A refused push is a failure of the store cycle like any other. It used to be a bare
-        // `false`, indistinguishable from "nothing to send": on 2026-09-12 the host's disk filled
-        // up, every push was refused for a day, and the tick went on reporting no failures while
-        // 291 commits stayed on this machine only.
-        match push(store) {
-            Ok(pushed) => result.pushed = pushed,
-            Err(problem) => result.problems.push(problem),
-        }
+        // A refused push is a failure of the store cycle — it used to be a bare `false`,
+        // indistinguishable from "nothing to send": on 2026-09-12 the host's disk filled up, every
+        // push was refused for a day, and the tick reported no failures while 291 commits stayed
+        // on this machine only. A team's host refusing for the team's own reasons is not that: it
+        // pauses the store's pushes, says why, and asks again after `PAUSE_RECHECK`.
+        push_or_pause(store, &state, stamp, recheck_at, &mut result);
     }
 
     // A run counts as failed when something went wrong with the store itself; a held deletion is
@@ -288,6 +292,7 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
     let next = crate::guard::TickState {
         deletions_held: result.deletions_held,
         ignored: seen_before,
+        pause: result.pause.clone(),
         ..next
     };
     if let Err(problem) = next.write(&engine_dir) {
@@ -295,6 +300,53 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
     }
 
     result
+}
+
+/// Pushes unless the host paused this store and its recheck is not due; a push that goes through
+/// ends the pause, a refusal for the team's own reasons starts or renews it.
+fn push_or_pause(
+    store: &Path,
+    state: &crate::guard::TickState,
+    stamp: &str,
+    recheck_at: &str,
+    result: &mut Ticked,
+) {
+    if !state.push_due(stamp) {
+        result.pause.clone_from(&state.pause);
+        return;
+    }
+    match push(store) {
+        Ok(pushed) => {
+            result.pushed = pushed;
+            result.pause = None;
+        }
+        Err(problem) => match paused_by_host(&problem, stamp, recheck_at) {
+            Some(pause) => result.pause = Some(pause),
+            None => result.problems.push(problem),
+        },
+    }
+}
+
+/// A refusal of the host that pauses the store, rather than a failure the back-off counts: the
+/// team's standing or a path the clone may not hold. A host short of disk for now is a failure
+/// like any other, and the next tick tries again.
+fn paused_by_host(
+    problem: &str,
+    stamp: &str,
+    recheck_at: &str,
+) -> Option<crate::guard::StorePause> {
+    let refusal = vibememory_core::push_refusal::parse(problem)?;
+    if vibememory_core::push_refusal::remedy(&refusal.code)
+        == vibememory_core::push_refusal::Remedy::Transient
+    {
+        return None;
+    }
+    Some(crate::guard::StorePause {
+        code: refusal.code,
+        lines: refusal.lines,
+        since: stamp.to_owned(),
+        recheck_at: recheck_at.to_owned(),
+    })
 }
 
 /// The personal store's own exchange: the machine's history and tasks through the outbox, and
@@ -892,6 +944,9 @@ fn confirmed_transcript(dirs: &[std::path::PathBuf], id: &str) -> Option<String>
         .map(|path| path.display().to_string())
 }
 
+/// How long a paused store waits before it asks its host again.
+pub const PAUSE_RECHECK: Duration = Duration::from_hours(1);
+
 /// How long a session may go without a heartbeat before this machine stops claiming it is live.
 ///
 /// The hooks refresh it on every stop and at the end, so a session unheard-of for this long ended
@@ -998,12 +1053,16 @@ fn commit_shared_files(
     engine_dir: &Path,
     live: &BTreeSet<String>,
     stamp: &str,
+    personal: bool,
 ) -> Result<usize, String> {
-    // `config/` too: the shared skills and managed copies live there, and nothing else commits
-    // them. A skill rewritten on this machine stayed uncommitted for a day because this step
-    // looked only at `projects/`.
+    // `config/` too in the personal store: the shared skills and managed copies live there, and
+    // nothing else commits them. A skill rewritten on this machine stayed uncommitted for a day
+    // because this step looked only at `projects/`. A team's store carries sessions and memory
+    // alone — its host refuses `config/` — so there the engine does not even try.
     let mut changed = git::changed_paths(store, "projects", TIMEOUT)?;
-    changed.extend(git::changed_paths(store, "config", TIMEOUT)?);
+    if personal {
+        changed.extend(git::changed_paths(store, "config", TIMEOUT)?);
+    }
     let candidates: Vec<String> = changed
         .into_iter()
         .filter(|path| !belongs_to_live_session(path, live))

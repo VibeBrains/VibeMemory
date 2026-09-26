@@ -140,6 +140,12 @@ fn the_state_survives_a_round_trip_and_a_machine_that_never_ticked_is_clean() {
         runs_to_skip: 2,
         deletions_held: 37,
         ignored: Vec::new(),
+        pause: Some(vibememory_cli::guard::StorePause {
+            code: "quota".to_owned(),
+            lines: vec!["over the plan".to_owned()],
+            since: "2026-09-05T10:00:00Z".to_owned(),
+            recheck_at: "2026-09-05T11:00:00Z".to_owned(),
+        }),
     };
     state.write(&engine).expect("write");
     assert_eq!(TickState::read(&engine), state);

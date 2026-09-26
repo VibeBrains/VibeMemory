@@ -49,6 +49,7 @@ fn main() -> ExitCode {
         Some("relink") => relink_command(&args.collect::<Vec<String>>(), false),
         Some("import") => relink_command(&args.collect::<Vec<String>>(), true),
         Some("forget") => forget_command(args.next().as_deref()),
+        Some("session") => session_command(&args.collect::<Vec<String>>()),
         Some("merge-driver") => merge_driver_command(&args.collect::<Vec<String>>()),
         Some("hook") => match args.next().as_deref() {
             Some("session-start") => session_start_hook(),
@@ -681,6 +682,47 @@ fn install(dry_run: bool) -> ExitCode {
     }
 }
 
+/// `session share <sid>`: gives the team a session from before its project went to the team. The
+/// session stays where it is; it only leaves the list of what this machine keeps to itself, and the
+/// next tick commits it into the team.
+fn session_command(args: &[String]) -> ExitCode {
+    let [verb, session] = args else {
+        eprintln!("usage: vibememory session share <session-id>");
+        return ExitCode::from(2);
+    };
+    if verb != "share" {
+        eprintln!("usage: vibememory session share <session-id>");
+        return ExitCode::from(2);
+    }
+    let layout = layout();
+    let mut shared = false;
+    for team in vibememory_cli::team_connect::connected_teams(&layout) {
+        match vibememory_cli::local_only::release(&layout.team_store(&team), session) {
+            Ok(released) if !released.is_empty() => {
+                shared = true;
+                println!(
+                    "shared with team {team}: {} file(s); the next tick sends them",
+                    released.len()
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("session share: team {team}: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    if shared {
+        ExitCode::SUCCESS
+    } else {
+        eprintln!(
+            "session share: no team keeps {} on this machine alone",
+            vibememory_core::terminal::printable(session)
+        );
+        ExitCode::FAILURE
+    }
+}
+
 /// `SessionStart`: put the link in place before the CLI creates a real directory.
 ///
 /// Always exits 0. A hook that fails takes the session with it, and no synchronisation is worth
@@ -1177,14 +1219,35 @@ fn forget_command(session_id: Option<&str>) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let Ok(store) = std::fs::canonicalize(layout.store()) else {
-        eprintln!("the store is not there yet; run `vibememory install` first");
-        return ExitCode::FAILURE;
+    // The store that holds the session — a team's, when it went to a team — or else the personal
+    // one: a tombstone there still stops the session from being brought back from elsewhere
+    let personal = vibememory_cli::stores::personal(&layout, &config);
+    let teams = vibememory_cli::team_connect::connected_teams(&layout);
+    let mut stores = std::iter::once(personal.clone()).chain(
+        teams
+            .iter()
+            .filter_map(|team| vibememory_cli::stores::team(&layout, team).ok()),
+    );
+    let found = stores.find_map(|store| {
+        let clone = std::fs::canonicalize(&store.clone).ok()?;
+        let path = find_transcript(&clone, session_id)?;
+        Some((vibememory_cli::stores::StoreOf { clone, ..store }, path))
+    });
+    let (owner, path) = if let Some(found) = found {
+        found
+    } else {
+        let Ok(clone) = std::fs::canonicalize(&personal.clone) else {
+            eprintln!("the store is not there yet; run `vibememory install` first");
+            return ExitCode::FAILURE;
+        };
+        (
+            vibememory_cli::stores::StoreOf { clone, ..personal },
+            String::new(),
+        )
     };
-    let path = find_transcript(&store, session_id).unwrap_or_default();
     match vibememory_cli::forget::forget(
-        &store,
-        &config.machine_id,
+        &owner.clone,
+        &owner.machine_id,
         session_id,
         &path,
         &vibememory_cli::clock::now(),
@@ -1240,6 +1303,11 @@ fn tick_command(args: &[String]) -> ExitCode {
         }
     };
 
+    // when a store paused by its host this run asks the host again
+    let recheck = vibememory_cli::clock::iso8601(
+        epoch_seconds_signed()
+            + i64::try_from(vibememory_cli::tick::PAUSE_RECHECK.as_secs()).unwrap_or(0),
+    );
     let roots = roots_of(&config);
     let desktop = desktop_store_path(&config);
     let machine = vibememory_cli::tick::Machine {
@@ -1253,6 +1321,7 @@ fn tick_command(args: &[String]) -> ExitCode {
         deletions_released: released,
         team: None,
         routes: &config.routes,
+        recheck_at: &recheck,
     };
     let stamp = vibememory_cli::clock::now();
     let cutoff = vibememory_cli::clock::iso8601(
@@ -1260,13 +1329,21 @@ fn tick_command(args: &[String]) -> ExitCode {
             - i64::try_from(vibememory_cli::tick::HEARTBEAT_STALE_AFTER.as_secs()).unwrap_or(0),
     );
     let ticked = vibememory_cli::tick::run(&machine, &stamp, &cutoff);
+    let moments = Moments {
+        stamp: stamp.clone(),
+        cutoff: cutoff.clone(),
+        recheck: recheck.clone(),
+    };
     report_tick(&ticked, config.max_deletions_per_tick);
     let mut failed = !ticked.problems.is_empty();
     for team in vibememory_cli::team_connect::connected_teams(&layout) {
         println!("team {team}:");
-        match tick_team(&layout, &config, &roots, &team, released, &stamp, &cutoff) {
+        match tick_team(&layout, &config, &roots, &team, released, &moments) {
             Ok(Some(team_ticked)) => {
                 report_tick(&team_ticked, config.max_deletions_per_tick);
+                if let Some(pause) = &team_ticked.pause {
+                    println!("{}", pause_advice(&layout, &team, &pause.code));
+                }
                 failed |= !team_ticked.problems.is_empty();
             }
             Ok(None) => println!("skipped: another tick is running for this team"),
@@ -1289,6 +1366,31 @@ fn tick_command(args: &[String]) -> ExitCode {
     }
 }
 
+/// What a person does about a team store's pause: the cabinet for the team's standing, a new
+/// clone for a path the store may not hold.
+fn pause_advice(layout: &Layout, team: &str, code: &str) -> String {
+    if vibememory_core::push_refusal::remedy(code) == vibememory_core::push_refusal::Remedy::Reclone
+    {
+        return format!(
+            "fix:    the clone holds what team {team}'s store may not: `vibememory store reclone {team}`"
+        );
+    }
+    let cabinet = vibememory_cli::team_connect::read_record(layout, team)
+        .map(|record| record.cabinet)
+        .unwrap_or_default();
+    format!("fix:    team {team}'s standing in the cabinet: {cabinet}/team/{team}")
+}
+
+/// The moments one tick command works with, read once so every store of the run agrees on them.
+struct Moments {
+    /// Now.
+    stamp: String,
+    /// Before this, a heartbeat of this machine is stale.
+    cutoff: String,
+    /// When a store paused this run asks its host again.
+    recheck: String,
+}
+
 /// One run over a team's store: its own lock and state beside its clone, the machine named by its
 /// name in the team, and no Desktop — cards stay in the personal store. `None` when another run
 /// holds the team's lock.
@@ -1298,8 +1400,7 @@ fn tick_team(
     roots: &vibememory_core::desktop::roots::Roots,
     team: &str,
     released: bool,
-    stamp: &str,
-    cutoff: &str,
+    moments: &Moments,
 ) -> Result<Option<vibememory_cli::tick::Ticked>, String> {
     let record = vibememory_cli::team_connect::read_record(layout, team)?;
     let store = std::fs::canonicalize(layout.team_store(team))
@@ -1318,8 +1419,13 @@ fn tick_team(
         deletions_released: released,
         team: Some(team),
         routes: &config.routes,
+        recheck_at: &moments.recheck,
     };
-    Ok(Some(vibememory_cli::tick::run(&machine, stamp, cutoff)))
+    Ok(Some(vibememory_cli::tick::run(
+        &machine,
+        &moments.stamp,
+        &moments.cutoff,
+    )))
 }
 
 /// `relink <enc> <name> <cwd>` and `import <enc> <name> <cwd>`.
@@ -1387,6 +1493,19 @@ fn relink_command(args: &[String], import: bool) -> ExitCode {
 
 /// What one tick did, in the order it did it.
 fn report_tick(ticked: &vibememory_cli::tick::Ticked, max_deletions: usize) {
+    if let Some(pause) = &ticked.pause {
+        println!(
+            "paused: the host refused pushes ({}) since {}; asks again at {}{}",
+            pause.code,
+            pause.since,
+            pause.recheck_at,
+            if pause.lines.is_empty() {
+                String::new()
+            } else {
+                format!(": {}", pause.lines.join(", "))
+            }
+        );
+    }
     if ticked.merged {
         println!("merged what the other machines wrote");
     }

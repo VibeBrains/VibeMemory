@@ -1,0 +1,94 @@
+{
+  "description": "push_refusal::parse and remedy: git's stderr when a team's host refused a push. `expect` is null for stderr that is no refusal of the host.",
+  "cases": [
+    {
+      "id": "quota",
+      "provenance": "computed",
+      "note": "The team is out of room: pushes stop until the plan grows.",
+      "stderr": "remote: vibememory: quota\nremote: 262144000 bytes over a quota of 209715200\nTo vibememory.ru:teams/acme.git\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs to 'vibememory.ru:teams/acme.git'\n",
+      "expect": {
+        "code": "quota",
+        "lines": [
+          "262144000 bytes over a quota of 209715200"
+        ],
+        "remedy": "cabinet"
+      }
+    },
+    {
+      "id": "pathDenied",
+      "provenance": "computed",
+      "note": "The clone holds a path outside the team's tree: the paths follow the code, one a line.",
+      "stderr": "remote: vibememory: pathDenied\nremote: history.jsonl\nremote: desktop/card.json\nTo vibememory.ru:teams/acme.git\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs to 'vibememory.ru:teams/acme.git'\n",
+      "expect": {
+        "code": "pathDenied",
+        "lines": [
+          "history.jsonl",
+          "desktop/card.json"
+        ],
+        "remedy": "reclone"
+      }
+    },
+    {
+      "id": "readOnly",
+      "provenance": "computed",
+      "note": "The paid term ran out over the free room: the cabinet's matter.",
+      "stderr": "remote: vibememory: readOnly\nremote: the team reads only: renew it in the cabinet\nTo vibememory.ru:teams/acme.git\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs to 'vibememory.ru:teams/acme.git'\n",
+      "expect": {
+        "code": "readOnly",
+        "lines": [
+          "the team reads only: renew it in the cabinet"
+        ],
+        "remedy": "cabinet"
+      }
+    },
+    {
+      "id": "diskReserve",
+      "provenance": "computed",
+      "note": "The host is short of disk for now: tried again next tick, no pause.",
+      "stderr": "remote: vibememory: diskReserve\nremote: 512 MiB free, 1 GiB kept in reserve\nTo vibememory.ru:teams/acme.git\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs to 'vibememory.ru:teams/acme.git'\n",
+      "expect": {
+        "code": "diskReserve",
+        "lines": [
+          "512 MiB free, 1 GiB kept in reserve"
+        ],
+        "remedy": "transient"
+      }
+    },
+    {
+      "id": "wrappedByTick",
+      "provenance": "computed",
+      "note": "The tick's own words around git's stderr: the refusal is found inside.",
+      "stderr": "push to origin refused with 3 commit(s) waiting: remote: vibememory: notAMember\nTo vibememory.ru:teams/acme.git\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs to 'vibememory.ru:teams/acme.git'\n",
+      "expect": {
+        "code": "notAMember",
+        "lines": [],
+        "remedy": "cabinet"
+      }
+    },
+    {
+      "id": "unknownCode",
+      "provenance": "computed",
+      "note": "A code of a newer host: stop pushing and ask later, never push harder.",
+      "stderr": "remote: vibememory: somethingNew\nTo vibememory.ru:teams/acme.git\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs to 'vibememory.ru:teams/acme.git'\n",
+      "expect": {
+        "code": "somethingNew",
+        "lines": [],
+        "remedy": "cabinet"
+      }
+    },
+    {
+      "id": "notTheHost",
+      "provenance": "computed",
+      "note": "A network failure is not a refusal: the ordinary back-off handles it.",
+      "stderr": "ssh: connect to host vibememory.ru port 22: Operation timed out\nfatal: Could not read from remote repository.\n",
+      "expect": null
+    },
+    {
+      "id": "codeWithSpaces",
+      "provenance": "computed",
+      "note": "Only a code of letters and digits counts: a line of prose after the mark is not one.",
+      "stderr": "remote: vibememory: something went wrong\nTo vibememory.ru:teams/acme.git\n ! [remote rejected] main -> main (pre-receive hook declined)\nerror: failed to push some refs to 'vibememory.ru:teams/acme.git'\n",
+      "expect": null
+    }
+  ]
+}

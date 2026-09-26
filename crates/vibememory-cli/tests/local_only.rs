@@ -52,3 +52,32 @@ fn a_clone_without_the_file_gets_one() {
     keep(&clone, &["projects/app/a.jsonl".to_owned()]).unwrap();
     assert!(is_local(&clone, "projects/app/a.jsonl"));
 }
+
+#[test]
+fn a_shared_session_leaves_the_block_with_its_directory() {
+    let temp = TempDir::new("local-only-share");
+    let clone = temp.dir("clone");
+    let sid = "11111111-1111-4111-8111-111111111111";
+    keep(
+        &clone,
+        &[
+            format!("projects/app/{sid}.jsonl"),
+            format!("projects/app/{sid}/subagents/a.jsonl"),
+            "projects/app/22222222-2222-4222-8222-222222222222.jsonl".to_owned(),
+        ],
+    )
+    .unwrap();
+    let released = vibememory_cli::local_only::release(&clone, sid).unwrap();
+    assert_eq!(released.len(), 2, "{released:?}");
+    assert!(!is_local(&clone, &format!("projects/app/{sid}.jsonl")));
+    assert!(is_local(
+        &clone,
+        "projects/app/22222222-2222-4222-8222-222222222222.jsonl"
+    ));
+    // an unknown session releases nothing
+    assert!(
+        vibememory_cli::local_only::release(&clone, "nope")
+            .unwrap()
+            .is_empty()
+    );
+}

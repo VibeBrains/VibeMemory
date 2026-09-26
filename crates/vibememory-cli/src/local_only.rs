@@ -40,24 +40,8 @@ fn kept(text: &str) -> BTreeSet<String> {
     paths
 }
 
-/// Keeps `paths` (relative to the clone) on this machine only. What else the file says — the
-/// user's own patterns — stays as it was.
-///
-/// # Errors
-///
-/// When the exclude file cannot be read or written.
-pub fn keep(clone: &Path, paths: &[String]) -> Result<(), String> {
-    if paths.is_empty() {
-        return Ok(());
-    }
-    let file = exclude_file(clone);
-    let text = match std::fs::read_to_string(&file) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error.to_string()),
-    };
-    let mut all = kept(&text);
-    all.extend(paths.iter().cloned());
+/// Writes the block with exactly `paths`, leaving the person's lines as they were.
+fn write_block(clone: &Path, text: &str, paths: &BTreeSet<String>) -> Result<(), String> {
     let mut out = String::new();
     let mut inside = false;
     for line in text.lines() {
@@ -71,19 +55,65 @@ pub fn keep(clone: &Path, paths: &[String]) -> Result<(), String> {
             _ => {}
         }
     }
-    out.push_str(BEGIN);
-    out.push('\n');
-    for path in &all {
-        out.push('/');
-        out.push_str(path);
+    if !paths.is_empty() {
+        out.push_str(BEGIN);
+        out.push('\n');
+        for path in paths {
+            out.push('/');
+            out.push_str(path);
+            out.push('\n');
+        }
+        out.push_str(END);
         out.push('\n');
     }
-    out.push_str(END);
-    out.push('\n');
+    let file = exclude_file(clone);
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     std::fs::write(&file, out).map_err(|error| error.to_string())
+}
+
+fn read(clone: &Path) -> Result<String, String> {
+    match std::fs::read_to_string(exclude_file(clone)) {
+        Ok(text) => Ok(text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Gives a kept session to the team: its transcript and its directory of subagents and tool
+/// results leave the block, and the next tick commits them. Returns what was released.
+///
+/// # Errors
+///
+/// When the exclude file cannot be read or written.
+pub fn release(clone: &Path, session: &str) -> Result<Vec<String>, String> {
+    let text = read(clone)?;
+    let (released, kept): (BTreeSet<String>, BTreeSet<String>) =
+        kept(&text).into_iter().partition(|path| {
+            let file = path.rsplit('/').next().unwrap_or_default();
+            file == format!("{session}.jsonl") || path.split('/').any(|part| part == session)
+        });
+    if !released.is_empty() {
+        write_block(clone, &text, &kept)?;
+    }
+    Ok(released.into_iter().collect())
+}
+
+/// Keeps `paths` (relative to the clone) on this machine only. What else the file says — the
+/// user's own patterns — stays as it was.
+///
+/// # Errors
+///
+/// When the exclude file cannot be read or written.
+pub fn keep(clone: &Path, paths: &[String]) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let text = read(clone)?;
+    let mut all = kept(&text);
+    all.extend(paths.iter().cloned());
+    write_block(clone, &text, &all)
 }
 
 /// Whether a path of the clone is kept on this machine only.

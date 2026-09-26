@@ -55,6 +55,25 @@ pub struct TickState {
     /// engine actually saw.
     #[serde(default)]
     pub ignored: Vec<crate::tick::IgnoredDirectory>,
+    /// The host refused this store's pushes for a reason of the team's — out of room, unpaid, the
+    /// member removed, a path the team's store may not hold. Pushes wait; everything else goes on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause: Option<StorePause>,
+}
+
+/// A pause of a store's pushes, on the host's word.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorePause {
+    /// The host's code: `quota`, `readOnly`, `pathDenied`, …
+    pub code: String,
+    /// What the host said after it: the paths or the detail.
+    pub lines: Vec<String>,
+    /// When the pause began.
+    pub since: String,
+    /// When the host is asked again. An hour, not a day: a payment or a bigger plan is made in the
+    /// cabinet at once, and the team should not wait until tomorrow to see its sessions go again.
+    pub recheck_at: String,
 }
 
 impl TickState {
@@ -87,6 +106,15 @@ impl TickState {
     #[must_use]
     pub fn store_cycle_allowed(&self) -> bool {
         self.runs_to_skip == 0
+    }
+
+    /// Whether this run may push: no pause, or its recheck is due. `stamp` and `recheck_at` are
+    /// written by the same clock in one format, so they compare as text.
+    #[must_use]
+    pub fn push_due(&self, stamp: &str) -> bool {
+        self.pause
+            .as_ref()
+            .is_none_or(|pause| stamp >= pause.recheck_at.as_str())
     }
 
     /// The state after a run, and whether the caller should announce a recovery.
@@ -123,6 +151,7 @@ impl TickState {
                     runs_to_skip: skip,
                     deletions_held: self.deletions_held,
                     ignored: self.ignored.clone(),
+                    pause: self.pause.clone(),
                 },
                 false,
             );
@@ -134,6 +163,7 @@ impl TickState {
                 runs_to_skip: 0,
                 deletions_held: self.deletions_held,
                 ignored: self.ignored.clone(),
+                pause: self.pause.clone(),
             },
             recovered,
         )
