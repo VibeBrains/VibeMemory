@@ -47,6 +47,7 @@
   "defaults": {
     "repoBytes": 1048576,
     "incomingBytes": 65536,
+    "treeBytes": 524288,
     "freeBytes": 42949672960,
     "reserveBytes": 2147483648
   },
@@ -557,7 +558,7 @@
         "projects/Acme/s1.jsonl"
       ],
       "sizes": {
-        "repoBytes": 52427800
+        "treeBytes": 52428801
       },
       "withTokens": [
         "projects/Acme/s1.jsonl"
@@ -736,7 +737,7 @@
         "projects/Acme/s1.jsonl"
       ],
       "sizes": {
-        "repoBytes": 52427800
+        "treeBytes": 52428801
       },
       "expect": {
         "code": "quota"
@@ -759,7 +760,7 @@
         "projects/Acme/s1.jsonl"
       ],
       "sizes": {
-        "repoBytes": 52363264
+        "treeBytes": 52428800
       },
       "expect": {
         "code": "ok"

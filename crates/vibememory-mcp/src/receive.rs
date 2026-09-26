@@ -86,6 +86,10 @@ pub struct Sizes {
     pub repo_bytes: u64,
     /// The objects the push brings.
     pub incoming_bytes: u64,
+    /// The bytes of the files in `main` as the push leaves it: what the team's quota counts, the
+    /// same number the cabinet shows — not the repository with its history, which a team cannot
+    /// shrink by deleting anything.
+    pub tree_bytes: u64,
     /// Free space on the partition of the team stores.
     pub free_bytes: u64,
     /// Free space the host keeps for everyone: a push may not take it.
@@ -305,13 +309,13 @@ fn sizes_allowed(sizes: Sizes, quota: Option<u64>) -> Result<(), PushRefusal> {
         ));
     }
     if let Some(quota) = quota
-        && sizes.repo_bytes.saturating_add(sizes.incoming_bytes) > quota
+        && sizes.tree_bytes > quota
     {
         return Err(refuse(
             "quota",
             format!(
-                "the store would take {} bytes of the team's {quota}",
-                sizes.repo_bytes.saturating_add(sizes.incoming_bytes)
+                "the team's files would take {} bytes of its {quota}",
+                sizes.tree_bytes
             ),
         ));
     }

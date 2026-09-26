@@ -75,6 +75,7 @@ fn every_push_is_answered_as_the_fixture_says() {
             sizes: Sizes {
                 repo_bytes: size(case, defaults, "repoBytes"),
                 incoming_bytes: size(case, defaults, "incomingBytes"),
+                tree_bytes: size(case, defaults, "treeBytes"),
                 free_bytes: size(case, defaults, "freeBytes"),
                 reserve_bytes: size(case, defaults, "reserveBytes"),
             },

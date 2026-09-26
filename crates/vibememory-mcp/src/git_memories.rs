@@ -40,6 +40,26 @@ fn next_index() -> u64 {
     INDEXES.fetch_add(1, Ordering::Relaxed)
 }
 
+/// The bytes of the files of a commit's tree: one listing, blob sizes summed; nothing when git
+/// cannot list it. In a `pre-receive` git reads the push's objects from its quarantine through the
+/// variables it runs the hook with.
+#[must_use]
+pub fn tree_bytes(repo: &Path, commit: &str) -> u64 {
+    run(
+        repo,
+        &["ls-tree", "-r", "-l", "--full-tree", commit],
+        None,
+        &[],
+    )
+    .map_or(0, |listed| {
+        String::from_utf8_lossy(&listed)
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .filter_map(|(meta, _)| meta.split_whitespace().nth(3)?.parse::<u64>().ok())
+            .sum()
+    })
+}
+
 /// Runs git on the bare repository `repo` and returns its stdout as bytes.
 ///
 /// Always with `--git-dir`: on the host the repositories belong to other accounts, and git answers
@@ -559,7 +579,11 @@ impl Memories for GitMemories {
         Ok(DirectoryProject::NotVisible)
     }
 
+    /// The bytes of the files in `main`: the quota counts the team's files, not the repository's
+    /// history, which no forgetting can shrink.
     fn store_bytes(&self) -> Result<u64, String> {
-        Ok(crate::disk::dir_size(&self.repo, None))
+        Ok(self
+            .main_commit()?
+            .map_or(0, |main| tree_bytes(&self.repo, &main)))
     }
 }

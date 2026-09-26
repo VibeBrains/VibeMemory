@@ -554,6 +554,10 @@ pub fn pre_receive(paths: &HostPaths, limits: PushLimits) -> ExitCode {
     let sizes = Sizes {
         repo_bytes: dir_size(&repo, quarantine.as_deref()),
         incoming_bytes: quarantine.as_deref().map_or(0, |dir| dir_size(dir, None)),
+        // the files of `main` as the push leaves it; a push that deletes `main` leaves none
+        tree_bytes: receive::main_update(&updates)
+            .filter(|update| !receive::is_zero(&update.new))
+            .map_or(0, |update| git_memories::tree_bytes(&repo, &update.new)),
         free_bytes,
         reserve_bytes: limits.reserve_bytes,
     };
@@ -1309,6 +1313,7 @@ fn repo_facts(repo: &Path) -> RepoFacts {
     let Ok(Some(main)) = git.main_commit() else {
         return RepoFacts {
             size_bytes,
+            tree_bytes: None,
             projects: Vec::new(),
             last_commit_at: None,
             machines: false,
@@ -1330,6 +1335,7 @@ fn repo_facts(repo: &Path) -> RepoFacts {
     let project_facts = project_facts(&text, &main, &projects);
     RepoFacts {
         size_bytes,
+        tree_bytes: Some(git_memories::tree_bytes(repo, &main)),
         projects,
         last_commit_at,
         machines,

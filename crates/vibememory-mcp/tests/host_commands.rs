@@ -313,6 +313,8 @@ fn apply_makes_the_stores_and_the_keys_and_reports_them() {
         json!(["VibeMemory"])
     );
     project_facts_split(&report["teams"]["personal"]["projectFacts"]["VibeMemory"]);
+    // the quota counts the files of `main`: the journal, the memory file and the transcript
+    assert_eq!(report["teams"]["personal"]["treeBytes"], 11);
     assert_eq!(
         report["deleted"],
         json!([{"slug": "oldteam", "date": "2026-09-01", "sizeBytes": report["deleted"][0]["sizeBytes"]}])

@@ -73,6 +73,9 @@ const fn is_zero(serial: &u64) -> bool {
 pub struct RepoFacts {
     /// Size on disk.
     pub size_bytes: u64,
+    /// The bytes of the files in `main`: what the team's quota counts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree_bytes: Option<u64>,
     /// The directories under `projects/` of `main`.
     pub projects: Vec<String>,
     /// The time of the last commit of `main`; `None` without one.
@@ -149,6 +152,10 @@ pub struct TeamReport {
     pub projects: Vec<String>,
     /// Size on disk.
     pub size_bytes: u64,
+    /// The bytes of the files in `main`: what the team's quota counts, and what the cabinet shows
+    /// as used. Absent in a report of an older host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree_bytes: Option<u64>,
     /// The time of the last commit of `main`.
     pub last_commit_at: Option<String>,
     /// What each project holds and who wrote to it last.
@@ -265,6 +272,7 @@ pub fn host_report(
                             TeamReport {
                                 projects: repo.projects,
                                 size_bytes: repo.size_bytes,
+                                tree_bytes: repo.tree_bytes,
                                 last_commit_at: repo.last_commit_at,
                                 project_facts: repo.project_facts,
                                 last_access_at: repo.last_access_at,
@@ -295,6 +303,7 @@ pub fn host_report(
                     TeamReport {
                         projects: repo.projects,
                         size_bytes: repo.size_bytes,
+                        tree_bytes: repo.tree_bytes,
                         last_commit_at: repo.last_commit_at,
                         project_facts: repo.project_facts,
                         last_access_at: repo.last_access_at,
