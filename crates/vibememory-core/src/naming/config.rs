@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde::de::{Deserializer, MapAccess, Visitor};
 
 use super::error::NamingError;
-use super::rules::PathRules;
+use super::rules::{CaseRule, PathRules};
 use super::store_name::StoreName;
 
 const NAME_OVERRIDES: &str = "nameOverrides";
@@ -59,8 +59,14 @@ pub struct NamingConfig {
 }
 
 impl NamingConfig {
-    /// Validates every pattern and every override value; the first problem is the error.
+    /// Validates every pattern and every override value; the first problem is the error. Case
+    /// follows this host's file system ([`CaseRule::HOST`]).
     pub fn from_raw(raw: &RawNamingConfig) -> Result<Self, NamingError> {
+        Self::from_raw_with(raw, CaseRule::HOST)
+    }
+
+    /// [`Self::from_raw`] for paths of a file system with the given case rule.
+    pub fn from_raw_with(raw: &RawNamingConfig, case: CaseRule) -> Result<Self, NamingError> {
         let mut overrides = Vec::with_capacity(raw.name_overrides.len());
         for (pattern, name) in &raw.name_overrides {
             if !PathRules::<StoreName>::has_literal_component(pattern) {
@@ -79,8 +85,8 @@ impl NamingConfig {
         }
         let ignore = raw.ignore_cwd.iter().map(|p| (p.clone(), ())).collect();
         Ok(Self {
-            overrides: PathRules::compile(overrides, NAME_OVERRIDES)?,
-            ignore: PathRules::compile(ignore, IGNORE_CWD)?,
+            overrides: PathRules::compile(overrides, NAME_OVERRIDES, case)?,
+            ignore: PathRules::compile(ignore, IGNORE_CWD, case)?,
         })
     }
 

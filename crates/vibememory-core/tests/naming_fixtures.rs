@@ -14,9 +14,9 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 use vibememory_core::naming::{
-    GitProbe, IgnoreReason, NamingConfig, NamingError, NamingInput, PathSyntax, RawNamingConfig,
-    Resolution, StoreName, StoreRoutes, canonical_cwd, conflict_copies, enc_from_transcript_path,
-    encode_cwd, resolve_store_name,
+    CaseRule, GitProbe, IgnoreReason, NamingConfig, NamingError, NamingInput, PathSyntax,
+    RawNamingConfig, Resolution, StoreName, StoreRoutes, canonical_cwd, conflict_copies,
+    enc_from_transcript_path, encode_cwd, resolve_store_name,
 };
 
 const ENC_FROM_TRANSCRIPT_PATH: &str =
@@ -93,6 +93,14 @@ struct ResolveInput {
     config: Option<RawNamingConfig>,
     #[serde(default)]
     existing: Vec<String>,
+    /// The file system's case rule; a case that does not name it reads paths case-sensitively,
+    /// so its result does not depend on the machine running the test
+    #[serde(default = "sensitive")]
+    case: CaseRule,
+}
+
+const fn sensitive() -> CaseRule {
+    CaseRule::Sensitive
 }
 
 #[derive(Deserialize)]
@@ -116,6 +124,9 @@ struct RouteInput {
     /// Store id to its patterns; read sorted by id, which the cases may rely on: whether a directory
     /// is ambiguous does not depend on the order of the stores
     stores: std::collections::BTreeMap<String, Vec<String>>,
+    /// As in [`ResolveInput`]
+    #[serde(default = "sensitive")]
+    case: CaseRule,
 }
 
 #[derive(Deserialize)]
@@ -191,7 +202,7 @@ fn resolution_value(resolution: &Resolution) -> Value {
 
 fn resolve(input: &ResolveInput) -> Result<Value, NamingError> {
     let config = match &input.config {
-        Some(raw) => NamingConfig::from_raw(raw)?,
+        Some(raw) => NamingConfig::from_raw_with(raw, input.case)?,
         None => NamingConfig::default(),
     };
     let existing = input
@@ -303,7 +314,7 @@ fn route_store_fixtures() {
             .iter()
             .map(|(id, patterns)| (id.clone(), patterns.clone()))
             .collect();
-        let routes = StoreRoutes::compile(&stores)?;
+        let routes = StoreRoutes::compile_with(&stores, input.case)?;
         Ok(match routes.route(&input.cwd, input.syntax)? {
             Some(team) => json!({ "team": team }),
             None => json!({ "personal": true }),

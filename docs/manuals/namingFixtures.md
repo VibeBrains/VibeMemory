@@ -10,9 +10,9 @@
 |---|---|---|---|
 | `encFromTranscriptPath.json` | `enc_from_transcript_path` | `{ "transcriptPath", "syntax": "posix" \| "windows" }` | строка enc |
 | `encodeCwd.json` | `encode_cwd` | `{ "cwd" }` | строка enc |
-| `resolveStoreName.json` | `resolve_store_name` | `{ "cwd", "syntax", "projectDirName"?, "git"?, "config"?, "existing"? }` | `{ "named": { "name", "source" } }` или `{ "ignored": { "pattern" \| "projectDirName" } }` |
+| `resolveStoreName.json` | `resolve_store_name` | `{ "cwd", "syntax", "projectDirName"?, "git"?, "config"?, "existing"?, "case"? }` | `{ "named": { "name", "source" } }` или `{ "ignored": { "pattern" \| "projectDirName" } }` |
 | `namingConfig.json` | `NamingConfig::from_raw` | `{ "config": { "nameOverrides"?, "ignoreCwd"? } }` | `true` |
-| `routeStore.json` | `StoreRoutes::compile` + `route` | `{ "cwd", "syntax", "stores": { "<id>": [шаблон] } }` | `{ "team": id }` или `{ "personal": true }` |
+| `routeStore.json` | `StoreRoutes::compile` + `route` | `{ "cwd", "syntax", "stores": { "<id>": [шаблон] }, "case"? }` | `{ "team": id }` или `{ "personal": true }` |
 
 `git` в `resolveStoreName.json` — запись `GitProbe`:
 `{ "ran": { "commonDir": "<stdout или null>", "dotGit": "notFound" | { "found": { "dir": { "path" } } } | { "found": { "file": { "path", "content" } } } | { "unknown": { "reason" } } } }`
@@ -32,6 +32,8 @@
 ```
 
 - `id` уникален в файле; `note` непустой, по-английски (как комментарии в коде).
+- `case`: `"sensitive"` или `"insensitive"` — различает ли файловая система регистр (ext4 или
+  APFS/NTFS). Нет поля — `sensitive`: результат кейса не зависит от машины, где идёт тест.
 - `provenance`: `observed` — вход записан с реальной системы (вывод git, содержимое `.git`-файла,
   каталог, созданный CLI) с датой в `note`; `computed` — вход сконструирован, ожидание получено
   оракулом или следует из правила; `unverified` — намеренное поведение на платформе, которую в

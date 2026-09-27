@@ -5,7 +5,7 @@
 
 use super::error::NamingError;
 use super::path::{ParsedPath, PathSyntax};
-use super::rules::PathRules;
+use super::rules::{CaseRule, PathRules};
 use super::slug::is_slug;
 
 /// The configuration field the patterns come from, as `configInvalid` names it.
@@ -25,6 +25,18 @@ impl StoreRoutes {
     /// `configInvalid` for a store id that is not a slug — it names a directory on disk and a
     /// repository on the host — or for a pattern `nameOverrides` would refuse too.
     pub fn compile(stores: &[(String, Vec<String>)]) -> Result<Self, NamingError> {
+        Self::compile_with(stores, CaseRule::HOST)
+    }
+
+    /// [`Self::compile`] for paths of a file system with the given case rule.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::compile`].
+    pub fn compile_with(
+        stores: &[(String, Vec<String>)],
+        case: CaseRule,
+    ) -> Result<Self, NamingError> {
         let mut entries = Vec::new();
         for (id, patterns) in stores {
             if !is_slug(id) {
@@ -36,7 +48,19 @@ impl StoreRoutes {
             entries.extend(patterns.iter().map(|pattern| (pattern.clone(), id.clone())));
         }
         Ok(Self {
-            rules: PathRules::compile(entries, STORES_CWD)?,
+            rules: PathRules::compile(entries, STORES_CWD, case)?,
+        })
+    }
+
+    /// Every pattern with the store it routes to, in configuration order, and the directory each
+    /// is anchored at — what a check against the disk looks at.
+    pub fn patterns(&self) -> impl Iterator<Item = (&str, &str, String)> {
+        self.rules.entries().map(|(pattern, id)| {
+            (
+                pattern,
+                id.as_str(),
+                PathRules::<String>::literal_prefix(pattern),
+            )
         })
     }
 

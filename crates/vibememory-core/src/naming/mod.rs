@@ -29,6 +29,7 @@ pub use error::NamingError;
 pub use git::{DotGit, DotGitProbe, GitProbe, NameSource};
 pub use path::PathSyntax;
 pub use routes::StoreRoutes;
+pub use rules::CaseRule;
 pub use slug::{MAX_SLUG_LENGTH, is_slug};
 pub use store_name::{GIT_DIR_NAME, StoreName};
 

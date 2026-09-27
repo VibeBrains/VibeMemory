@@ -1200,9 +1200,9 @@
       }
     },
     {
-      "id": "overrideSubtreeDoesNotMatchBase",
+      "id": "overrideSubtreeTakesBase",
       "provenance": "computed",
-      "note": "`foo/**` does not match `foo` itself (globset semantics): the base needs its own literal pattern.",
+      "note": "`foo/**` takes `foo` itself too: one line covers a project and everything under it, as in `stores.cwd` and `ignoreCwd`. Globset alone would leave the base out, and a session in the project's root is the commonest case.",
       "input": {
         "cwd": "/Volumes/Storage/Projects/VibeCode/VibeSweep",
         "syntax": "posix",
@@ -1221,8 +1221,8 @@
       "expect": {
         "ok": {
           "named": {
-            "name": "VibeSweep",
-            "source": "plainDir"
+            "name": "VibeSweepMac",
+            "source": "override"
           }
         }
       }

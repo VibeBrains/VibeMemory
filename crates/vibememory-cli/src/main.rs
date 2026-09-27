@@ -208,6 +208,11 @@ fn report(strict: bool, json: bool) -> ExitCode {
     }
     wrong += print_tokens(&tokens);
     wrong += print_teams(&layout);
+    // Not failures: each route works as written, and the line says how it differs from what was
+    // most likely meant
+    for line in vibememory_cli::route::warnings(&config, &layout.store()) {
+        println!("route    {}", vibememory_core::terminal::printable(&line));
+    }
     if strict && wrong > 0 {
         eprintln!(
             "{wrong} of {} steps are not in place",

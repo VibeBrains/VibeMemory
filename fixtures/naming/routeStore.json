@@ -16,6 +16,34 @@
       "expect": { "ok": { "team": "acme" } }
     },
     {
+      "id": "subtreeTakesItsRoot",
+      "provenance": "observed",
+      "note": "`dir/**` takes the directory itself: a session opened in the project's root is the commonest case, and before 2026-09-27 it went to the personal store while the glob took only what lay below.",
+      "input": { "cwd": "/Users/o/work/acme", "syntax": "posix", "stores": { "acme": ["/Users/o/work/acme/**"] } },
+      "expect": { "ok": { "team": "acme" } }
+    },
+    {
+      "id": "subtreeRootIsNotAPrefix",
+      "provenance": "computed",
+      "note": "The root of `acme/**` is `acme`, not every name that starts with it.",
+      "input": { "cwd": "/Users/o/work/acme-old", "syntax": "posix", "stores": { "acme": ["/Users/o/work/acme/**"] } },
+      "expect": { "ok": { "personal": true } }
+    },
+    {
+      "id": "caseInsensitiveFileSystem",
+      "provenance": "observed",
+      "note": "On APFS `vibememory` and `VibeMemory` are one directory, and the CLI reports the case on disk: a pattern typed in another case routes there too. Live gate 2026-09-27: the session went to the personal store without a word.",
+      "input": { "cwd": "/Volumes/Storage/Caches/VibeMemory/teamTest", "syntax": "posix", "case": "insensitive", "stores": { "acme": ["/Volumes/Storage/Caches/vibememory/teamTest/**"] } },
+      "expect": { "ok": { "team": "acme" } }
+    },
+    {
+      "id": "caseSensitiveFileSystem",
+      "provenance": "computed",
+      "note": "On ext4 `Work` and `work` are two directories: the pattern names only its own.",
+      "input": { "cwd": "/home/o/Work/acme", "syntax": "posix", "case": "sensitive", "stores": { "acme": ["/home/o/work/acme/**"] } },
+      "expect": { "ok": { "personal": true } }
+    },
+    {
       "id": "literalIsExact",
       "provenance": "computed",
       "note": "A literal pattern names one directory: its child stays personal, as with nameOverrides.",

@@ -40,6 +40,7 @@ pub mod process;
 pub mod project;
 pub mod project_move;
 pub mod relink;
+pub mod route;
 pub mod sha256;
 pub mod store;
 pub mod stores;
