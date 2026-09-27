@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Number;
 use vibememory_core::naming::StoreName;
+use vibememory_core::ssh_key::{ED25519, is_ed25519_line, key_blob};
 use vibememory_core::token;
 
 /// The hand-written snapshot of the host before the cabinet: no serial, no bans.
@@ -23,10 +24,6 @@ const TOKEN_ID_PREFIX: &str = "tk_";
 const KEY_ID_PREFIX: &str = "mk_";
 /// The id of the token issued before the cabinet, which has no id of its own.
 pub const LEGACY_TOKEN_ID: &str = "tk_legacy";
-/// The only machine key type accepted.
-const ED25519: &str = "ssh-ed25519";
-/// Bytes of an ed25519 public key.
-const ED25519_KEY_BYTES: usize = 32;
 
 /// What kind of store a team keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -975,10 +972,7 @@ fn keys(raw: &RawSnapshot) -> Result<(), Refusal> {
     // someone else's public half would take over their logins — signed as the wrong machine.
     let mut seen = BTreeSet::new();
     for key in &raw.keys {
-        let material = key
-            .public_key
-            .strip_prefix(ED25519)
-            .and_then(|rest| base64(rest.trim_start()));
+        let material = key_blob(&key.public_key);
         if !seen.insert(material) {
             return Err(refuse(
                 "publicKeyTwice",
@@ -987,54 +981,6 @@ fn keys(raw: &RawSnapshot) -> Result<(), Refusal> {
         }
     }
     Ok(())
-}
-
-/// `ssh-ed25519 <base64>` and nothing else: one line, no comment, and a blob that is exactly an
-/// ed25519 key — the line becomes a line of `authorized_keys`, where anything more is an option.
-fn is_ed25519_line(line: &str) -> bool {
-    if line.chars().any(char::is_control) {
-        return false;
-    }
-    let Some(encoded) = line
-        .strip_prefix(ED25519)
-        .and_then(|rest| rest.strip_prefix(' '))
-    else {
-        return false;
-    };
-    let Some(blob) = base64(encoded) else {
-        return false;
-    };
-    // The wire form: a string naming the type, then a string holding the key.
-    let mut expected = Vec::with_capacity(4 + ED25519.len() + 4 + ED25519_KEY_BYTES);
-    expected.extend_from_slice(&u32::try_from(ED25519.len()).unwrap_or(0).to_be_bytes());
-    expected.extend_from_slice(ED25519.as_bytes());
-    expected.extend_from_slice(&u32::try_from(ED25519_KEY_BYTES).unwrap_or(0).to_be_bytes());
-    blob.len() == expected.len() + ED25519_KEY_BYTES && blob.starts_with(&expected)
-}
-
-/// Standard base64 with padding, strictly: no spaces, no line breaks, no missing padding.
-fn base64(text: &str) -> Option<Vec<u8>> {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let bytes = text.as_bytes();
-    if bytes.is_empty() || !bytes.len().is_multiple_of(4) {
-        return None;
-    }
-    let padding = bytes.iter().rev().take_while(|byte| **byte == b'=').count();
-    if padding > 2 {
-        return None;
-    }
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    let (mut buffer, mut bits) = (0u32, 0u32);
-    for byte in bytes.get(..bytes.len() - padding)? {
-        let value = ALPHABET.iter().position(|candidate| candidate == byte)?;
-        buffer = (buffer << 6) | u32::try_from(value).ok()?;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push(u8::try_from((buffer >> bits) & 0xff).ok()?);
-        }
-    }
-    Some(out)
 }
 
 fn snapshot(raw: RawSnapshot) -> Snapshot {

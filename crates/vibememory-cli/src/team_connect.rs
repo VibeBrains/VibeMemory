@@ -39,7 +39,7 @@ const STEP_TIMEOUT: Duration = Duration::from_mins(1);
 #[derive(Debug)]
 pub struct PendingKey {
     dir: PathBuf,
-    /// The public key, `ssh-ed25519 …`, as it goes to the cabinet.
+    /// The public key in the host's form, `ssh-ed25519 <base64>` without a comment, as it goes to the cabinet.
     pub public: String,
 }
 
@@ -71,10 +71,13 @@ impl PendingKey {
             let _ = std::fs::remove_dir_all(&dir);
             return Err("ssh-keygen could not make a key".to_owned());
         }
-        let public = std::fs::read_to_string(dir.join(format!("{KEY_FILE}.pub")))
-            .map_err(|error| error.to_string())?
-            .trim()
-            .to_owned();
+        let file = std::fs::read_to_string(dir.join(format!("{KEY_FILE}.pub")))
+            .map_err(|error| error.to_string())?;
+        // the host takes the type and the key only: the comment would make it an `authorized_keys` option
+        let Some(public) = vibememory_core::ssh_key::wire_line(&file) else {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err("ssh-keygen made a key the host would not take".to_owned());
+        };
         Ok(Self { dir, public })
     }
 

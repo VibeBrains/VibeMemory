@@ -68,12 +68,12 @@ fn a_key_is_made_for_the_claim_and_dropped_when_unused() {
     let temp = TempDir::new("connect-key-pending");
     let layout = layout(&temp);
     let pending = PendingKey::make(&layout).unwrap();
+    // the key a real ssh-keygen made passes the very rule the host checks the snapshot with
     assert!(
-        pending.public.starts_with("ssh-ed25519 "),
+        vibememory_core::ssh_key::is_ed25519_line(&pending.public),
         "{}",
         pending.public
     );
-    assert!(!pending.public.contains(char::is_control));
     pending.discard();
     // nothing of it stays: the stores directory holds no pending key and no team
     let left: Vec<_> = fs::read_dir(layout.engine_dir.join("stores"))
@@ -124,11 +124,11 @@ fn a_machine_connecting_again_keeps_its_clone_on_the_new_key() {
     assert!(!store.cloned);
     assert_eq!(store.clone, clone);
     let state = layout.team_state_dir(&grant.team);
+    // the file keeps ssh-keygen's comment; the cabinet got the same key without it
+    let kept = fs::read_to_string(state.join(format!("{KEY_FILE}.pub"))).unwrap();
     assert_eq!(
-        fs::read_to_string(state.join(format!("{KEY_FILE}.pub")))
-            .unwrap()
-            .trim(),
-        public
+        vibememory_core::ssh_key::wire_line(&kept).as_deref(),
+        Some(public.as_str())
     );
     let hosts = fs::read_to_string(state.join(KNOWN_HOSTS_FILE)).unwrap();
     assert_eq!(
