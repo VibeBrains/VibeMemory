@@ -64,6 +64,11 @@ pub fn for_cwd(
 ) -> Result<StoreOf, String> {
     match config.routes.route(cwd, syntax) {
         Ok(None) => Ok(personal(layout, config)),
+        // a team whose memory lives on the host alone keeps no sessions: they stay here, and the
+        // memory server of the directory reaches the team's memory over HTTPS
+        Ok(Some(id)) if !is_connected_clone(layout, id) && memory_only(layout, id) => {
+            Ok(personal(layout, config))
+        }
         Ok(Some(id)) => team(layout, id).map_err(|_| {
             format!(
                 "this project belongs to team {id}, which is not connected on this machine: its \
@@ -72,6 +77,68 @@ pub fn for_cwd(
         }),
         Err(error) => Err(error.to_string()),
     }
+}
+
+/// Whether a team's clone is connected on this machine.
+fn is_connected_clone(layout: &Layout, id: &str) -> bool {
+    crate::team_connect::connected_teams(layout)
+        .iter()
+        .any(|team| team == id)
+}
+
+/// Whether this machine reaches a team by token alone: a token kept for it, and no clone.
+#[must_use]
+pub fn memory_only(layout: &Layout, id: &str) -> bool {
+    !is_connected_clone(layout, id)
+        && layout
+            .engine_dir
+            .join(crate::connect::TOKENS_DIR)
+            .join(id)
+            .is_dir()
+}
+
+/// The memory server a directory routed to a token-only team reaches: its address from the
+/// token's sidecar for `agent`. `None` for a directory of the personal store or a team's clone.
+///
+/// # Errors
+///
+/// A directory routed to a token-only team for which `agent` has no token, or whose sidecar does
+/// not say where the server is: the memory would otherwise go to the personal store.
+pub fn remote_memory(
+    layout: &Layout,
+    config: &Config,
+    cwd: &str,
+    syntax: PathSyntax,
+    agent: &str,
+) -> Result<Option<(String, String)>, String> {
+    let Some(id) = config
+        .routes
+        .route(cwd, syntax)
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(None);
+    };
+    if !memory_only(layout, id) {
+        return Ok(None);
+    }
+    let token = crate::connect::token_file(layout, id, agent);
+    let sidecar = crate::connect::sidecar_file(&token);
+    let text = std::fs::read_to_string(&sidecar).map_err(|_| {
+        format!(
+            "this project belongs to team {id}, and agent {agent} has no token of it here: \
+             vibememory connect --cabinet <address> --agent {agent}"
+        )
+    })?;
+    let url = serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|sidecar| sidecar.get("mcpUrl")?.as_str().map(str::to_owned))
+        .ok_or_else(|| {
+            format!(
+                "{} does not name the team's memory server",
+                sidecar.display()
+            )
+        })?;
+    Ok(Some((id.to_owned(), url)))
 }
 
 /// The store whose clone holds a file, by its real path: the personal store first, then every

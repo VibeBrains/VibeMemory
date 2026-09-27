@@ -209,12 +209,7 @@ fn report(strict: bool, json: bool) -> ExitCode {
     }
     wrong += print_tokens(&tokens);
     wrong += print_teams(&layout);
-    // Not failures: each route works as written, and the line says how it differs from what was
-    // most likely meant
-    for line in vibememory_cli::route::warnings(&config, &layout.store()) {
-        println!("route    {}", vibememory_core::terminal::printable(&line));
-    }
-    print_forgotten_claims(&layout);
+    print_advice(&layout, &config);
     if strict && wrong > 0 {
         eprintln!(
             "{wrong} of {} steps are not in place",
@@ -223,6 +218,19 @@ fn report(strict: bool, json: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
+}
+
+/// What is not a failure but most likely not what was meant: routes that differ from the disk,
+/// claims of machines unheard of for a week, and memory servers the agent has to guess between.
+fn print_advice(layout: &Layout, config: &Config) {
+    for line in vibememory_cli::route::warnings(config, &layout.store()) {
+        println!("route    {}", vibememory_core::terminal::printable(&line));
+    }
+    print_forgotten_claims(layout);
+    let registered = vibememory_cli::registrations::read(layout);
+    for line in vibememory_cli::registrations::advice(layout, config, &registered) {
+        println!("mcp      {line}");
+    }
 }
 
 /// How long another machine's claim may go unrenewed before `doctor` offers to release it. A week
@@ -629,12 +637,28 @@ fn print_connected(
         "fragment  {} \u{2014} for agents that read a JSON list of MCP servers",
         kept.fragment.display()
     );
+    let layout = layout();
+    // with the engine here, the one local server reaches the team through the directories routed
+    // to it; a server of the team's own would only make the agent guess between two memories
+    if let Ok(config) = read_config(&layout) {
+        println!(
+            "route     vibememory route add <dir> --to {}: the local memory server {} reaches the team in that \
+             directory",
+            grant.team,
+            vibememory_cli::registrations::LOCAL_SERVER
+        );
+        let registered = vibememory_cli::registrations::read(&layout);
+        for line in vibememory_cli::registrations::advice(&layout, &config, &registered) {
+            println!("mcp       {line}");
+        }
+        return;
+    }
     println!("register with Claude Code:");
     println!(
         "  {}",
         vibememory_cli::connect::claude_code_registration(
             grant,
-            &vibememory_cli::install::installed_binary(&layout())
+            &vibememory_cli::install::installed_binary(&layout)
         )
     );
 }
@@ -656,7 +680,10 @@ fn report_left(team: &str, left: &vibememory_cli::team_ops::Left) {
         vibememory_core::terminal::printable(&left.key_id),
         vibememory_core::terminal::printable(&left.cabinet)
     );
-    println!("config   remove stores.{team} from config.json: its directories are yours again");
+    println!(
+        "route    vibememory route list, then vibememory route remove <dir> for each directory of {team}: they \
+         are yours again"
+    );
 }
 
 fn disconnect_command(args: &[String]) -> ExitCode {
@@ -965,7 +992,9 @@ fn route_command(args: &[String]) -> ExitCode {
     };
     let changed = match args {
         [verb, dir, flag, team] if verb == "add" && flag == "--to" => {
-            if !vibememory_cli::team_connect::connected_teams(&layout).contains(team) {
+            if !vibememory_cli::team_connect::connected_teams(&layout).contains(team)
+                && !vibememory_cli::stores::memory_only(&layout, team)
+            {
                 eprintln!(
                     "route: team {} is not connected on this machine: vibememory connect --cabinet <address> first",
                     vibememory_core::terminal::printable(team)

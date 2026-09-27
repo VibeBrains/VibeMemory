@@ -23,7 +23,7 @@ use vibememory_mcp::host::Host;
 use vibememory_mcp::hostops::{self, ApplyPaths, HostPaths};
 use vibememory_mcp::http;
 use vibememory_mcp::layout;
-use vibememory_mcp::memories::{Memories, for_directory, project_here};
+use vibememory_mcp::memories::{Memories, directory_project, for_directory, project_here};
 use vibememory_mcp::protocol;
 use vibememory_mcp::tools::Caller;
 
@@ -131,6 +131,12 @@ fn main() -> ExitCode {
         return serve(&memories, &Caller::owner(&agent, None));
     }
 
+    serve_local(&agent)
+}
+
+/// The local server: the store of the directory the client started it in, or the team's server on
+/// the host when the directory is routed to a team whose memory lives there alone.
+fn serve_local(agent: &str) -> ExitCode {
     // The engine's own rule for where it lives, not a second copy of it: the server used to read
     // `HOME` itself, which on Windows exists only inside Git Bash.
     let engine_dir = match vibememory_cli::install::engine_dir_from_environment() {
@@ -150,6 +156,26 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    match remote_for_directory(&engine_dir, &cwd, agent) {
+        Ok(Some(remote)) => {
+            return match vibememory_mcp::proxy::serve(
+                &remote,
+                std::io::stdin().lock(),
+                std::io::stdout(),
+            ) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(problem) => {
+                    eprintln!("vibememory-mcp: {problem}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        Ok(None) => {}
+        Err(problem) => {
+            eprintln!("vibememory-mcp: {problem}");
+            return ExitCode::FAILURE;
+        }
+    }
     let (memories, member) = match for_directory(&engine_dir, &cwd) {
         Ok(chosen) => chosen,
         Err(problem) => {
@@ -167,8 +193,8 @@ fn main() -> ExitCode {
         }
     };
     let caller = match member.as_deref() {
-        Some(member) => Caller::member_of_team(&agent, member, project.as_deref()),
-        None => Caller::owner(&agent, project.as_deref()),
+        Some(member) => Caller::member_of_team(agent, member, project.as_deref()),
+        None => Caller::owner(agent, project.as_deref()),
     };
     serve(&memories, &caller)
 }
@@ -296,6 +322,49 @@ fn serve_http(address: &str) -> ExitCode {
     );
     http::serve(&listener, &host, connections);
     ExitCode::FAILURE
+}
+
+/// The team's server to reach for a directory routed to a team whose memory lives on the host
+/// alone, with the member's key and the directory's project; `None` everywhere else.
+fn remote_for_directory(
+    engine_dir: &std::path::Path,
+    cwd: &std::path::Path,
+    agent: &str,
+) -> Result<Option<vibememory_mcp::proxy::Remote>, String> {
+    let Ok(text) = std::fs::read_to_string(engine_dir.join("config.json")) else {
+        return Ok(None);
+    };
+    let config =
+        vibememory_cli::config::Config::parse(&text, vibememory_core::naming::PathSyntax::Posix)
+            .map_err(|error| format!("config.json: {error}"))?;
+    let layout = vibememory_cli::install::Layout {
+        config_dir: std::path::PathBuf::new(),
+        engine_dir: engine_dir.to_path_buf(),
+    };
+    let syntax = vibememory_cli::hook::session_start::host_syntax();
+    let canonical = vibememory_core::naming::canonical_cwd(&cwd.to_string_lossy(), syntax);
+    let Some((team, url)) =
+        vibememory_cli::stores::remote_memory(&layout, &config, &canonical, syntax, agent)?
+    else {
+        return Ok(None);
+    };
+    let authorization = vibememory_cli::connect::headers_of(&layout, &team, agent)?;
+    // the route is the owner's word that this directory is the team's project: its name is the
+    // project even before the team holds anything under it
+    let project = match directory_project(engine_dir, &layout.store(), cwd)? {
+        vibememory_mcp::memories::DirectoryProject::Held { name, .. }
+        | vibememory_mcp::memories::DirectoryProject::Unheld { name } => Some(name),
+        _ => None,
+    };
+    Ok(Some(vibememory_mcp::proxy::Remote {
+        url,
+        authorization,
+        project,
+        scratch: layout
+            .engine_dir
+            .join(vibememory_cli::connect::TOKENS_DIR)
+            .join(&team),
+    }))
 }
 
 /// Reads requests until stdin closes.

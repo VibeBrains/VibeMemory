@@ -39,6 +39,7 @@ pub mod outbox;
 pub mod process;
 pub mod project;
 pub mod project_move;
+pub mod registrations;
 pub mod relink;
 pub mod route;
 pub mod sha256;
