@@ -166,7 +166,8 @@ Rust workspace: `vibememory-core` — чистая логика (имена, к�
 модель записей, guard дескрипторов) без I/O, тестируется на фикстурах реального формата;
 `vibememory-cli` — бинарь (`install / doctor / status / tick / migrate / forget / hook …`,
 merge-драйверы, LaunchAgent / Task Scheduler); `vibememory-mcp` — сервер памяти. Сборки под
-`aarch64-apple-darwin` и `x86_64-pc-windows-msvc`; на целевой машине ноль зависимостей кроме
+macOS (`aarch64-apple-darwin`, `x86_64-apple-darwin`), Linux (`x86_64-unknown-linux-gnu`) и Windows
+(`x86_64-pc-windows-gnu`) — все на Mac; на целевой машине ноль зависимостей кроме
 git и (для хуков на Windows) Git Bash, который Claude Code и так требует.
 
 ## 11. Остаточные риски

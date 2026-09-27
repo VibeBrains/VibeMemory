@@ -6,7 +6,9 @@
 # the MCP server only from beside the running engine, so one without the other is no install — and
 # <archive>.sha256 in sha256sum's format, which `shasum -a 256 -c` on macOS reads too. macOS arm64
 # and x86_64 are built here; Linux x86_64 in a native arm64 container (this Docker has no amd64
-# emulation — knowledge/design/hostMemoryServer.md); Windows on the GPD by infra/releaseBuild.ps1.
+# emulation — knowledge/design/hostMemoryServer.md); Windows here too, with mingw-w64 (the GNU target
+# needs neither Visual Studio nor the Windows SDK, and its .exe asks only for Windows' own libraries —
+# knowledge/toolchain/windowsFromMac.md).
 # A copy of everything stays in /Volumes/Storage/Caches/VibeMemory/releases/<version>/.
 set -euo pipefail
 
@@ -15,6 +17,8 @@ readonly CACHE=/Volumes/Storage/Caches/VibeMemory/releases
 readonly DEFAULT_ALIAS=vibememory
 readonly MAC_TARGETS="aarch64-apple-darwin x86_64-apple-darwin"
 readonly LINUX_TARGET=x86_64-unknown-linux-gnu
+readonly WINDOWS_TARGET=x86_64-pc-windows-gnu
+readonly WINDOWS_LINKER=x86_64-w64-mingw32-gcc
 readonly RUST_IMAGE=rust:1.97-bookworm
 readonly PACKAGES="-p vibememory-cli -p vibememory-mcp"
 # A lost SYN is retried instead of failing the run: the path to the host drops a connection now and
@@ -32,7 +36,7 @@ while [ "$#" -gt 0 ]; do
     --alias) sshAlias="${2:-}"; shift 2 ;;
     --no-upload) upload=0; shift ;;
     -h | --help)
-      printf 'Собрать архивы релиза под macOS и Linux и отправить их в incoming/ на хост.\n\n  ./infra/releaseBuild.sh [--alias vibememory] [--no-upload]\n'
+      printf 'Собрать архивы релиза под macOS, Linux и Windows и отправить их в incoming/ на хост.\n\n  ./infra/releaseBuild.sh [--alias vibememory] [--no-upload]\n'
       exit 0 ;;
     *) fail "неизвестный аргумент $1" ;;
   esac
@@ -72,6 +76,12 @@ docker run --rm --platform linux/arm64 -v "$ROOT":/src:ro -v "$ROOT/target/linux
   -w /src "$RUST_IMAGE" sh -c "apt-get update -qq && apt-get install -y -qq gcc-x86-64-linux-gnu libc6-dev-amd64-cross >/dev/null \
   && rustup target add $LINUX_TARGET >/dev/null 2>&1 && cargo build --quiet --release $PACKAGES --target $LINUX_TARGET"
 pack "$LINUX_TARGET" "$ROOT/target/linux/$LINUX_TARGET/release" ""
+command -v "$WINDOWS_LINKER" >/dev/null || fail "нет $WINDOWS_LINKER: brew install mingw-w64"
+rustup target add "$WINDOWS_TARGET" >/dev/null 2>&1
+# shellcheck disable=SC2086
+CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER="$WINDOWS_LINKER" \
+  cargo build --quiet --release $PACKAGES --target "$WINDOWS_TARGET" --manifest-path "$ROOT/Cargo.toml"
+pack "$WINDOWS_TARGET" "$ROOT/target/$WINDOWS_TARGET/release" ".exe"
 
 if [ "$upload" = 1 ]; then
   ssh -n "${SSH_OPTIONS[@]}" "$sshAlias" "mkdir -p \$HOME/releases/incoming/$version"
