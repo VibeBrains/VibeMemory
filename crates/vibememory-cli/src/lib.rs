@@ -49,3 +49,4 @@ pub mod switch;
 pub mod team_connect;
 pub mod team_ops;
 pub mod tick;
+pub mod user_path;

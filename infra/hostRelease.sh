@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Publishes a release on the host: what the build machines left in ~/releases/incoming/<version>/
 # is checked and moved to /srv/vibememory/releases/<version>/, which Caddy serves as /dl/, and
-# index.json — the cabinet's download page — is rewritten from what is published.
+# index.json — the cabinet's download page — is rewritten from what is published, with `latest` —
+# the newest version, one line, for the one-line installers — and the installers themselves, which
+# Caddy serves as /install.sh and /install.ps1.
 #
 # Runs on the OWNER'S machine; the work is one ssh session. Refuses the whole version, touching
 # nothing published, when a sum does not match or an archive holds anything but the two binaries:
@@ -76,6 +78,17 @@ PY
 sudo install -o root -g root -m 644 "$index" "$releases/index.json.new"
 sudo mv -f "$releases/index.json.new" "$releases/index.json"
 rm -f "$index"
+
+# the newest published version, which the installers read; each file replaced whole
+latest=$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1])); print(max(v, key=lambda s: [int(p) if p.isdigit() else 0 for p in s.split(".")]))' "$releases/index.json")
+printf '%s\n' "$latest" | sudo tee "$releases/latest.new" >/dev/null
+sudo chmod 644 "$releases/latest.new"
+sudo mv -f "$releases/latest.new" "$releases/latest"
+for installer in install.sh install.ps1; do
+  [ -f "$incoming/$installer" ] || continue
+  sudo install -o root -g root -m 644 "$incoming/$installer" "$releases/$installer.new"
+  sudo mv -f "$releases/$installer.new" "$releases/$installer"
+done
 rm -rf "$incoming"
-echo "Опубликован $version: $(echo $archives | wc -w) архив(а), index.json переписан"
+echo "Опубликован $version: $(echo $archives | wc -w) архив(а), index.json переписан, последняя версия — $latest"
 REMOTE

@@ -230,6 +230,9 @@ pub enum Step {
     Curl,
     /// No deletions held back by the tick's cap and waiting for a person.
     DeletionsHeld,
+    /// `~/.vibememory/bin` on the user's lasting `PATH`, so `vibememory` answers by name in a new
+    /// terminal wherever it was installed from.
+    OnPath,
     /// No flag in the `env` of `settings.json` that switches the prompt cache off or shortens it.
     /// Such a flag travels to every machine with the managed copy, and costs a share of the
     /// usage limits on each of them.
@@ -288,6 +291,7 @@ impl Step {
             Self::Hooks => "hooks in settings.json".to_owned(),
             Self::GitBash => "Git Bash for the hooks".to_owned(),
             Self::Curl => "curl for connect".to_owned(),
+            Self::OnPath => "vibememory on PATH in a new terminal".to_owned(),
             Self::PromptCacheEnv => "prompt cache not switched off in settings.json".to_owned(),
             Self::DeletionsHeld => "no deletions waiting for a decision".to_owned(),
             Self::ScaffoldCommitted { .. } => "store scaffolding committed".to_owned(),
@@ -431,6 +435,7 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
         step: Step::Curl,
         state: curl_state(),
     });
+    actions.push(on_path_action(layout));
     actions.push(Action {
         step: Step::Hooks,
         state: hooks_state(layout),
@@ -730,6 +735,7 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
         Step::MergeDriverRuns => probe_merge_drivers(layout),
         Step::Schedule => install_schedule(layout),
         Step::Binary => install_binary(layout),
+        Step::OnPath => crate::user_path::put_on_path(&home_of(layout), &bin_dir(layout)),
         Step::McpBinary => match mcp_source() {
             Some(source) => install_named(layout, MCP_BINARY, &source),
             None => Ok(()),
@@ -1442,7 +1448,34 @@ pub fn plan_binaries(layout: &Layout) -> Vec<Action> {
         step: Step::Curl,
         state: curl_state(),
     });
+    actions.push(on_path_action(layout));
     actions
+}
+
+/// Where the installed binaries lie.
+fn bin_dir(layout: &Layout) -> PathBuf {
+    installed_binary(layout)
+        .parent()
+        .map_or_else(|| layout.engine_dir.join("bin"), Path::to_path_buf)
+}
+
+/// The home the engine lives in: the directory that holds `~/.vibememory`.
+fn home_of(layout: &Layout) -> PathBuf {
+    layout
+        .engine_dir
+        .parent()
+        .map_or_else(|| layout.engine_dir.clone(), Path::to_path_buf)
+}
+
+fn on_path_action(layout: &Layout) -> Action {
+    Action {
+        step: Step::OnPath,
+        state: match crate::user_path::is_on_path(&home_of(layout), &bin_dir(layout)) {
+            Ok(true) => State::Satisfied,
+            Ok(false) => State::Missing,
+            Err(reason) => State::Unknown { reason },
+        },
+    }
 }
 
 /// The first executable called `name` on `PATH`.

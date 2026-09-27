@@ -15,6 +15,17 @@
 }
 
 {{APP_DOMAIN}} {
+	# The one-line installers, from the releases directory beside the archives they fetch.
+	handle /install.sh {
+		root * {{RELEASES}}
+		header Content-Type "text/plain; charset=utf-8"
+		file_server
+	}
+	handle /install.ps1 {
+		root * {{RELEASES}}
+		header Content-Type "text/plain; charset=utf-8"
+		file_server
+	}
 	# The archives and their sums; no directory listing.
 	handle_path /dl/* {
 		root * {{RELEASES}}

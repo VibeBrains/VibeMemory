@@ -166,19 +166,20 @@ fn doctor_finds_the_token_and_says_when_others_can_read_it() {
 }
 
 #[test]
-fn a_machine_without_the_engine_plans_the_binaries_and_curl_only() {
+fn a_machine_without_the_engine_plans_the_binaries_curl_and_path_only() {
     let temp = TempDir::new("connect-binaries");
     let steps: Vec<Step> = plan_binaries(&layout(&temp))
         .into_iter()
         .map(|action| action.step)
         .collect();
     assert_eq!(steps.first(), Some(&Step::Binary));
-    assert_eq!(steps.last(), Some(&Step::Curl));
-    assert!(
-        steps
-            .iter()
-            .all(|step| matches!(step, Step::Binary | Step::McpBinary | Step::Curl))
-    );
+    // last: the programs on PATH, so the member types `vibememory connect` by name in a new terminal
+    assert_eq!(steps.last(), Some(&Step::OnPath));
+    assert!(steps.contains(&Step::Curl));
+    assert!(steps.iter().all(|step| matches!(
+        step,
+        Step::Binary | Step::McpBinary | Step::Curl | Step::OnPath
+    )));
 }
 
 #[test]

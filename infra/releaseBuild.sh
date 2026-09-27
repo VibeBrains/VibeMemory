@@ -85,6 +85,7 @@ pack "$WINDOWS_TARGET" "$ROOT/target/$WINDOWS_TARGET/release" ".exe"
 
 if [ "$upload" = 1 ]; then
   ssh -n "${SSH_OPTIONS[@]}" "$sshAlias" "mkdir -p \$HOME/releases/incoming/$version"
-  scp -q -o ConnectTimeout=15 -o ConnectionAttempts=4 "$out"/*.tar.gz "$out"/*.sha256 "$sshAlias:releases/incoming/$version/"
+  scp -q -o ConnectTimeout=15 -o ConnectionAttempts=4 "$out"/*.tar.gz "$out"/*.sha256 \
+    "$ROOT/infra/install.sh" "$ROOT/infra/install.ps1" "$sshAlias:releases/incoming/$version/"
   say "Отправлено в ~/releases/incoming/$version/ — дальше ./infra/hostRelease.sh $version"
 fi

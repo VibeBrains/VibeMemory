@@ -837,6 +837,13 @@ fn install(dry_run: bool) -> ExitCode {
     for (what, error) in &applied.failed {
         eprintln!("failed: {what} — {error}");
     }
+    if applied
+        .performed
+        .iter()
+        .any(|what| *what == vibememory_cli::install::Step::OnPath.describe())
+    {
+        println!("open a new terminal: vibememory answers there by name");
+    }
     if applied.is_complete() {
         ExitCode::SUCCESS
     } else {
