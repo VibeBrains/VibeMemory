@@ -38,6 +38,10 @@ pub const DEFAULT_CONNECTIONS: usize = 8;
 pub trait Door: Sync {
     /// Who presented `token` — empty when the request carried none.
     fn admit(&self, token: &str) -> Admission<'_>;
+
+    /// Notes that an admitted request named a project outside its token's list. Nothing by
+    /// default: only the host keeps the note, for its report.
+    fn outside_scope(&self, _grant: &Grant, _project: &str) {}
 }
 
 /// Who a request is, as far as the door can tell.
@@ -286,6 +290,9 @@ pub fn answer(request: &HttpRequest, door: &dyn Door) -> (HttpResponse, Note) {
     let caller = visit.grant.caller();
     let (response, note) = match crate::protocol::parse(&text) {
         Ok(message) => {
+            if let Some(project) = outside_scope(&message, &visit.grant) {
+                door.outside_scope(&visit.grant, project);
+            }
             let response = crate::protocol::handle(&message, &caller, &*visit.memories);
             let note = call_note(&message, response.as_ref(), &visit.grant);
             (response, note)
@@ -306,6 +313,21 @@ pub fn answer(request: &HttpRequest, door: &dyn Door) -> (HttpResponse, Note) {
         },
     };
     (response, note)
+}
+
+/// The project a tool call names outside its token's list, if it does: read from the request and the
+/// grant, the same comparison the tools refuse by — never from the words of the refusal.
+fn outside_scope<'m>(message: &'m crate::protocol::Request, grant: &Grant) -> Option<&'m str> {
+    if message.method != "tools/call" {
+        return None;
+    }
+    let project = message
+        .params
+        .get("arguments")
+        .and_then(|arguments| arguments.get("project"))
+        .and_then(Value::as_str)?;
+    let scope = grant.scope.as_ref()?;
+    (!scope.iter().any(|allowed| allowed == project)).then_some(project)
 }
 
 /// The journal line of a tool call; nothing for the handshake and the catalogue.

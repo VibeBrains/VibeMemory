@@ -1168,6 +1168,7 @@ fn gather(paths: &HostPaths, snapshot: Option<&Snapshot>) -> Result<Facts, Strin
         repos,
         adopted,
         host_keys: host_keys(),
+        outside_scope: outside_scope(&layout::outside_dir(&paths.teams)),
         disk: disk(&paths.teams)?,
         services: service_states(),
         backup,
@@ -1413,6 +1414,23 @@ const MEMORY_JOURNAL: &str = "memory.jsonl";
 
 /// The memory directory of a project, relative to the project, with its separator.
 const MEMORY_DIR_PREFIX: &str = "memory/";
+
+/// The notes of projects asked for outside a token's list, by token id. A note that cannot be read
+/// is left out: it only ever feeds a hint in the cabinet.
+fn outside_scope(dir: &Path) -> BTreeMap<String, BTreeMap<String, String>> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return BTreeMap::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let token = name.strip_suffix(".json")?.to_owned();
+            let text = std::fs::read_to_string(entry.path()).ok()?;
+            Some((token, serde_json::from_str(&text).ok()?))
+        })
+        .collect()
+}
 
 /// The host's ed25519 public keys from its `ssh_host_*_key.pub`, in wire form.
 fn host_keys() -> Vec<String> {

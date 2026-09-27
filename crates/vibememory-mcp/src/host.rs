@@ -7,7 +7,7 @@
 //! that reads but is older than what is in force — a lower serial than the snapshot loaded, or than
 //! the copy the host applied last — is not taken: the host never goes back.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::SystemTime;
@@ -287,6 +287,48 @@ impl Door for Host {
             memories: Box::new(memories),
         })
     }
+
+    fn outside_scope(&self, grant: &crate::http::Grant, project: &str) {
+        // best effort, like the activity file: a note that cannot be kept costs only the report
+        if let Err(error) = note_outside(&layout::outside_dir(&self.teams), &grant.token, project) {
+            eprintln!("vibememory-mcp: outside {}: {error}", grant.token);
+        }
+    }
+}
+
+/// How many refused projects one token's note keeps: enough for a person to pick from, bounded so
+/// a client asking for random names cannot grow the file.
+const OUTSIDE_KEPT: usize = 20;
+
+/// Adds `project` to the token's note of projects asked for outside its list, with when.
+fn note_outside(dir: &Path, token: &str, project: &str) -> Result<(), String> {
+    // the token's public id names the file: nothing else from the request becomes a path
+    let named = token
+        .strip_prefix("tk_")
+        .is_some_and(vibememory_core::token::is_id);
+    if !named || project.len() > vibememory_core::MAX_FILE_NAME_BYTES {
+        return Ok(());
+    }
+    let path = dir.join(format!("{token}.json"));
+    let mut asked: BTreeMap<String, String> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    asked.insert(project.to_owned(), vibememory_cli::clock::now());
+    while asked.len() > OUTSIDE_KEPT {
+        let Some(oldest) = asked
+            .iter()
+            .min_by(|a, b| a.1.cmp(b.1))
+            .map(|(name, _)| name.clone())
+        else {
+            break;
+        };
+        asked.remove(&oldest);
+    }
+    let text = serde_json::to_string(&asked).map_err(|error| error.to_string())?;
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, text).map_err(|error| error.to_string())?;
+    std::fs::rename(&temporary, &path).map_err(|error| error.to_string())
 }
 
 /// One team's memory, as a request of one token or the session of one machine key sees it.

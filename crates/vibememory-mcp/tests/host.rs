@@ -580,3 +580,26 @@ fn stand_again(stand: Stand) -> Stand {
     let host = Host::open(stand.access.clone(), stand.temp.0.join("teams"), None).expect("open");
     Stand { host, ..stand }
 }
+
+#[test]
+fn a_project_asked_for_outside_the_tokens_list_is_kept_for_the_report() {
+    let stand = stand("host-outside", None);
+    let mut scoped = snapshot(&stand.personal);
+    scoped["tokens"][1]["projects"] = json!(["VibeIDE"]);
+    publish(&stand.access, &scoped.to_string());
+    let outside = stand.temp.0.join("outside");
+    fs::create_dir_all(&outside).expect("outside");
+
+    let (_, refused, _) = call(
+        &stand,
+        ALICE,
+        "memory_search",
+        &json!({ "query": "x", "project": "Romashka" }),
+    );
+    assert!(refused, "a project outside the list is still refused");
+    let note: Value = serde_json::from_str(
+        &fs::read_to_string(outside.join("tk_7q2m9x4a.json")).expect("the note"),
+    )
+    .expect("json");
+    assert!(note.get("Romashka").is_some_and(Value::is_string), "{note}");
+}

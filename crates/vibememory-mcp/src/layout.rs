@@ -94,6 +94,13 @@ pub fn activity_dir(teams: &Path) -> PathBuf {
     teams.with_file_name("activity")
 }
 
+/// Projects each token asked for outside its list, beside `teams/`: one file a token, read into the
+/// report, so the owner of the team sees what an agent was refused and can open it with one click.
+#[must_use]
+pub fn outside_dir(teams: &Path) -> PathBuf {
+    teams.with_file_name("outside")
+}
+
 /// Archives of teams' memory, beside `teams/`: the cabinet puts a request, the host the archive.
 #[must_use]
 pub fn exports_dir(teams: &Path) -> PathBuf {

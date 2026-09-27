@@ -136,6 +136,9 @@ pub struct Facts {
     pub adopted: BTreeMap<String, RepoFacts>,
     /// The host's public keys: type and base64, no comment.
     pub host_keys: Vec<String>,
+    /// Projects each token asked for outside its list, by token id: project → when last asked.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub outside_scope: BTreeMap<String, BTreeMap<String, String>>,
     /// The partition of the stores.
     pub disk: Disk,
     /// `systemctl is-active` of each service.
@@ -226,6 +229,10 @@ pub struct HostReport {
     pub orphans: Vec<Orphan>,
     /// The host's public keys.
     pub host_keys: Vec<String>,
+    /// Projects each token asked for outside its list, by token id: project → when last asked. A
+    /// report written before the field was added reads as none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub outside_scope: BTreeMap<String, BTreeMap<String, String>>,
     /// The partition of the stores.
     pub disk: Disk,
     /// `systemctl is-active` of each service.
@@ -324,6 +331,7 @@ pub fn host_report(
         retiring,
         orphans,
         host_keys: facts.host_keys,
+        outside_scope: facts.outside_scope,
         disk: facts.disk,
         services: facts.services,
         backup: facts.backup,

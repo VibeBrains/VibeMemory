@@ -185,11 +185,14 @@ JSON
 fi
 
 # When each team was last reached: the server touches a file a team, the report reads its time.
+# What each token asked for outside its list of projects: a file a token, read into the report.
 # The cabinet's archive requests and the host's archives: the same shared group as the snapshot,
 # sticky, so each side removes only its own files.
 activity=$(dirname "$teams")/activity
 exports=$(dirname "$teams")/exports
+outside=$(dirname "$teams")/outside
 sudo install -d -o vmgit -g vmgit -m 0750 "$activity"
+sudo install -d -o vmgit -g vmgit -m 0750 "$outside"
 sudo install -d -o root -g vmaccess -m 3770 "$exports"
 
 unit=/etc/systemd/system/vibememory-mcp.service
@@ -205,7 +208,7 @@ RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=$repo $teams $activity
+ReadWritePaths=$repo $teams $activity $outside
 ReadOnlyPaths=$(dirname "$access")
 
 [Install]

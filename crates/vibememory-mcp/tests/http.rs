@@ -403,3 +403,52 @@ fn a_request_cannot_write_a_line_the_jail_counts() {
     let refused = journal_line(&Note::Refused, "203.0.113.7").unwrap();
     assert_eq!(jail_bans(&refused).as_deref(), Some("203.0.113.7"));
 }
+
+/// A door whose token opens one project, and which remembers what was asked for outside it.
+struct ScopedDoor {
+    memories: FakeMemories,
+    outside: std::sync::Mutex<Vec<(String, String)>>,
+}
+
+impl Door for ScopedDoor {
+    fn admit(&self, token: &str) -> Admission<'_> {
+        if token != TOKEN {
+            return Admission::Unknown;
+        }
+        let mut scoped = grant();
+        scoped.scope = Some(vec!["VibeIDE".to_owned()]);
+        Admission::Granted(Visit {
+            grant: scoped,
+            memories: Box::new(&self.memories),
+        })
+    }
+
+    fn outside_scope(&self, grant: &Grant, project: &str) {
+        self.outside
+            .lock()
+            .unwrap()
+            .push((grant.token.clone(), project.to_owned()));
+    }
+}
+
+#[test]
+fn a_project_outside_the_tokens_list_is_noted_for_the_owner_and_one_inside_is_not() {
+    let door = ScopedDoor {
+        memories: FakeMemories::new("2026-09-27T12:00:00Z"),
+        outside: std::sync::Mutex::new(Vec::new()),
+    };
+    door.memories.seed("VibeIDE", Vec::new());
+    let outside = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"memory_search","arguments":{"query":"x","project":"Romashka"}}}"#;
+    let inside = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"memory_search","arguments":{"query":"x","project":"VibeIDE"}}}"#;
+    let (refused, _) = answer(&post(outside, &[]), &door);
+    let body: Value = serde_json::from_slice(&refused.body).unwrap();
+    assert!(
+        body["result"]["isError"] == true || body.get("error").is_some(),
+        "the tool still refuses: {body}"
+    );
+    let _ = answer(&post(inside, &[]), &door);
+    assert_eq!(
+        *door.outside.lock().unwrap(),
+        vec![(TOKEN_ID.to_owned(), "Romashka".to_owned())]
+    );
+}
