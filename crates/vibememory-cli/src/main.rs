@@ -436,12 +436,17 @@ fn connect_command(args: &[String]) -> ExitCode {
     {
         return refresh_command(team);
     }
-    let (asked, agent) = match connect_arguments(args) {
+    let ConnectArguments {
+        cabinet: asked,
+        agent,
+        machine_id,
+    } = match connect_arguments(args) {
         Ok(parsed) => parsed,
         Err(error) => {
             eprintln!("connect: {error}");
             eprintln!(
-                "usage: vibememory connect --cabinet <address> [--agent <name>], and the code at the prompt; \
+                "usage: vibememory connect --cabinet <address> [--agent <name>] [--machine-id <name>], and the code at \
+                 the prompt; \
                  vibememory connect --refresh <team> after the host changed its key"
             );
             return ExitCode::from(2);
@@ -454,16 +459,8 @@ fn connect_command(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let stdin = std::io::stdin();
-    if std::io::IsTerminal::is_terminal(&stdin) {
-        eprint!("claim code: ");
-    }
-    let code = match vibememory_cli::connect::read_code(stdin.lock()) {
-        Ok(code) => code,
-        Err(error) => {
-            eprintln!("connect: {error}");
-            return ExitCode::from(2);
-        }
+    let Some(code) = claim_code() else {
+        return ExitCode::from(2);
     };
     let layout = layout();
     // a key goes with every code; without ssh-keygen only a code for a machine is refused
@@ -492,6 +489,9 @@ fn connect_command(args: &[String]) -> ExitCode {
             grant
         }
         (Ok(vibememory_core::claim::Claim::Key(grant)), Some(pending)) => {
+            if grant.mode == vibememory_core::team_store::PERSONAL_MODE {
+                return connect_personal(&layout, &grant, pending, machine_id.as_deref());
+            }
             return connect_key(&layout, &grant, pending);
         }
         (Ok(vibememory_core::claim::Claim::Key(grant)), None) => {
@@ -533,6 +533,21 @@ fn connect_command(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// The claim code, asked for at the terminal or read from a pipe; `None` after saying why not.
+fn claim_code() -> Option<String> {
+    let stdin = std::io::stdin();
+    if std::io::IsTerminal::is_terminal(&stdin) {
+        eprint!("claim code: ");
+    }
+    match vibememory_cli::connect::read_code(stdin.lock()) {
+        Ok(code) => Some(code),
+        Err(error) => {
+            eprintln!("connect: {error}");
+            None
+        }
+    }
+}
+
 /// `connect --refresh <team>`: the team's `known_hosts` from the cabinet, after the host changed its
 /// key.
 fn refresh_command(team: &str) -> ExitCode {
@@ -570,6 +585,53 @@ fn print_claim_failure(
     }
 }
 
+/// A personal store answer: the key kept, the main store cloned or re-aimed, `config.json` written
+/// when there was none, and the full install — hooks, schedule, links, PATH — on top.
+fn connect_personal(
+    layout: &vibememory_cli::install::Layout,
+    grant: &vibememory_core::claim::KeyGrant,
+    pending: vibememory_cli::team_connect::PendingKey,
+    machine_id: Option<&str>,
+) -> ExitCode {
+    let connected = match vibememory_cli::personal_connect::connect(
+        layout, grant, pending, machine_id,
+    ) {
+        Ok(connected) => connected,
+        Err(refusal) => {
+            eprintln!("connect: {refusal}");
+            eprintln!(
+                "connect: key {} is registered for this machine in the cabinet: revoke it there",
+                grant.key_id
+            );
+            return ExitCode::FAILURE;
+        }
+    };
+    println!(
+        "connected: the personal store of {} as machine {}",
+        grant.member, connected.machine_id
+    );
+    println!(
+        "store:     {}{}",
+        connected.store.display(),
+        if connected.cloned {
+            ""
+        } else {
+            " (kept, now on the new key)"
+        }
+    );
+    if connected.configured {
+        println!(
+            "config:    {} written",
+            layout.engine_dir.join("config.json").display()
+        );
+    }
+    let installed = install(false);
+    println!(
+        "next:      open a new terminal, run vibememory doctor, and sign in to Claude Code again"
+    );
+    installed
+}
+
 /// A machine key answer: the key kept and the team's store cloned, or why not — with the key's id
 /// to revoke, since the cabinet registered it either way.
 fn connect_key(
@@ -603,11 +665,9 @@ fn connect_key(
                 }
             );
             println!(
-                "next:      name the team's projects in {} under stores.{}.cwd, or move one with \
-                 `vibememory project move <dir> --to {}`",
-                layout.engine_dir.join("config.json").display(),
-                grant.team,
-                grant.team
+                "next:      vibememory route add <dir> --to {} for each project of the team, or move one with \
+                 vibememory project move <dir> --to {}",
+                grant.team, grant.team
             );
             ExitCode::SUCCESS
         }
@@ -772,14 +832,16 @@ fn headers_command(args: &[String]) -> ExitCode {
 /// The arguments of `connect`, read strictly: `--cabinet <address>` once, `--agent <name>` at most
 /// once, and nothing else. A code is never taken from the command line — `--code`, `--code=…` and
 /// a bare word alike are refused, so that nobody learns only later that `ps` showed it.
-fn connect_arguments(args: &[String]) -> Result<(String, Option<String>), String> {
+fn connect_arguments(args: &[String]) -> Result<ConnectArguments, String> {
     let mut cabinet = None;
     let mut agent = None;
+    let mut machine_id = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
         let slot = match arg.as_str() {
             "--cabinet" => &mut cabinet,
             "--agent" => &mut agent,
+            "--machine-id" => &mut machine_id,
             code if code.starts_with("--code") => {
                 return Err(
                     "the code is not taken from the command line, where every user of this machine \
@@ -800,7 +862,19 @@ fn connect_arguments(args: &[String]) -> Result<(String, Option<String>), String
         }
     }
     let cabinet = cabinet.ok_or_else(|| "--cabinet is required".to_owned())?;
-    Ok((cabinet, agent))
+    Ok(ConnectArguments {
+        cabinet,
+        agent,
+        machine_id,
+    })
+}
+
+/// What `connect` was given.
+struct ConnectArguments {
+    cabinet: String,
+    agent: Option<String>,
+    /// The name a machine joining the personal store takes when it has no `config.json` yet.
+    machine_id: Option<String>,
 }
 
 /// Brings the machine to the planned state, or says what it would do. Without a `config.json`
@@ -818,7 +892,9 @@ fn install(dry_run: bool) -> ExitCode {
         }
     } else {
         println!(
-            "engine not configured (no {}): placing the binaries only",
+            "engine not configured (no {}): placing the binaries only — to make this a machine of your personal \
+             store, get a code for it on the personal store's page in the cabinet and run vibememory connect \
+             --cabinet <address>",
             layout.engine_dir.join("config.json").display()
         );
         vibememory_cli::install::plan_binaries(&layout)

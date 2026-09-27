@@ -69,6 +69,9 @@ const STORE_DIR: &str = "store";
 /// The directory under `<engine>` that holds one state directory per team store.
 const TEAM_STORES_DIR: &str = "stores";
 
+/// The directory of the personal store's key under the engine directory.
+const PERSONAL_DIR: &str = "personal";
+
 /// Where everything lives on this machine.
 #[derive(Debug, Clone)]
 pub struct Layout {
@@ -100,6 +103,13 @@ impl Layout {
     #[must_use]
     pub fn team_store(&self, id: &str) -> PathBuf {
         self.team_state_dir(id).join(STORE_DIR)
+    }
+
+    /// Where a machine connected to the personal store by a code keeps its key, host keys and
+    /// record: `<engine>/personal`, beside the main store and apart from the teams'.
+    #[must_use]
+    pub fn personal_state_dir(&self) -> PathBuf {
+        self.engine_dir.join(PERSONAL_DIR)
     }
 
     /// This machine's layout, from the environment.
@@ -837,6 +847,9 @@ pub fn schedule_path(layout: &Layout) -> PathBuf {
     if cfg!(windows) {
         return layout.engine_dir.join(SCHEDULED_TASK_FILE);
     }
+    if !cfg!(target_os = "macos") {
+        return systemd_dir(layout).join(format!("{SYSTEMD_UNIT}.timer"));
+    }
     match real_launch_agents_dir(layout) {
         // `with_extension` would eat the `.tick`: the label's own dots are part of its name.
         Some(dir) => dir.join(format!("{SCHEDULE_LABEL}.plist")),
@@ -872,6 +885,17 @@ fn install_schedule(layout: &Layout) -> Result<(), String> {
         write_new(&path, &utf16_with_bom(&scheduled_task(layout)))?;
         if is_real_engine(layout) {
             register_scheduled_task(&path)?;
+        }
+        return Ok(());
+    }
+    if !cfg!(target_os = "macos") {
+        write_new(
+            &systemd_service_path(layout),
+            systemd_service(layout).as_bytes(),
+        )?;
+        write_new(&path, systemd_timer().as_bytes())?;
+        if is_real_engine(layout) {
+            start_linux_schedule(layout)?;
         }
         return Ok(());
     }
@@ -1079,7 +1103,15 @@ fn push_schedule_step(layout: &Layout, actions: &mut Vec<Action>) {
             &utf16_with_bom(&scheduled_task(layout)),
         )
     } else {
-        return;
+        // Linux: the timer and its service, both as written; a machine without a user systemd runs
+        // the tick from cron, which the step reports as done once the line is there
+        match (
+            file_state(&schedule_path(layout), &systemd_timer()),
+            file_state(&systemd_service_path(layout), &systemd_service(layout)),
+        ) {
+            (State::Satisfied, State::Satisfied) => State::Satisfied,
+            (State::Satisfied, other) | (other, _) => other,
+        }
     };
     actions.push(Action {
         step: Step::Schedule,
@@ -1233,12 +1265,112 @@ pub fn launch_agent(layout: &Layout) -> String {
     )
 }
 
+/// The name systemd knows the tick's service and timer by.
+pub const SYSTEMD_UNIT: &str = "vibememory-tick";
+
+/// The marker at the end of the cron line of a machine without a user systemd.
+const CRON_MARKER: &str = "# vibememory tick";
+
+/// `~/.config/systemd/user` for the real engine; a redirected one keeps its units beside itself and
+/// never touches systemd.
+fn systemd_dir(layout: &Layout) -> PathBuf {
+    match home_dir() {
+        Some(home) if is_real_engine(layout) => home.join(".config").join("systemd").join("user"),
+        _ => layout.engine_dir.join("systemd"),
+    }
+}
+
+fn systemd_service_path(layout: &Layout) -> PathBuf {
+    systemd_dir(layout).join(format!("{SYSTEMD_UNIT}.service"))
+}
+
+/// The service one tick runs as: the engine's own binary, its directory named as launchd names it.
+#[must_use]
+pub fn systemd_service(layout: &Layout) -> String {
+    format!(
+        "[Unit]\nDescription=VibeMemory: keeps this machine's store in step with the others\n\n\
+         [Service]\nType=oneshot\nEnvironment=\"VIBEMEMORY_DIR={}\"\nExecStart=\"{}\" tick\n",
+        layout.engine_dir.display(),
+        installed_binary(layout).display()
+    )
+}
+
+/// The timer: at login and every two minutes after, as launchd and the Task Scheduler run it.
+#[must_use]
+pub fn systemd_timer() -> String {
+    format!(
+        "[Unit]\nDescription=VibeMemory tick every {} minutes\n\n\
+         [Timer]\nOnStartupSec=30\nOnUnitActiveSec={}\nUnit={SYSTEMD_UNIT}.service\n\n\
+         [Install]\nWantedBy=timers.target\n",
+        TICK_INTERVAL_SECONDS / 60,
+        TICK_INTERVAL_SECONDS
+    )
+}
+
+/// The cron line of a machine without a user systemd.
+#[must_use]
+pub fn cron_line(layout: &Layout) -> String {
+    format!(
+        "*/{} * * * * VIBEMEMORY_DIR='{}' '{}' tick {CRON_MARKER}",
+        TICK_INTERVAL_SECONDS / 60,
+        layout.engine_dir.display(),
+        installed_binary(layout).display()
+    )
+}
+
+/// Starts the timer, or — where the user has no systemd of their own — puts the tick into cron once.
+fn start_linux_schedule(layout: &Layout) -> Result<(), String> {
+    let systemd = |args: &[&str]| {
+        std::process::Command::new("systemctl")
+            .arg("--user")
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    };
+    if systemd(&["daemon-reload"])
+        && systemd(&["enable", "--now", &format!("{SYSTEMD_UNIT}.timer")])
+    {
+        return Ok(());
+    }
+    let listed = std::process::Command::new("crontab")
+        .arg("-l")
+        .output()
+        .map_err(|error| format!("neither a user systemd nor crontab: {error}"))?;
+    let current = String::from_utf8_lossy(&listed.stdout).into_owned();
+    if current.lines().any(|line| line.ends_with(CRON_MARKER)) {
+        return Ok(());
+    }
+    let next = format!("{}{}\n", current, cron_line(layout));
+    let mut child = std::process::Command::new("crontab")
+        .arg("-")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    std::io::Write::write_all(
+        child.stdin.as_mut().ok_or("crontab took no input")?,
+        next.as_bytes(),
+    )
+    .map_err(|error| error.to_string())?;
+    let status = child.wait().map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("crontab refused the tick's line".to_owned())
+    }
+}
+
 /// How often the tick runs, for both schedulers: launchd's `StartInterval`, the Task Scheduler's
 /// repetition interval.
 const TICK_INTERVAL_SECONDS: u32 = 120;
 
 /// The name the Task Scheduler knows the tick by, in a folder of its own.
 pub const SCHEDULED_TASK_NAME: &str = "VibeMemory\\tick";
+
+/// The console host of Windows 10 and later, run without a window: the Task Scheduler expands the
+/// variable.
+const HEADLESS_CONSOLE: &str = r"%windir%\System32\conhost.exe";
 
 /// The task file `install` writes under the engine directory and hands the Task Scheduler.
 const SCHEDULED_TASK_FILE: &str = "tick-task.xml";
@@ -1249,14 +1381,20 @@ const SCHEDULED_TASK_FILE: &str = "tick-task.xml";
 /// runs it in the owner's session and with the owner's environment — git needs the ssh key and the
 /// `PATH` of that session. No second copy while one runs: the tick has its own lock, and a stack of
 /// waiting ticks after a sleep is exactly what launchd is told to avoid on macOS.
+///
+/// The engine is a console program, and so is every git it starts: run by the Task Scheduler in the
+/// owner's session, each would open a console window every two minutes. `conhost --headless` gives
+/// the whole run one console nobody sees, and the processes it starts share it instead of opening
+/// their own.
 #[must_use]
 pub fn scheduled_task(layout: &Layout) -> String {
     let interval = format!(
         "        <Interval>PT{}M</Interval>",
         TICK_INTERVAL_SECONDS / 60
     );
-    let command = format!(
-        "      <Command>{}</Command>",
+    let command = format!("      <Command>{HEADLESS_CONSOLE}</Command>");
+    let arguments = format!(
+        "      <Arguments>--headless &quot;{}&quot; tick</Arguments>",
         xml_text(&installed_binary(layout).to_string_lossy())
     );
     let lines: &[&str] = &[
@@ -1294,7 +1432,7 @@ pub fn scheduled_task(layout: &Layout) -> String {
         r#"  <Actions Context="Author">"#,
         "    <Exec>",
         command.as_str(),
-        "      <Arguments>tick</Arguments>",
+        arguments.as_str(),
         "    </Exec>",
         "  </Actions>",
         "</Task>",

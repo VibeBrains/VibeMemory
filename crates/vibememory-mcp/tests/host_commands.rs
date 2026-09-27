@@ -1247,3 +1247,70 @@ fn switching_sessions_off_leaves_the_memory_and_frees_the_rest() {
         "a second application changes nothing"
     );
 }
+
+/// The owner's new machine: a machine key that names the personal store.
+const OWNER_GPD: &str = "mk_9tjsmx2j";
+
+#[test]
+fn the_owners_machine_key_clones_and_pushes_the_personal_store_where_it_lies() {
+    let host = host("personal-key");
+    let mut snapshot: Value =
+        serde_json::from_slice(&fs::read(&host.access).expect("snapshot")).expect("json");
+    let mut keys = snapshot["keys"].as_array().cloned().unwrap_or_default();
+    keys.push(json!({
+        "id": OWNER_GPD, "member": "borodatych", "machine": "gpd", "storeName": "borodatych-gpd",
+        "teams": ["personal"],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIERERERERERERERERERERERERERERERERERERERERERE"
+    }));
+    snapshot["keys"] = Value::Array(keys);
+    put_snapshot(&host, &snapshot);
+    assert!(apply(&host).status.success());
+    let personal = host.root.join("personal.git");
+
+    let clone = member_git(
+        &host,
+        &host.root,
+        OWNER_GPD,
+        &["clone", "--quiet", "vmhost:teams/personal.git", "gpd"],
+    );
+    assert!(
+        clone.status.success(),
+        "clone: {}",
+        String::from_utf8_lossy(&clone.stderr)
+    );
+    let work = host.root.join("gpd");
+    assert!(
+        work.join("projects/VibeMemory/memory/MEMORY.md").is_file(),
+        "the personal store, not a team's"
+    );
+
+    fs::create_dir_all(work.join("machines/GPD-WIN-MAX2")).expect("dir");
+    fs::write(work.join("machines/GPD-WIN-MAX2/live.json"), "{}\n").expect("file");
+    git(&work, &["add", "-A"]);
+    git(&work, &["commit", "--quiet", "-m", "gpd"]);
+    let pushed = member_git(
+        &host,
+        &work,
+        OWNER_GPD,
+        &["push", "--quiet", "origin", "HEAD:main"],
+    );
+    assert!(
+        pushed.status.success(),
+        "push: {}",
+        String::from_utf8_lossy(&pushed.stderr)
+    );
+    assert_eq!(
+        bare(&personal, &["rev-parse", "main"]),
+        git(&work, &["rev-parse", "HEAD"])
+    );
+
+    // Alice's laptop key does not name personal: the same path is closed to it
+    let refused = member_git(
+        &host,
+        &host.root,
+        ALICE_LAPTOP,
+        &["clone", "vmhost:teams/personal.git", "alice"],
+    );
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("unknownTeam"));
+}

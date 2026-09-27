@@ -338,24 +338,28 @@ pub fn shell(key: &str, original: &str, paths: &HostPaths) -> ExitCode {
     else {
         return refuse("unknownKey", &["the key is not in the snapshot"]);
     };
+    // the repository by the snapshot, never by the path the client sent: the personal store lies
+    // where its `repo` says, every other team under teams/
+    let repository = |team: &str| {
+        snapshot.teams.get(team).map_or_else(
+            || paths.teams.join(store_dir(team)),
+            |found| found.repository(team, &paths.teams),
+        )
+    };
     match action {
         ShellAction::Upload { team } => {
             journal_quietly(&format!(
                 "{SHELL_TAG}: key {key} ({}) fetches {team}",
                 identity.store_name
             ));
-            run_git("upload-pack", &paths.teams.join(store_dir(&team)), None)
+            run_git("upload-pack", &repository(&team), None)
         }
         ShellAction::Receive { team } => {
             journal_quietly(&format!(
                 "{SHELL_TAG}: key {key} ({}) pushes to {team}",
                 identity.store_name
             ));
-            run_git(
-                "receive-pack",
-                &paths.teams.join(store_dir(&team)),
-                Some(key),
-            )
+            run_git("receive-pack", &repository(&team), Some(key))
         }
         ShellAction::Mcp { team, agent } => serve_team(&identity.id, &team, &agent, paths),
         ShellAction::Status => answer_status(snapshot, key, paths),

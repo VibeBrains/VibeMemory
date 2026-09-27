@@ -1051,7 +1051,10 @@ fn the_scheduled_task_runs_the_tick_after_logon_every_two_minutes_and_at_unlock(
         "<LogonTrigger>",
         "<LogonType>InteractiveToken</LogonType>",
         "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
-        "<Arguments>tick</Arguments>",
+        // one console nobody sees for the tick and every git it starts, not a window every two minutes
+        r"<Command>%windir%\System32\conhost.exe</Command>",
+        "<Arguments>--headless &quot;",
+        "&quot; tick</Arguments>",
         "R&amp;D engine",
     ] {
         assert!(task.contains(part), "{part} is missing:\n{task}");
@@ -1092,5 +1095,35 @@ fn install_does_not_commit_a_managed_copy_holding_a_kept_token() {
     assert!(
         !String::from_utf8_lossy(&output.stdout).contains(&legacy),
         "the kept value is in no commit"
+    );
+}
+
+#[test]
+fn linux_runs_the_tick_from_a_user_timer_every_two_minutes_or_from_cron() {
+    let temp = TempDir::new("install-linux-schedule");
+    let layout = Layout {
+        config_dir: temp.dir("claude"),
+        engine_dir: temp.dir("an engine"),
+    };
+    let service = vibememory_cli::install::systemd_service(&layout);
+    assert!(service.contains("Type=oneshot"), "{service}");
+    // a path with a space stays one word in systemd's own quoting
+    assert!(
+        service.contains("an engine/bin/vibememory\" tick"),
+        "{service}"
+    );
+    assert!(
+        service.contains("Environment=\"VIBEMEMORY_DIR="),
+        "{service}"
+    );
+    let timer = vibememory_cli::install::systemd_timer();
+    assert!(
+        timer.contains("OnUnitActiveSec=120") && timer.contains("WantedBy=timers.target"),
+        "{timer}"
+    );
+    let cron = vibememory_cli::install::cron_line(&layout);
+    assert!(
+        cron.starts_with("*/2 * * * * ") && cron.ends_with("tick # vibememory tick"),
+        "{cron}"
     );
 }

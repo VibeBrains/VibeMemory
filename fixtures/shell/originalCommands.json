@@ -55,8 +55,9 @@
         "machine": "mac",
         "storeName": "borodatych-mac",
         "teams": [
-          "vibebrains",
-          "syncteam"
+          "personal",
+          "syncteam",
+          "vibebrains"
         ],
         "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIERERERERERERERERERERERERERERERERERERERERERE"
       }
@@ -190,10 +191,32 @@
       }
     },
     {
-      "id": "personalIsNotAKeysTeam",
+      "id": "personalUploadByOwner",
       "provenance": "computed",
-      "note": "personal exists in the snapshot but no machine key opens it: the owner reaches it with the owner's own key.",
+      "note": "A machine key of the owner fetches the personal store by its team path: the host serves the adopted store's own repository, not a directory under teams/.",
       "key": "mk_6r7s8t9v",
+      "command": "git-upload-pack 'teams/personal.git'",
+      "expect": {
+        "action": "upload",
+        "team": "personal"
+      }
+    },
+    {
+      "id": "personalPushByOwner",
+      "provenance": "computed",
+      "note": "The owner's machine pushes its sessions and memory into the personal store.",
+      "key": "mk_6r7s8t9v",
+      "command": "git-receive-pack 'teams/personal.git'",
+      "expect": {
+        "action": "receive",
+        "team": "personal"
+      }
+    },
+    {
+      "id": "personalNotAKeysTeam",
+      "provenance": "computed",
+      "note": "A key whose teams do not name personal does not open it, whoever's it is.",
+      "key": "mk_3f8k1p0z",
       "command": "git-upload-pack 'teams/personal.git'",
       "expect": {
         "code": "unknownTeam"
@@ -335,6 +358,16 @@
       "command": "mcp --team personal --agent claude-code",
       "expect": {
         "code": "unknownTeam"
+      }
+    },
+    {
+      "id": "mcpPersonalStore",
+      "provenance": "computed",
+      "note": "The personal store's memory is kept by the owner's own engine in its clone: a machine key reaches its files over git, never a memory session over ssh.",
+      "key": "mk_6r7s8t9v",
+      "command": "mcp --team personal --agent claude-code",
+      "expect": {
+        "code": "mcpDenied"
       }
     },
     {

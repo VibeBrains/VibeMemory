@@ -75,7 +75,8 @@ pub struct KeyGrant {
     pub cabinet: String,
     /// The team whose store the machine clones.
     pub team: String,
-    /// `memory` or `sync`.
+    /// `memory`, `sync`, or `personal` for the owner's personal store, which the machine takes as
+    /// its main store.
     pub mode: String,
     /// The member the machine belongs to.
     pub member: String,
@@ -440,7 +441,7 @@ fn check_key(grant: &KeyGrant, cabinet: &str) -> Result<(), ClaimFailure> {
             grant.ssh_host
         )));
     }
-    if grant.mode != "memory" && grant.mode != "sync" {
+    if !["memory", "sync", crate::team_store::PERSONAL_MODE].contains(&grant.mode.as_str()) {
         return Err(ClaimFailure::Malformed(format!("mode {:?}", grant.mode)));
     }
     if grant.store_name != format!("{}-{}", grant.member, grant.machine) {

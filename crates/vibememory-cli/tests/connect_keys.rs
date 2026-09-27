@@ -256,3 +256,85 @@ fn the_host_keys_a_real_host_announces_are_taken_by_the_engine() {
     let answer = read_answer(0, 200, &body.to_string(), file["asked"].as_str().unwrap());
     assert!(matches!(answer, Ok(Claim::Key(_))), "{answer:?}");
 }
+
+/// The fixture's answer for a machine of the owner's personal store.
+fn personal_grant() -> KeyGrant {
+    let file: serde_json::Value = serde_json::from_str(ANSWERS).unwrap();
+    let case = file["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["id"] == "personalKey")
+        .unwrap();
+    let Ok(Claim::Key(grant)) = read_answer(
+        0,
+        200,
+        &case["body"].to_string(),
+        file["asked"].as_str().unwrap(),
+    ) else {
+        panic!("the fixture's personal case must read")
+    };
+    grant
+}
+
+#[test]
+fn a_new_machine_of_the_owner_takes_the_personal_store_as_its_main_store() {
+    let temp = TempDir::new("connect-personal");
+    let layout = layout(&temp);
+    // the main store as a machine that was here before has it: kept and pointed at the new key
+    let store = layout.store();
+    fs::create_dir_all(&store).unwrap();
+    git(&store, &["init", "--quiet"]);
+    git(&store, &["remote", "add", "origin", "old@host:store.git"]);
+    let grant = personal_grant();
+
+    let pending = PendingKey::make(&layout).unwrap();
+    let connected =
+        vibememory_cli::personal_connect::connect(&layout, &grant, pending, Some("GPD-WIN-MAX2"))
+            .unwrap();
+    assert!(!connected.cloned && connected.configured);
+    assert_eq!(connected.machine_id, "GPD-WIN-MAX2");
+    let config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(layout.engine_dir.join("config.json")).unwrap())
+            .unwrap();
+    assert_eq!(config["machineId"], "GPD-WIN-MAX2");
+    let state = layout.personal_state_dir();
+    assert!(state.join(KEY_FILE).is_file() && state.join(KNOWN_HOSTS_FILE).is_file());
+    assert_eq!(
+        git(&store, &["config", "core.sshCommand"]),
+        ssh_command(&state)
+    );
+    assert_eq!(
+        git(&store, &["remote", "get-url", "origin"]),
+        "vmgit@vibememory.ru:teams/personal.git"
+    );
+    // the personal store is no team: its record is found, and the teams stay as they were
+    assert_eq!(
+        read_record(&layout, "personal").unwrap().key_id,
+        grant.key_id
+    );
+    assert!(vibememory_cli::team_connect::connected_teams(&layout).is_empty());
+
+    // connecting again keeps the machine id the configuration has, whatever is asked
+    let pending = PendingKey::make(&layout).unwrap();
+    let again =
+        vibememory_cli::personal_connect::connect(&layout, &grant, pending, Some("other")).unwrap();
+    assert_eq!(again.machine_id, "GPD-WIN-MAX2");
+    assert!(!again.configured);
+}
+
+#[test]
+fn a_machine_id_is_a_name_every_system_takes_as_a_directory() {
+    use vibememory_cli::personal_connect::{is_machine_id, machine_id};
+    assert!(
+        is_machine_id("GPD-WIN-MAX2") && is_machine_id("mac-main") && is_machine_id("box.local")
+    );
+    assert!(
+        !is_machine_id("")
+            && !is_machine_id(".hidden")
+            && !is_machine_id("a/b")
+            && !is_machine_id("a b")
+    );
+    assert_eq!(machine_id(Some(" gpd ")).as_deref(), Some("gpd"));
+    assert_eq!(machine_id(Some("a/b")), None);
+}

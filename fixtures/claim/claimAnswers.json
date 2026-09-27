@@ -58,6 +58,62 @@
       }
     },
     {
+      "id": "personalKey",
+      "provenance": "computed",
+      "note": "The answer for a machine key of the owner's personal store: mode personal, the team path the host maps to where the store lies. The machine clones it as its main store.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "key",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "personal",
+        "mode": "personal",
+        "member": "borodatych",
+        "machine": "gpd",
+        "storeName": "borodatych-gpd",
+        "keyId": "mk_9tjsmx2j",
+        "sshHost": "vibememory.ru",
+        "sshUser": "vmgit",
+        "remote": "teams/personal.git",
+        "hostKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz"
+        ]
+      },
+      "expect": {
+        "key": {
+          "team": "personal",
+          "storeName": "borodatych-gpd",
+          "keyId": "mk_9tjsmx2j"
+        }
+      }
+    },
+    {
+      "id": "unknownMode",
+      "provenance": "computed",
+      "note": "A mode this engine does not know is a malformed answer, not a guess.",
+      "exit": 0,
+      "body": {
+        "version": 1,
+        "kind": "key",
+        "cabinet": "https://app.vibememory.ru",
+        "team": "syncteam",
+        "mode": "archive",
+        "member": "alice",
+        "machine": "laptop",
+        "storeName": "alice-laptop",
+        "keyId": "mk_3f8k1p0z",
+        "sshHost": "vibememory.ru",
+        "sshUser": "vmgit",
+        "remote": "teams/syncteam.git",
+        "hostKeys": [
+          "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz"
+        ]
+      },
+      "expect": {
+        "malformed": null
+      }
+    },
+    {
       "id": "refused",
       "provenance": "computed",
       "note": "Every refusal of the claim endpoint is the one 400 with the one body: unknown, used and expired codes alike.",

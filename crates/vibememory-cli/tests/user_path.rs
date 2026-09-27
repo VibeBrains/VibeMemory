@@ -13,13 +13,9 @@
 
 mod support;
 
-use std::fs;
 use std::path::Path;
 
-use support::TempDir;
-use vibememory_cli::user_path::{
-    BLOCK_START, has_block, is_on_path, put_on_path, shell_block, startup_file, windows_path_with,
-};
+use vibememory_cli::user_path::{startup_file, windows_path_with};
 
 #[test]
 fn each_shell_reads_its_own_startup_file() {
@@ -57,6 +53,11 @@ fn a_windows_path_gets_the_directory_once_in_any_case() {
 #[cfg(unix)]
 #[test]
 fn the_block_goes_into_the_startup_file_once_and_keeps_what_was_there() {
+    use std::fs;
+
+    use support::TempDir;
+    use vibememory_cli::user_path::{BLOCK_START, has_block, is_on_path, put_on_path, shell_block};
+
     let temp = TempDir::new("user-path");
     let home = temp.dir("home");
     let bin = home.join(".vibememory/bin");

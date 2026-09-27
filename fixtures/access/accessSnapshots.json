@@ -1644,9 +1644,9 @@
       }
     },
     {
-      "id": "keyForAdopted",
+      "id": "keyForAdoptedOwner",
       "provenance": "computed",
-      "note": "The owner reaches the personal store with his own key, not a machine key.",
+      "note": "A machine of the personal store's owner reaches it with a machine key: a new machine joins by a code, not by a key written into the host by hand (2026-09-27).",
       "patch": {
         "keys": [
           {
@@ -1662,7 +1662,29 @@
         ]
       },
       "expect": {
-        "code": "keyForAdopted"
+        "code": "ok"
+      }
+    },
+    {
+      "id": "keyForAdoptedStranger",
+      "provenance": "computed",
+      "note": "The personal store has its owner alone: a machine key of anyone else naming it is a key of no member.",
+      "patch": {
+        "keys": [
+          {
+            "id": "mk_3f8k1p0z",
+            "member": "alice",
+            "machine": "laptop",
+            "storeName": "alice-laptop",
+            "teams": [
+              "personal"
+            ],
+            "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBERERERERERERERERERERERERERERERERERERERERER"
+          }
+        ]
+      },
+      "expect": {
+        "code": "notAMember"
       }
     },
     {

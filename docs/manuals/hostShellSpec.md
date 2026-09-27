@@ -54,9 +54,10 @@ restrict,command="/srv/vibememory/bin/vibememory-mcp shell mk_3f8k1p0z" ssh-ed25
 | `unknownKey` | Ключа нет в снимке — он отозван, — или его владелец забанен (`bans` снимка) |
 | `commandDenied` | Команда не из четырёх или её аргументы не проходят правила выше |
 | `teamGone` | Команды с таким слагом нет в снимке или она удалена |
-| `unknownTeam` | Команда есть, но её нет среди `teams` ключа — в том числе личный стор владельца |
+| `unknownTeam` | Команда есть, но её нет среди `teams` ключа |
 | `exportDenied` | `git-upload-pack` `memory`-команды не владельцем и не админом |
 | `pushDenied` | `git-receive-pack` в `memory`-команду: её стор пишет только сервер памяти |
+| `mcpDenied` | `mcp` к личному стору (`adopted`): его память ведёт движок владельца в клоне, а ключ машины даёт только git |
 
 ## Сессия `mcp`
 

@@ -36,6 +36,7 @@ pub mod merge_report;
 pub mod migrate;
 pub mod mirror;
 pub mod outbox;
+pub mod personal_connect;
 pub mod process;
 pub mod project;
 pub mod project_move;

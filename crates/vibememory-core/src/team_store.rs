@@ -19,6 +19,9 @@ pub const GENERATION_FILE: &str = ".vibememory-generation";
 /// The mode of a team whose sessions are on: the only one a machine clones the store of.
 pub const SYNC_MODE: &str = "sync";
 
+/// The mode a key answer names for the owner's personal store.
+pub const PERSONAL_MODE: &str = "personal";
+
 /// A team store as this machine knows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -58,10 +61,11 @@ pub enum RecordError {
 
 impl StoreRecord {
     /// The record of a key grant — `None` for a team whose sessions are off: its store is not
-    /// cloned, and a key for it has nothing to push.
+    /// cloned, and a key for it has nothing to push. The personal store has a record too: the
+    /// same key, host and cabinet, kept beside the main store rather than among the teams'.
     #[must_use]
     pub fn from_grant(grant: &KeyGrant) -> Option<Self> {
-        (grant.mode == SYNC_MODE).then(|| Self {
+        (grant.mode == SYNC_MODE || grant.mode == PERSONAL_MODE).then(|| Self {
             version: RECORD_VERSION,
             cabinet: grant.cabinet.clone(),
             team: grant.team.clone(),

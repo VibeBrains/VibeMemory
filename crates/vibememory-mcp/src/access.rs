@@ -941,20 +941,6 @@ fn keys(raw: &RawSnapshot) -> Result<(), Refusal> {
             format!("key {} opens no team", key.id),
         ));
     }
-    if let Some((key, slug)) = raw.keys.iter().find_map(|key| {
-        key.teams
-            .iter()
-            .find(|slug| raw.teams.get(*slug).is_some_and(|team| team.adopted))
-            .map(|slug| (key, slug))
-    }) {
-        return Err(refuse(
-            "keyForAdopted",
-            format!(
-                "key {} names {slug}: the personal store goes by its owner's own key",
-                key.id
-            ),
-        ));
-    }
     if let Some(key) = raw
         .keys
         .iter()

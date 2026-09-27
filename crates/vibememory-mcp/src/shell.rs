@@ -134,7 +134,8 @@ pub fn decide(
             Ok(ShellAction::Upload { team: team_slug })
         }
         Asked::Receive(team_slug) => {
-            if team.mode != Some(Mode::Sync) {
+            // the personal store takes its owner's machines' pushes, as a sync team takes its members'
+            if team.mode != Some(Mode::Sync) && !team.adopted {
                 return Err(refuse(
                     "pushDenied",
                     format!(
@@ -144,6 +145,12 @@ pub fn decide(
             }
             Ok(ShellAction::Receive { team: team_slug })
         }
+        Asked::Mcp(team_slug, _) if team.adopted => Err(refuse(
+            "mcpDenied",
+            format!(
+                "{team_slug} is the personal store: its owner's engine keeps its memory, a machine key reaches it over git"
+            ),
+        )),
         Asked::Mcp(team_slug, agent) => Ok(ShellAction::Mcp {
             team: team_slug,
             agent,

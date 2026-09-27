@@ -81,6 +81,12 @@ impl PendingKey {
         Ok(Self { dir, public })
     }
 
+    /// The directory the key lies in until it is kept.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.dir
+    }
+
     /// Drops the key: the code was for a token, or the claim failed.
     pub fn discard(self) {
         let _ = std::fs::remove_dir_all(&self.dir);
@@ -225,7 +231,7 @@ pub fn ssh_command(state_dir: &Path) -> String {
 }
 
 /// Points a clone at its key and address.
-fn set_clone(clone: &Path, ssh: &str, url: &str) -> Result<(), String> {
+pub(crate) fn set_clone(clone: &Path, ssh: &str, url: &str) -> Result<(), String> {
     let steps: [&[&str]; 2] = [
         &["config", "core.sshCommand", ssh],
         &["remote", "set-url", "origin", url],
@@ -251,7 +257,7 @@ fn set_clone(clone: &Path, ssh: &str, url: &str) -> Result<(), String> {
 ///
 /// A record that is missing or not one this engine reads.
 pub fn read_record(layout: &Layout, team: &str) -> Result<StoreRecord, String> {
-    let path = layout.team_state_dir(team).join(RECORD_FILE);
+    let path = state_dir_of(layout, team).join(RECORD_FILE);
     let text =
         std::fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
     StoreRecord::parse(&text).map_err(|error| error.to_string())
@@ -307,9 +313,24 @@ pub fn refresh(layout: &Layout, team: &str) -> Result<PathBuf, String> {
         &String::from_utf8_lossy(&output.stdout),
         &record,
     )?;
-    let path = layout.team_state_dir(team).join(KNOWN_HOSTS_FILE);
+    let path = state_dir_of(layout, team).join(KNOWN_HOSTS_FILE);
     crate::connect::write_private(&path, hosts.as_bytes())?;
     Ok(path)
+}
+
+/// Where a connection's key and record lie: a team's state directory, or `<engine>/personal` for
+/// the personal store — which is `personal` by its record, and never among the teams.
+fn state_dir_of(layout: &Layout, team: &str) -> PathBuf {
+    let personal = layout.personal_state_dir();
+    let is_personal = std::fs::read_to_string(personal.join(RECORD_FILE))
+        .ok()
+        .and_then(|text| StoreRecord::parse(&text).ok())
+        .is_some_and(|record| record.team == team);
+    if is_personal {
+        personal
+    } else {
+        layout.team_state_dir(team)
+    }
 }
 
 /// The teams connected on this machine: every state directory under `<engine>/stores` that holds a
