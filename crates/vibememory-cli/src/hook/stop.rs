@@ -37,10 +37,42 @@ pub struct Live {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveSession {
-    /// ISO-8601 UTC, from the caller: the core has no clock and the engine keeps it that way.
+    /// When a hook of the session last ran: ISO-8601 UTC by this machine's clock.
     pub at: String,
     /// The working directory, portable form when a root covers it.
     pub cwd: String,
+    /// When the session was first marked here, by this machine's clock. Absent in a mark written
+    /// before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    /// The agent's process the session runs in. While it runs, the session is live however long
+    /// it keeps quiet; once it is gone, the session is over whether or not a hook said so. Absent
+    /// in an older mark, and where the hook found no agent process above it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<crate::process::ProcessMark>,
+}
+
+impl LiveSession {
+    /// The mark a hook leaves now, keeping what an earlier hook of the same session learned.
+    fn renewed(
+        earlier: Option<&Self>,
+        cwd: &str,
+        stamp: &str,
+        process: impl FnOnce() -> Option<crate::process::ProcessMark>,
+    ) -> Self {
+        Self {
+            at: stamp.to_owned(),
+            cwd: cwd.to_owned(),
+            since: Some(
+                earlier
+                    .and_then(|earlier| earlier.since.clone())
+                    .unwrap_or_else(|| stamp.to_owned()),
+            ),
+            process: earlier
+                .and_then(|earlier| earlier.process.clone())
+                .or_else(process),
+        }
+    }
 }
 
 /// How far each session's transcript has got, so another machine can tell at a glance whether its
@@ -197,18 +229,14 @@ pub fn record_live(
     session_id: &str,
     cwd: &str,
     stamp: &str,
+    process: impl FnOnce() -> Option<crate::process::ProcessMark>,
 ) -> Result<(), String> {
     let dir = store.join("machines").join(machine_id);
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let path = dir.join("live.json");
     let mut live: Live = read_json(&path)?;
-    live.sessions.insert(
-        session_id.to_owned(),
-        LiveSession {
-            at: stamp.to_owned(),
-            cwd: cwd.to_owned(),
-        },
-    );
+    let mark = LiveSession::renewed(live.sessions.get(session_id), cwd, stamp, process);
+    live.sessions.insert(session_id.to_owned(), mark);
     write_json(&path, &live)
 }
 
@@ -227,18 +255,14 @@ pub fn record_progress(
     cwd: &str,
     transcript: &Path,
     stamp: &str,
+    process: impl FnOnce() -> Option<crate::process::ProcessMark>,
 ) -> Result<(), String> {
     let dir = store.join("machines").join(machine_id);
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
 
     let mut live: Live = read_json(&dir.join("live.json"))?;
-    live.sessions.insert(
-        session_id.to_owned(),
-        LiveSession {
-            at: stamp.to_owned(),
-            cwd: cwd.to_owned(),
-        },
-    );
+    let mark = LiveSession::renewed(live.sessions.get(session_id), cwd, stamp, process);
+    live.sessions.insert(session_id.to_owned(), mark);
     write_json(&dir.join("live.json"), &live)?;
 
     let bytes = std::fs::read(transcript).unwrap_or_default();

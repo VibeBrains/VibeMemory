@@ -194,6 +194,7 @@ fn progress_records_the_leaf_and_the_line_count() {
         "{PROJECTS}/Project",
         &transcript,
         STAMP,
+        || None,
     )
     .expect("record");
 
@@ -219,8 +220,8 @@ fn progress_of_one_session_does_not_erase_another() {
     let transcript = temp.path().join("live.jsonl");
     fs::write(&transcript, live_transcript()).expect("write");
 
-    record_progress(&store, "mac-test", "one", "/a", &transcript, STAMP).expect("first");
-    record_progress(&store, "mac-test", "two", "/b", &transcript, STAMP).expect("second");
+    record_progress(&store, "mac-test", "one", "/a", &transcript, STAMP, || None).expect("first");
+    record_progress(&store, "mac-test", "two", "/b", &transcript, STAMP, || None).expect("second");
 
     let dir = store.join("machines").join("mac-test");
     let live: Live =
@@ -243,7 +244,7 @@ fn a_corrupt_progress_file_does_not_stop_the_session() {
     let transcript = temp.path().join("live.jsonl");
     fs::write(&transcript, live_transcript()).expect("write");
 
-    record_progress(&store, "mac-test", "one", "/a", &transcript, STAMP)
+    record_progress(&store, "mac-test", "one", "/a", &transcript, STAMP, || None)
         .expect("a broken convenience file may not fail a hook");
     let live: Live =
         serde_json::from_str(&fs::read_to_string(dir.join("live.json")).expect("read"))
@@ -270,8 +271,8 @@ fn ending_a_session_takes_it_out_of_the_live_list() {
     let transcript = temp.path().join("live.jsonl");
     fs::write(&transcript, live_transcript()).expect("write");
 
-    record_progress(&store, "mac-test", "one", "/a", &transcript, STAMP).expect("one");
-    record_progress(&store, "mac-test", "two", "/b", &transcript, STAMP).expect("two");
+    record_progress(&store, "mac-test", "one", "/a", &transcript, STAMP, || None).expect("one");
+    record_progress(&store, "mac-test", "two", "/b", &transcript, STAMP, || None).expect("two");
     record_end(&store, "mac-test", "one").expect("end");
 
     let path = store.join("machines").join("mac-test").join("live.json");
@@ -349,7 +350,15 @@ fn a_session_is_live_from_its_start_not_from_its_first_stop() {
     let temp = TempDir::new("stop-live-early");
     let store = store(&temp);
     // What SessionStart records: no transcript exists yet, and the session has written nothing.
-    record_live(&store, "mac-test", "session-1", "{PROJECTS}/Project", STAMP).expect("record");
+    record_live(
+        &store,
+        "mac-test",
+        "session-1",
+        "{PROJECTS}/Project",
+        STAMP,
+        || None,
+    )
+    .expect("record");
 
     let path = store.join("machines").join("mac-test").join("live.json");
     let live: Live =
@@ -369,6 +378,7 @@ fn a_session_is_live_from_its_start_not_from_its_first_stop() {
         "{PROJECTS}/Project",
         &transcript,
         STAMP,
+        || None,
     )
     .expect("progress");
     let live: Live =

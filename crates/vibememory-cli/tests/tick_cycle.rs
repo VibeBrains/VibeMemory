@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use support::{TempDir, git, git_repo_with_commit, token_case};
 use vibememory_cli::forget::forget;
 use vibememory_cli::hook::stop::{Live, LiveSession};
+use vibememory_cli::process::ProcessMark;
 use vibememory_cli::tick::{Machine, TickLock, Ticked, run};
 use vibememory_core::desktop::roots::Roots;
 use vibememory_core::naming::PathSyntax;
@@ -109,6 +110,29 @@ fn mark_live_at(store: &Path, machine: &str, session: &str, at: &str) {
         LiveSession {
             at: at.to_owned(),
             cwd: "/x".to_owned(),
+            since: None,
+            process: None,
+        },
+    );
+    fs::write(
+        dir.join("live.json"),
+        serde_json::to_string(&live).expect("encode"),
+    )
+    .expect("write live");
+}
+
+/// A mark that names the agent's process, renewed last at `at`.
+fn mark_live_in(store: &Path, session: &str, at: &str, process: ProcessMark) {
+    let dir = store.join("machines").join("mac-test");
+    fs::create_dir_all(&dir).expect("dirs");
+    let mut live = Live::default();
+    live.sessions.insert(
+        session.to_owned(),
+        LiveSession {
+            at: at.to_owned(),
+            cwd: "/x".to_owned(),
+            since: Some(at.to_owned()),
+            process: Some(process),
         },
     );
     fs::write(
@@ -444,6 +468,44 @@ fn a_session_that_ended_without_a_hook_stops_blocking_everything() {
 }
 
 #[test]
+fn a_session_whose_process_runs_stays_live_through_a_quiet_night() {
+    let temp = TempDir::new("tick-night");
+    let pair = two_machines(&temp);
+    // the test's own process stands for the agent: it is running, and its mark was renewed
+    // hours before the cutoff, as a session left open overnight is
+    let running = vibememory_cli::process::mark_of(std::process::id()).expect("own process");
+    mark_live_in(&pair.mac, SESSION, "2026-09-04T01:00:00Z", running);
+
+    let ticked = tick(&pair.mac, &temp);
+    assert!(
+        ticked.stale_sessions.is_empty(),
+        "a session whose process runs is live however long it keeps quiet: {:?}",
+        ticked.stale_sessions
+    );
+}
+
+#[test]
+fn a_session_whose_process_is_gone_ends_at_once() {
+    let temp = TempDir::new("tick-closed");
+    let pair = two_machines(&temp);
+    // renewed a moment ago, but the process with that id started at another moment: this one is
+    // someone else, and the session's own process is gone — closed, archived or killed
+    let own = vibememory_cli::process::mark_of(std::process::id()).expect("own process");
+    let replaced = ProcessMark {
+        pid: own.pid,
+        started: "0".to_owned(),
+    };
+    mark_live_in(&pair.mac, SESSION, STAMP, replaced);
+
+    let ticked = tick(&pair.mac, &temp);
+    assert_eq!(
+        ticked.stale_sessions,
+        vec![SESSION.to_owned()],
+        "a mark whose process is gone does not wait for the hour"
+    );
+}
+
+#[test]
 fn a_fresh_heartbeat_is_left_alone() {
     let temp = TempDir::new("tick-fresh");
     let pair = two_machines(&temp);
@@ -488,6 +550,7 @@ fn what_the_hooks_wrote_into_the_outbox_is_committed_by_the_tick() {
         "/x",
         &transcript,
         STAMP,
+        || None,
     )
     .expect("record");
 

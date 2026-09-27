@@ -276,7 +276,7 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         Err(problem) => result.problems.push(problem),
     }
 
-    match clear_stale_heartbeats(store, machine_id, heartbeat_cutoff) {
+    match clear_ended_sessions(store, machine_id, heartbeat_cutoff) {
         Ok(cleared) => result.stale_sessions = cleared,
         Err(problem) => result.problems.push(problem),
     }
@@ -1039,14 +1039,20 @@ fn confirmed_transcript(dirs: &[std::path::PathBuf], id: &str) -> Option<String>
 /// How long a paused store waits before it asks its host again.
 pub const PAUSE_RECHECK: Duration = Duration::from_hours(1);
 
-/// How long a session may go without a heartbeat before this machine stops claiming it is live.
+/// How long a mark without a process may go unrenewed before this machine stops claiming the
+/// session is live.
 ///
-/// The hooks refresh it on every stop and at the end, so a session unheard-of for this long ended
-/// in a way that ran no hook: a crash, a kill, a machine that lost power. Left in place, it would
-/// hold back every merge of that session's file and refuse every relink for ever.
+/// Only marks written before they carried the agent's process fall back on it: a hook renews
+/// the mark on every stop and at the end, so a session unheard-of for this long ended in a way
+/// that ran no hook. A mark with a process follows the process instead.
 pub const HEARTBEAT_STALE_AFTER: Duration = Duration::from_hours(1);
 
-/// Drops this machine's own stale claims.
+/// Drops this machine's own marks of sessions that are over.
+///
+/// A mark with the agent's process is over the moment that process is gone — a session closed,
+/// archived in Desktop or killed runs no hook, and waiting an hour for it locked its project for
+/// that hour. While the process runs, the session is live however long it keeps quiet: a night
+/// with the session open is not its end. A mark without a process falls back on `cutoff`.
 ///
 /// Only its own. Another machine's `live.json` is that machine's to correct, and deciding from
 /// here that somebody else is dead is exactly the mistake that ends with two machines writing one
@@ -1054,7 +1060,7 @@ pub const HEARTBEAT_STALE_AFTER: Duration = Duration::from_hours(1);
 ///
 /// `cutoff` is a stamp from this machine's clock; comparison is textual, which is exact for
 /// ISO-8601 in UTC and needs no date arithmetic.
-fn clear_stale_heartbeats(
+fn clear_ended_sessions(
     store: &Path,
     machine_id: &str,
     cutoff: &str,
@@ -1069,7 +1075,10 @@ fn clear_stale_heartbeats(
     let stale: Vec<String> = live
         .sessions
         .iter()
-        .filter(|(_, session)| session.at.as_str() < cutoff)
+        .filter(|(_, session)| match &session.process {
+            Some(process) => !process.is_alive(),
+            None => session.at.as_str() < cutoff,
+        })
         .map(|(id, _)| id.clone())
         .collect();
     if stale.is_empty() {

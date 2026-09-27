@@ -9,18 +9,58 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::hook::stop::Live;
+use crate::hook::stop::{Live, LiveSession};
+
+/// A session some machine says it is running, with what that machine wrote about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveClaim {
+    /// The machine whose `live.json` holds the claim.
+    pub machine: String,
+    /// The session.
+    pub session: String,
+    /// Whether the machine is this one: only then can the process be looked at.
+    pub here: bool,
+    /// What the machine wrote.
+    pub mark: LiveSession,
+}
+
+impl LiveClaim {
+    /// A sentence saying why the session counts as live and how that ends.
+    #[must_use]
+    pub fn explain(&self) -> String {
+        let Self {
+            machine,
+            session,
+            here,
+            mark,
+        } = self;
+        let since = mark.since.as_deref().unwrap_or(&mark.at);
+        match (&mark.process, here) {
+            (Some(process), true) => format!(
+                "session {session} is running on this machine ({machine}) since {since}: the agent's process {} \
+                 is still there. Close the session; its mark goes with the process",
+                process.pid
+            ),
+            (None, true) => format!(
+                "session {session} was marked live on this machine ({machine}) at {} by an engine that did not note \
+                 its process; the mark counts as over an hour after that",
+                mark.at
+            ),
+            (_, false) => format!(
+                "session {session} is marked live on {machine} since {since}, last renewed at {} by that machine's \
+                 clock. Only {machine} clears the mark: when its engine runs and the session is over, the mark goes. \
+                 If that machine is lost for good: vibememory session release {machine} {session} --confirm",
+                mark.at
+            ),
+        }
+    }
+}
 
 /// Why an operation was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
     /// A session somewhere is working in this directory right now.
-    SessionLive {
-        /// Which machine reports it.
-        machine: String,
-        /// Which session.
-        session: String,
-    },
+    SessionLive(Box<LiveClaim>),
     /// There is nothing at the path to act on.
     NothingThere,
     /// The path holds something this operation does not handle.
@@ -35,10 +75,9 @@ impl Refusal {
     #[must_use]
     pub fn message(&self) -> String {
         match self {
-            Self::SessionLive { machine, session } => format!(
-                "session {session} is live on {machine} and is writing into this directory. \
-                 Nothing was changed — finish that session, or wait for its machine to stop \
-                 reporting it, and run this again."
+            Self::SessionLive(claim) => format!(
+                "{}. Nothing was changed — run this again once the session is over",
+                claim.explain()
             ),
             Self::NothingThere => "there is nothing at that path to work on".to_owned(),
             Self::NotApplicable { found } => format!("that path holds {found}"),
@@ -46,12 +85,34 @@ impl Refusal {
     }
 }
 
-/// Every session any machine says it is running, with the machine that says so.
+/// The machine this engine writes as in `store`: the personal store's `machineId`, or the store name
+/// a team's clone was connected with. `None` for a store no engine set up.
+fn own_machine(store: &Path) -> Option<String> {
+    let owner = store.parent()?;
+    if let Ok(text) = std::fs::read_to_string(owner.join(crate::team_connect::RECORD_FILE)) {
+        return vibememory_core::team_store::StoreRecord::parse(&text)
+            .ok()
+            .map(|record| record.store_name);
+    }
+    let text = std::fs::read_to_string(owner.join("config.json")).ok()?;
+    serde_json::from_str::<serde_json::Value>(&text)
+        .ok()?
+        .get("machineId")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+/// Every session any machine says it is running.
+///
+/// A claim of this machine whose agent process is gone is not among them: the session is over, and
+/// only the next tick has yet to say so. Every other claim stands — another machine's process
+/// cannot be looked at from here, and its silence may be a closed lid.
 #[must_use]
-pub fn live_everywhere(store: &Path) -> Vec<(String, String, String)> {
+pub fn live_everywhere(store: &Path) -> Vec<LiveClaim> {
     let Ok(machines) = std::fs::read_dir(store.join("machines")) else {
         return Vec::new();
     };
+    let own = own_machine(store);
     let mut live = Vec::new();
     for machine in machines.filter_map(Result::ok) {
         let name = machine.file_name().to_string_lossy().into_owned();
@@ -61,19 +122,73 @@ pub fn live_everywhere(store: &Path) -> Vec<(String, String, String)> {
         let Ok(parsed) = serde_json::from_str::<Live>(&text) else {
             continue;
         };
-        for (session, entry) in parsed.sessions {
-            live.push((name.clone(), session, entry.cwd));
+        let here = own.as_deref() == Some(name.as_str());
+        for (session, mark) in parsed.sessions {
+            if here
+                && mark
+                    .process
+                    .as_ref()
+                    .is_some_and(|process| !process.is_alive())
+            {
+                continue;
+            }
+            live.push(LiveClaim {
+                machine: name.clone(),
+                session,
+                here,
+                mark,
+            });
         }
     }
     live
 }
 
+/// How long one git step of a release may take.
+const RELEASE_GIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Takes a session off another machine's claims, by a person's direct word: the one place the engine
+/// writes a file of another machine. For a machine that is gone for good — its claims would hold
+/// back merges and moves of their directories for ever, and nothing else ever clears them.
+///
+/// Answers whether there was such a claim. The removal is committed; the next tick sends it.
+///
+/// # Errors
+///
+/// The text of what went wrong.
+pub fn release(store: &Path, machine: &str, session: &str) -> Result<bool, String> {
+    let relative = format!("machines/{machine}/live.json");
+    let path = store.join(&relative);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Ok(false);
+    };
+    let mut live: Live = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    if live.sessions.remove(session).is_none() {
+        return Ok(false);
+    }
+    let text = serde_json::to_string_pretty(&live).map_err(|error| error.to_string())?;
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, text.as_bytes()).map_err(|error| error.to_string())?;
+    std::fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
+    crate::git::run_with_timeout(
+        crate::git::command(store, &["add", "--", &relative]),
+        RELEASE_GIT_TIMEOUT,
+    )?;
+    let message = format!("vibememory: session {session} of {machine} released by hand");
+    crate::git::run_with_timeout(
+        crate::git::command(
+            store,
+            &["commit", "--quiet", "-m", &message, "--", &relative],
+        ),
+        RELEASE_GIT_TIMEOUT,
+    )?;
+    Ok(true)
+}
+
 /// The first live session working in `cwd`, on any machine.
-fn live_in(store: &Path, cwd: &str) -> Option<(String, String)> {
+fn live_in(store: &Path, cwd: &str) -> Option<LiveClaim> {
     live_everywhere(store)
         .into_iter()
-        .find(|(_, _, live_cwd)| live_cwd == cwd)
-        .map(|(machine, session, _)| (machine, session))
+        .find(|claim| claim.mark.cwd == cwd)
 }
 
 /// Points an existing link at a different store directory.
@@ -98,8 +213,8 @@ pub fn relink(
             found: "a real directory, not a link — import it first".to_owned(),
         });
     }
-    if let Some((machine, session)) = live_in(store, portable_cwd) {
-        return Err(Refusal::SessionLive { machine, session });
+    if let Some(claim) = live_in(store, portable_cwd) {
+        return Err(Refusal::SessionLive(Box::new(claim)));
     }
 
     let target = store.join("projects").join(name);
@@ -149,8 +264,8 @@ pub fn import_real_directory(
             found: "a link, not a real directory".to_owned(),
         });
     }
-    if let Some((machine, session)) = live_in(store, portable_cwd) {
-        return Err(Refusal::SessionLive { machine, session });
+    if let Some(claim) = live_in(store, portable_cwd) {
+        return Err(Refusal::SessionLive(Box::new(claim)));
     }
 
     let target = store.join("projects").join(name);
@@ -222,6 +337,6 @@ fn copy_into(
 pub fn live_session_ids(store: &Path) -> BTreeSet<String> {
     live_everywhere(store)
         .into_iter()
-        .map(|(_, session, _)| session)
+        .map(|claim| claim.session)
         .collect()
 }

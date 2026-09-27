@@ -32,6 +32,8 @@ fn mark_live(store: &Path, machine: &str, session: &str, cwd: &str) {
         LiveSession {
             at: "2026-09-05T12:00:00Z".to_owned(),
             cwd: cwd.to_owned(),
+            since: None,
+            process: None,
         },
     );
     fs::write(
@@ -75,12 +77,12 @@ fn a_link_is_never_re_aimed_under_a_session_on_another_machine() {
     mark_live(&store, "gpd-win", "session-1", CWD);
 
     let refusal = relink(&config_dir, &store, ENC, "NewName", CWD).expect_err("must refuse");
+    let Refusal::SessionLive(claim) = &refusal else {
+        panic!("a live session must be the reason: {refusal:?}")
+    };
     assert_eq!(
-        refusal,
-        Refusal::SessionLive {
-            machine: "gpd-win".to_owned(),
-            session: "session-1".to_owned(),
-        }
+        (claim.machine.as_str(), claim.session.as_str()),
+        ("gpd-win", "session-1")
     );
     assert!(
         refusal.message().contains("gpd-win"),
@@ -194,7 +196,7 @@ fn a_real_directory_is_not_imported_under_a_live_session() {
         "2026-09-08T00-00-00Z",
     )
     .expect_err("must refuse");
-    assert!(matches!(refusal, Refusal::SessionLive { .. }));
+    assert!(matches!(refusal, Refusal::SessionLive(_)));
     assert!(
         real.join("session.jsonl").exists(),
         "the directory being written must be left exactly as it is"
@@ -266,5 +268,107 @@ fn a_local_file_that_differs_from_the_store_is_set_aside_not_destroyed() {
     assert_eq!(
         saved, "the newer local index\n",
         "the directory is deleted right after the copy, so a discarded version is gone for ever"
+    );
+}
+
+/// This machine's mark of a session in `store`, naming the agent's process.
+fn mark_live_here(store: &Path, session: &str, process: vibememory_cli::process::ProcessMark) {
+    let dir = store.join("machines").join("mac-main");
+    fs::create_dir_all(&dir).expect("dirs");
+    let mut live = Live::default();
+    live.sessions.insert(
+        session.to_owned(),
+        LiveSession {
+            at: "2026-09-05T12:00:00Z".to_owned(),
+            cwd: CWD.to_owned(),
+            since: Some("2026-09-05T11:00:00Z".to_owned()),
+            process: Some(process),
+        },
+    );
+    fs::write(
+        dir.join("live.json"),
+        serde_json::to_string(&live).expect("encode"),
+    )
+    .expect("write");
+    // the engine's own configuration beside the store names this machine
+    fs::write(
+        store.parent().expect("parent").join("config.json"),
+        r#"{"machineId":"mac-main"}"#,
+    )
+    .expect("config");
+}
+
+#[test]
+fn a_session_of_this_machine_whose_process_is_gone_does_not_hold_the_link() {
+    let temp = TempDir::new("relink-closed");
+    let config_dir = temp.dir("claude");
+    let store = temp.dir("store");
+    make_link(&config_dir, &store.join("projects").join("OldName"));
+    // closed or archived without a hook: the process that pid names now started at another moment
+    let own = vibememory_cli::process::mark_of(std::process::id()).expect("own process");
+    mark_live_here(
+        &store,
+        "session-1",
+        vibememory_cli::process::ProcessMark {
+            pid: own.pid,
+            started: "0".to_owned(),
+        },
+    );
+
+    relink(&config_dir, &store, ENC, "NewName", CWD)
+        .expect("a session whose process is gone is over, whatever the tick has not said yet");
+}
+
+#[test]
+fn a_session_of_this_machine_whose_process_runs_is_named_with_it() {
+    let temp = TempDir::new("relink-running");
+    let config_dir = temp.dir("claude");
+    let store = temp.dir("store");
+    make_link(&config_dir, &store.join("projects").join("OldName"));
+    let own = vibememory_cli::process::mark_of(std::process::id()).expect("own process");
+    mark_live_here(&store, "session-1", own.clone());
+
+    let refusal = relink(&config_dir, &store, ENC, "NewName", CWD).expect_err("must refuse");
+    let message = refusal.message();
+    assert!(
+        message.contains(&own.pid.to_string()) && message.contains("2026-09-05T11:00:00Z"),
+        "the refusal names the process and since when: {message}"
+    );
+}
+
+#[test]
+fn a_claim_of_a_lost_machine_is_released_by_hand_and_committed() {
+    let temp = TempDir::new("relink-release");
+    let store = temp.dir("store");
+    let git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .current_dir(&store)
+            .args(args)
+            .status()
+            .expect("git");
+        assert!(status.success(), "git {args:?}");
+    };
+    git(&["init", "--quiet"]);
+    git(&["config", "user.email", "t@example.com"]);
+    git(&["config", "user.name", "t"]);
+    mark_live(&store, "gpd-win", "session-1", CWD);
+    git(&["add", "."]);
+    git(&["commit", "--quiet", "-m", "claim"]);
+
+    assert!(vibememory_cli::relink::release(&store, "gpd-win", "session-1").expect("release"));
+    let live: Live = serde_json::from_str(
+        &fs::read_to_string(store.join("machines/gpd-win/live.json")).expect("read"),
+    )
+    .expect("parse");
+    assert!(live.sessions.is_empty());
+    let status = std::process::Command::new("git")
+        .current_dir(&store)
+        .args(["status", "--porcelain"])
+        .output()
+        .expect("status");
+    assert!(status.stdout.is_empty(), "the release is committed");
+    assert!(
+        !vibememory_cli::relink::release(&store, "gpd-win", "session-1").expect("again"),
+        "a claim released once is not there to release again"
     );
 }

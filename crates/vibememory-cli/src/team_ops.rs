@@ -136,9 +136,10 @@ pub fn leave(
     let record = crate::team_connect::read_record(layout, team)?;
     let clone = std::fs::canonicalize(layout.team_store(team)).map_err(|e| e.to_string())?;
     let personal = crate::stores::personal(layout, config);
-    if let Some((machine, _, _)) = crate::relink::live_everywhere(&clone).into_iter().next() {
+    if let Some(claim) = crate::relink::live_everywhere(&clone).into_iter().next() {
         return Err(format!(
-            "a session of the team is live on {machine}: close it and leave again"
+            "{}. Nothing was changed — leave again once the session is over",
+            claim.explain()
         ));
     }
     let mut brought_back = Vec::new();

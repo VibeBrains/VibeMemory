@@ -72,12 +72,13 @@ fn project_in(store: &Path, project: &Path) -> Option<String> {
 /// files under a session costs it.
 fn refuse_live(stores: &[&StoreOf], portable_cwd: &str) -> Result<(), String> {
     for store in stores {
-        if let Some((machine, _, _)) = crate::relink::live_everywhere(&store.clone)
+        if let Some(claim) = crate::relink::live_everywhere(&store.clone)
             .into_iter()
-            .find(|(_, _, cwd)| cwd == portable_cwd)
+            .find(|claim| claim.mark.cwd == portable_cwd)
         {
             return Err(format!(
-                "a session is live in this project on {machine}: close it and move again"
+                "{}. Nothing was moved — move again once the session is over",
+                claim.explain()
             ));
         }
     }

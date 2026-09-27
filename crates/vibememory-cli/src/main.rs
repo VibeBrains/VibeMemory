@@ -213,6 +213,7 @@ fn report(strict: bool, json: bool) -> ExitCode {
     for line in vibememory_cli::route::warnings(&config, &layout.store()) {
         println!("route    {}", vibememory_core::terminal::printable(&line));
     }
+    print_forgotten_claims(&layout);
     if strict && wrong > 0 {
         eprintln!(
             "{wrong} of {} steps are not in place",
@@ -221,6 +222,40 @@ fn report(strict: bool, json: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
     ExitCode::SUCCESS
+}
+
+/// How long another machine's claim may go unrenewed before `doctor` offers to release it. A week
+/// is far past any clock drift and any closed lid; it is a machine nobody runs any more.
+const FORGOTTEN_CLAIM_AFTER_SECONDS: i64 = 7 * 24 * 60 * 60;
+
+/// Other machines' claims unrenewed for a week, in every store, with the command that clears them.
+/// Never cleared here: whether that machine is gone is its owner's word.
+fn print_forgotten_claims(layout: &Layout) {
+    let cutoff =
+        vibememory_cli::clock::iso8601(epoch_seconds_signed() - FORGOTTEN_CLAIM_AFTER_SECONDS);
+    let mut stores = vec![layout.store()];
+    stores.extend(
+        vibememory_cli::team_connect::connected_teams(layout)
+            .iter()
+            .map(|team| layout.team_store(team)),
+    );
+    for store in stores {
+        for claim in vibememory_cli::relink::live_everywhere(&store) {
+            if claim.here || claim.mark.at.as_str() >= cutoff.as_str() {
+                continue;
+            }
+            println!(
+                "live     session {} on {} — last renewed {}; if {} is gone for good: vibememory session \
+                 release {} {} --confirm",
+                vibememory_core::terminal::printable(&claim.session),
+                vibememory_core::terminal::printable(&claim.machine),
+                claim.mark.at,
+                vibememory_core::terminal::printable(&claim.machine),
+                vibememory_core::terminal::printable(&claim.machine),
+                vibememory_core::terminal::printable(&claim.session)
+            );
+        }
+    }
 }
 
 /// The team stores as the JSON report carries them.
@@ -866,12 +901,30 @@ fn project_command(args: &[String]) -> ExitCode {
 /// session stays where it is; it only leaves the list of what this machine keeps to itself, and the
 /// next tick commits it into the team.
 fn session_command(args: &[String]) -> ExitCode {
+    const USAGE: &str = "usage: vibememory session share <session-id>\n       \
+                         vibememory session release <machine> <session-id> --confirm";
+    if let [verb, machine, session, confirm] = args
+        && verb == "release"
+    {
+        if confirm != "--confirm" {
+            eprintln!("{USAGE}");
+            return ExitCode::from(2);
+        }
+        return session_release(machine, session);
+    }
     let [verb, session] = args else {
-        eprintln!("usage: vibememory session share <session-id>");
+        eprintln!("{USAGE}");
         return ExitCode::from(2);
     };
+    if verb == "release" {
+        eprintln!(
+            "session release takes the machine, the session and --confirm: it clears a claim of \
+             another machine, and only its owner may say that machine is gone"
+        );
+        return ExitCode::from(2);
+    }
     if verb != "share" {
-        eprintln!("usage: vibememory session share <session-id>");
+        eprintln!("{USAGE}");
         return ExitCode::from(2);
     }
     let layout = layout();
@@ -897,6 +950,47 @@ fn session_command(args: &[String]) -> ExitCode {
     } else {
         eprintln!(
             "session share: no team keeps {} on this machine alone",
+            vibememory_core::terminal::printable(session)
+        );
+        ExitCode::FAILURE
+    }
+}
+
+/// `session release <machine> <sid> --confirm`: clears another machine's claim that a session is
+/// live, in the personal store and in every connected team's.
+fn session_release(machine: &str, session: &str) -> ExitCode {
+    let layout = layout();
+    let mut stores = vec![layout.store()];
+    stores.extend(
+        vibememory_cli::team_connect::connected_teams(&layout)
+            .iter()
+            .map(|team| layout.team_store(team)),
+    );
+    let mut released = false;
+    for store in stores {
+        match vibememory_cli::relink::release(&store, machine, session) {
+            Ok(true) => {
+                released = true;
+                println!(
+                    "released: {} of {} in {}; the next tick sends it",
+                    vibememory_core::terminal::printable(session),
+                    vibememory_core::terminal::printable(machine),
+                    store.display()
+                );
+            }
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("session release: {}: {error}", store.display());
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    if released {
+        ExitCode::SUCCESS
+    } else {
+        eprintln!(
+            "session release: no store holds a claim of {} for {}",
+            vibememory_core::terminal::printable(machine),
             vibememory_core::terminal::printable(session)
         );
         ExitCode::FAILURE
@@ -968,6 +1062,7 @@ fn session_start_hook() -> ExitCode {
             &input.session_id,
             &portable_cwd(&config, &cwd),
             &vibememory_cli::clock::now(),
+            vibememory_cli::process::agent_process,
         );
     }
     if let Err(error) = session_start::perform(&layout, &store.clone, &decision) {
@@ -1098,6 +1193,7 @@ fn session_progress_hook(ended: bool) -> ExitCode {
         &cwd,
         &real,
         &stamp,
+        vibememory_cli::process::agent_process,
     ) {
         return say(&format!("VibeMemory could not record progress: {error}"));
     }

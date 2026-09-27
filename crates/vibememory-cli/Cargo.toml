@@ -16,6 +16,9 @@ path = "src/main.rs"
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+# Which process a hook runs under and when a process started, one way on every system: the
+# workspace forbids `unsafe`, and the process list is a system call on each of them.
+sysinfo.workspace = true
 thiserror.workspace = true
 vibememory-core = { path = "../vibememory-core" }
 
