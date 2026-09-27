@@ -32,9 +32,6 @@ const TOKEN_ID_PREFIX: &str = "tk_";
 /// The id prefix of a machine key.
 const KEY_ID_PREFIX: &str = "mk_";
 
-/// The only machine key type there is.
-pub const ED25519_PREFIX: &str = "ssh-ed25519 ";
-
 /// A token as the cabinet handed it over.
 #[derive(Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -466,7 +463,7 @@ fn check_key(grant: &KeyGrant, cabinet: &str) -> Result<(), ClaimFailure> {
     if grant
         .host_keys
         .iter()
-        .any(|key| !key.starts_with(ED25519_PREFIX) || key.chars().any(char::is_control))
+        .any(|key| !crate::ssh_key::is_ed25519_line(key))
     {
         return Err(ClaimFailure::Malformed(
             "a host key is not ssh-ed25519".to_owned(),

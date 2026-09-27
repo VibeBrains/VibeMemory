@@ -71,3 +71,13 @@ pub fn wire_line(key_file: &str) -> Option<String> {
     let line = format!("{} {}", fields.next()?, fields.next()?);
     is_ed25519_line(&line).then_some(line)
 }
+
+/// The host keys a host announces, from the texts of its `ssh_host_*_key.pub` files: the ed25519
+/// ones in wire form, sorted. Machines trust only ed25519, so a host key of another type would make
+/// the whole answer unusable; OpenSSH picks the key type `known_hosts` holds for the host.
+#[must_use]
+pub fn host_key_lines<'a>(key_files: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut lines: Vec<String> = key_files.into_iter().filter_map(wire_line).collect();
+    lines.sort();
+    lines
+}

@@ -1414,25 +1414,20 @@ const MEMORY_JOURNAL: &str = "memory.jsonl";
 /// The memory directory of a project, relative to the project, with its separator.
 const MEMORY_DIR_PREFIX: &str = "memory/";
 
-/// The host's public keys: type and base64 of each `ssh_host_*_key.pub`, without the comment.
+/// The host's ed25519 public keys from its `ssh_host_*_key.pub`, in wire form.
 fn host_keys() -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(layout::HOST_KEYS_DIR) else {
         return Vec::new();
     };
-    let mut keys: Vec<String> = entries
+    let files: Vec<String> = entries
         .filter_map(Result::ok)
         .filter(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
             name.starts_with("ssh_host_") && name.ends_with("_key.pub")
         })
         .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
-        .filter_map(|text| {
-            let mut fields = text.split_whitespace();
-            Some(format!("{} {}", fields.next()?, fields.next()?))
-        })
         .collect();
-    keys.sort();
-    keys
+    vibememory_core::ssh_key::host_key_lines(files.iter().map(String::as_str))
 }
 
 /// `systemctl is-active` of each service the report names.

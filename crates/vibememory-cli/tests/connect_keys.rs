@@ -1,7 +1,9 @@
 //! The machine key branch of `connect`: the key made for every claim and dropped when the code was
 //! not for a machine, the refusals that set nothing up, and a machine connecting again — its clone
 //! pointed at the new key and the team's own `known_hosts`, the user's ssh configuration untouched.
-//! A first clone over ssh needs the host and is checked by the phase's live gate.
+//! The keys of real ssh-keygen on both sides: the machine's goes out in the form the host takes, the
+//! host's come back in the form the engine takes. A first clone over ssh needs the host and is
+//! checked by the phase's live gate.
 
 // The test writes files, runs git and ssh-keygen and reads modes, so the purity gate is lifted here.
 #![allow(
@@ -215,4 +217,42 @@ fn doctor_names_what_is_wrong_with_a_team_store() {
         facts[0].pause.as_ref().map(|pause| pause.code.as_str()),
         Some("readOnly")
     );
+}
+
+#[test]
+fn the_host_keys_a_real_host_announces_are_taken_by_the_engine() {
+    let temp = TempDir::new("connect-host-keys");
+    let dir = temp.dir("etc/ssh");
+    // an sshd host carries a key of each type, each with its comment
+    let files: Vec<String> = ["ed25519", "ecdsa", "rsa"]
+        .iter()
+        .map(|kind| {
+            let key = dir.join(format!("ssh_host_{kind}_key"));
+            let status = Command::new("ssh-keygen")
+                .args(["-q", "-t", kind, "-N", "", "-C", "root@host", "-f"])
+                .arg(&key)
+                .status()
+                .unwrap();
+            assert!(status.success(), "ssh-keygen -t {kind}");
+            fs::read_to_string(key.with_extension("pub")).unwrap()
+        })
+        .collect();
+    let lines = vibememory_core::ssh_key::host_key_lines(files.iter().map(String::as_str));
+    assert_eq!(lines.len(), 1, "{lines:?}");
+
+    // the cabinet passes them on in the claim answer, and the engine reads that answer
+    let file: serde_json::Value = serde_json::from_str(ANSWERS).unwrap();
+    let case = file["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["id"] == "key")
+        .unwrap();
+    let mut body: serde_json::Value = case["body"].as_str().map_or_else(
+        || case["body"].clone(),
+        |text| serde_json::from_str(text).unwrap(),
+    );
+    body["hostKeys"] = serde_json::json!(lines);
+    let answer = read_answer(0, 200, &body.to_string(), file["asked"].as_str().unwrap());
+    assert!(matches!(answer, Ok(Claim::Key(_))), "{answer:?}");
 }

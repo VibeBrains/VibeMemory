@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::claim::{ED25519_PREFIX, KeyGrant};
+use crate::claim::KeyGrant;
 use crate::naming::is_slug;
 
 /// The version of the record this engine writes and reads.
@@ -179,7 +179,7 @@ pub fn refreshed_known_hosts(body: &str, record: &StoreRecord) -> Result<String,
     if answer
         .host_keys
         .iter()
-        .any(|key| !key.starts_with(ED25519_PREFIX) || key.chars().any(char::is_control))
+        .any(|key| !crate::ssh_key::is_ed25519_line(key))
     {
         return Err("a host key the cabinet named is not ssh-ed25519".to_owned());
     }
