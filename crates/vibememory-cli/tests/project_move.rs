@@ -125,7 +125,7 @@ fn into_the_team_memory_is_shared_and_sessions_stay_local() {
         "syncteam",
         STAMP,
     );
-    assert!(refused.is_err_and(|reason| reason.contains("stores.syncteam.cwd")));
+    assert!(refused.is_err_and(|reason| reason.contains("vibememory route add")));
 
     let report = to_team(
         &setup.layout,
