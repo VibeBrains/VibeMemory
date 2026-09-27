@@ -100,3 +100,71 @@ fn a_personal_project_under_a_teams_pattern_is_told_to_move() {
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(lines[0].contains("project move"), "{lines:?}");
 }
+
+#[test]
+fn a_route_is_added_and_removed_without_touching_the_rest_of_the_file() {
+    let temp = TempDir::new("route-add");
+    let base = fs::canonicalize(temp.path()).unwrap().display().to_string();
+    temp.dir("work/acme");
+    let text = "{\n  \"machineId\": \"mac-main\",\n  \"ignoreCwd\": [\"/\"]\n}\n";
+
+    let vibememory_cli::route::Changed::Text {
+        text: added,
+        patterns,
+    } = vibememory_cli::route::add(text, &format!("{base}/work/acme"), "acme").unwrap()
+    else {
+        panic!("a new route changes the text")
+    };
+    assert_eq!(patterns, vec![format!("{base}/work/acme/**")]);
+    assert!(
+        added.starts_with(
+            "{\n  \"machineId\": \"mac-main\",\n  \"ignoreCwd\": [\"/\"],\n  \"stores\""
+        ),
+        "the owner's members stay byte for byte: {added}"
+    );
+    let config = Config::parse(&added, PathSyntax::Posix).unwrap();
+    assert_eq!(
+        config
+            .routes
+            .route(&format!("{base}/work/acme"), PathSyntax::Posix)
+            .unwrap(),
+        Some("acme")
+    );
+    assert_eq!(
+        vibememory_cli::route::add(&added, &format!("{base}/work/acme"), "acme").unwrap(),
+        vibememory_cli::route::Changed::Already
+    );
+    assert!(
+        vibememory_cli::route::add(&added, &format!("{base}/work/acme"), "beta").is_err(),
+        "a directory is never routed to two teams"
+    );
+
+    let vibememory_cli::route::Changed::Text { text: removed, .. } =
+        vibememory_cli::route::remove(&added, &format!("{base}/work/acme")).unwrap()
+    else {
+        panic!("removing a route changes the text")
+    };
+    assert_eq!(removed, text, "the file is as it was before the route");
+}
+
+#[test]
+fn a_route_to_a_directory_that_is_not_here_is_refused() {
+    let temp = TempDir::new("route-add-missing");
+    let base = fs::canonicalize(temp.path()).unwrap().display().to_string();
+    let text = "{\"machineId\": \"mac-main\"}";
+    assert!(vibememory_cli::route::add(text, &format!("{base}/nowhere"), "acme").is_err());
+}
+
+#[test]
+fn a_directory_under_a_wider_route_is_not_carved_out() {
+    let temp = TempDir::new("route-wider");
+    let base = fs::canonicalize(temp.path()).unwrap().display().to_string();
+    temp.dir("work/acme");
+    let text = serde_json::json!({
+        "machineId": "mac-main",
+        "stores": { "acme": { "cwd": [format!("{base}/work/**")] } }
+    })
+    .to_string();
+    let refused = vibememory_cli::route::remove(&text, &format!("{base}/work/acme")).unwrap_err();
+    assert!(refused.contains("wider"), "{refused}");
+}

@@ -147,7 +147,7 @@ pub fn to_team(
         != Some(team)
     {
         return Err(format!(
-            "{cwd} is not routed to team {team}: add it to stores.{team}.cwd in config.json first"
+            "{cwd} is not routed to team {team}: vibememory route add {cwd:?} --to {team} first"
         ));
     }
     let personal = crate::stores::personal(layout, config);
@@ -211,7 +211,7 @@ pub fn to_personal(
         .map_err(|e| e.to_string())?
     {
         return Err(format!(
-            "{cwd} is still routed to team {team}: remove it from stores.{team}.cwd in config.json first"
+            "{cwd} is still routed to team {team}: vibememory route remove {cwd:?} first"
         ));
     }
     let link = session_link(layout, cwd)?;

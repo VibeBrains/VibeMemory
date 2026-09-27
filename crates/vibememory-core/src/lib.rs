@@ -8,6 +8,7 @@
 pub mod claim;
 pub mod desktop;
 pub mod export;
+pub mod json_edit;
 pub mod jsonl;
 pub mod links;
 pub mod memory;

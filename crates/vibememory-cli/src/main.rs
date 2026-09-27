@@ -51,6 +51,7 @@ fn main() -> ExitCode {
         Some("forget") => forget_command(args.next().as_deref()),
         Some("session") => session_command(&args.collect::<Vec<String>>()),
         Some("project") => project_command(&args.collect::<Vec<String>>()),
+        Some("route") => route_command(&args.collect::<Vec<String>>()),
         Some("store") => store_command(&args.collect::<Vec<String>>()),
         Some("merge-driver") => merge_driver_command(&args.collect::<Vec<String>>()),
         Some("hook") => match args.next().as_deref() {
@@ -875,11 +876,55 @@ fn project_command(args: &[String]) -> ExitCode {
     let cwd = canonical_cwd(&real, session_start::host_syntax());
     let portable = portable_cwd(&config, &cwd);
     let stamp = vibememory_cli::clock::now();
+    // the route goes with the move: a project in a team's store its directory is not routed to
+    // would send its next session back to the personal store
+    let path = layout.engine_dir.join("config.json");
+    let Ok(before) = std::fs::read_to_string(&path) else {
+        eprintln!("project move: {} cannot be read", path.display());
+        return ExitCode::FAILURE;
+    };
+    let rerouted = if to == "personal" {
+        vibememory_cli::route::remove(&before, &cwd)
+    } else if vibememory_cli::team_connect::connected_teams(&layout).contains(to) {
+        vibememory_cli::route::add(&before, &cwd, to)
+    } else {
+        Err(format!("team {to} is not connected on this machine"))
+    };
+    let config = match rerouted {
+        Ok(vibememory_cli::route::Changed::Text { text, patterns }) => {
+            if let Err(error) = vibememory_cli::route::write_config(&path, &text) {
+                eprintln!("project move: {error}");
+                return ExitCode::FAILURE;
+            }
+            for pattern in patterns {
+                println!(
+                    "route    {pattern}: {}",
+                    if to == "personal" { "removed" } else { "added" }
+                );
+            }
+            match Config::parse(&text, PathSyntax::Posix) {
+                Ok(config) => config,
+                Err(error) => {
+                    eprintln!("project move: {error}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        Ok(vibememory_cli::route::Changed::Already) => config,
+        Err(error) => {
+            eprintln!("project move: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let moved = if to == "personal" {
         vibememory_cli::project_move::to_personal(&layout, &config, &cwd, &portable)
     } else {
         vibememory_cli::project_move::to_team(&layout, &config, &cwd, &portable, to, &stamp)
     };
+    if moved.is_err() {
+        // nothing moved, so the routes stay as they were
+        let _ = vibememory_cli::route::write_config(&path, &before);
+    }
     match moved {
         Ok(report) => {
             println!(
@@ -892,6 +937,123 @@ fn project_command(args: &[String]) -> ExitCode {
         }
         Err(error) => {
             eprintln!("project move: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `route add <dir> --to <team>`, `route remove <dir>`, `route list`, `route which [dir]`: the one
+/// rule of which store a directory's sessions and memory belong to.
+fn route_command(args: &[String]) -> ExitCode {
+    const USAGE: &str = "usage: vibememory route add <dir> --to <team>\n       vibememory route remove <dir>\n       \
+                         vibememory route list\n       vibememory route which [dir]";
+    let layout = layout();
+    let path = layout.engine_dir.join("config.json");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("route: {}: {error}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+    let config = match Config::parse(&text, PathSyntax::Posix) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("config: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    let changed = match args {
+        [verb, dir, flag, team] if verb == "add" && flag == "--to" => {
+            if !vibememory_cli::team_connect::connected_teams(&layout).contains(team) {
+                eprintln!(
+                    "route: team {} is not connected on this machine: vibememory connect --cabinet <address> first",
+                    vibememory_core::terminal::printable(team)
+                );
+                return ExitCode::FAILURE;
+            }
+            vibememory_cli::route::add(&text, dir, team)
+        }
+        [verb, dir] if verb == "remove" => vibememory_cli::route::remove(&text, dir),
+        [verb] if verb == "list" => return route_list(&config, &layout),
+        [verb, rest @ ..] if verb == "which" && rest.len() <= 1 => {
+            return route_which(&config, rest.first().cloned());
+        }
+        _ => {
+            eprintln!("{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    match changed {
+        Ok(vibememory_cli::route::Changed::Text { text, patterns }) => {
+            if let Err(error) = vibememory_cli::route::write_config(&path, &text) {
+                eprintln!("route: {error}");
+                return ExitCode::FAILURE;
+            }
+            let verb = if args.first().map(String::as_str) == Some("add") {
+                "added"
+            } else {
+                "removed"
+            };
+            for pattern in patterns {
+                println!("route    {pattern}: {verb}");
+            }
+            println!(
+                "new sessions follow the route; a project whose sessions are already in another store moves with \
+                 vibememory project move"
+            );
+            ExitCode::SUCCESS
+        }
+        Ok(vibememory_cli::route::Changed::Already) => {
+            println!("the route is already so");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("route: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `route list`: every route, then what is wrong with them.
+fn route_list(config: &Config, layout: &Layout) -> ExitCode {
+    let mut any = false;
+    for (pattern, team, _) in config.routes.patterns() {
+        any = true;
+        println!("{team}\t{pattern}");
+    }
+    if !any {
+        println!("no routes: every directory belongs to the personal store");
+    }
+    for line in vibememory_cli::route::warnings(config, &layout.store()) {
+        println!("route    {}", vibememory_core::terminal::printable(&line));
+    }
+    ExitCode::SUCCESS
+}
+
+/// `route which [dir]`: the store a session opened in the directory goes to.
+fn route_which(config: &Config, dir: Option<String>) -> ExitCode {
+    let dir = dir
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|dir| dir.display().to_string())
+        })
+        .unwrap_or_default();
+    let real =
+        std::fs::canonicalize(&dir).map_or_else(|_| dir.clone(), |path| path.display().to_string());
+    let cwd = canonical_cwd(&real, session_start::host_syntax());
+    match config.routes.route(&cwd, session_start::host_syntax()) {
+        Ok(Some(team)) => {
+            println!("{cwd}: team {team}");
+            ExitCode::SUCCESS
+        }
+        Ok(None) => {
+            println!("{cwd}: personal store");
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("route: {error}");
             ExitCode::FAILURE
         }
     }
