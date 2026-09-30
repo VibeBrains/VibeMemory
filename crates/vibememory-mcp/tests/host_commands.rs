@@ -1314,3 +1314,36 @@ fn the_owners_machine_key_clones_and_pushes_the_personal_store_where_it_lies() {
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("unknownTeam"));
 }
+
+#[test]
+fn a_local_server_refuses_an_agent_name_at_start_and_notes_a_good_one() {
+    let engine = std::env::temp_dir().join(format!("vibememory-mcp-agent-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&engine);
+    fs::create_dir_all(&engine).unwrap();
+    let run = |agent: &str| {
+        Command::new(BINARY)
+            .args(["--agent", agent])
+            .env("VIBEMEMORY_DIR", &engine)
+            .current_dir(&engine)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap()
+    };
+
+    let refused = run("DSH-Desktop");
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("is not a name"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(
+        !engine.join("clients").exists(),
+        "a refused name is not noted"
+    );
+
+    let _ = run("dsh-desktop");
+    let noted = fs::read_to_string(engine.join("clients/dsh-desktop")).unwrap();
+    assert!(noted.trim_end().ends_with('Z'), "{noted}");
+    fs::remove_dir_all(&engine).unwrap();
+}

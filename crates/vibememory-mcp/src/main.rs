@@ -122,6 +122,16 @@ fn main() -> ExitCode {
     // The client's name if it gave one at launch; otherwise a name that at least says it came
     // over MCP rather than pretending to be Claude Code.
     let agent = flag("--agent").unwrap_or_else(|| DEFAULT_AGENT.to_owned());
+    // Refused at start, not at the first call: the name picks the token and signs every record,
+    // and a name the host would refuse otherwise surfaces only when the agent first needs memory.
+    if !vibememory_core::naming::slug::is_slug(&agent) {
+        eprintln!(
+            "vibememory-mcp: --agent {:?} is not a name: lowercase latin letters, digits and '-', \
+             not at either end, at most 63; it must match the agent the token was taken for",
+            vibememory_core::terminal::printable(&agent)
+        );
+        return ExitCode::FAILURE;
+    }
 
     // The owner over ssh, on the store's host: no engine and no working copy there — only the bare
     // repository — and no directory of ours to name a project by, so every write names its own.
@@ -146,6 +156,13 @@ fn serve_local(agent: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // `doctor` tells a token nobody uses from one in use by this: a client that never started a
+    // server under the token's agent name. Losing the note costs a line of `doctor`, not a session.
+    let _ = vibememory_cli::credentials::record_client(
+        &engine_dir,
+        agent,
+        &vibememory_cli::clock::now(),
+    );
     // The directory the client started us in. Measured 2026-09-13: Claude Code starts its stdio
     // servers in the session's project directory — which also decides the store: a team's project
     // writes into the team's clone, signed as the member.

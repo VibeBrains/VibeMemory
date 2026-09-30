@@ -16,7 +16,7 @@ use std::process::Command;
 
 use serde_json::{Value, json};
 use vibememory_mcp::git_memories::{Appended, GitMemories};
-use vibememory_mcp::memories::{Memories, StoreMemories};
+use vibememory_mcp::memories::{Memories, StoreMemories, TranscriptRef};
 use vibememory_mcp::tools::{self, Caller};
 
 const CALLER: Caller<'static> = Caller::owner("host-test", None);
@@ -153,6 +153,15 @@ fn host_and_machine(temp: &Temp) -> (PathBuf, PathBuf) {
     (bare, work)
 }
 
+/// A Claude Code session of a project, by id.
+fn claude_code(session: &str) -> TranscriptRef {
+    TranscriptRef {
+        agent: None,
+        session: session.to_owned(),
+        modified: 0,
+    }
+}
+
 fn save(memories: &dyn Memories, project: &str, id: &str, description: &str) -> Value {
     tools::call(
         "memory_save",
@@ -190,10 +199,14 @@ fn a_bare_store_answers_what_the_working_copy_answers() {
         "by the last commit that touched each, the journal left out"
     );
     assert_eq!(
-        host.read_transcript("Project", "older").unwrap(),
+        host.read_transcript("Project", &claude_code("older"))
+            .unwrap(),
         b"{\"said\":\"old words\"}\n{\"said\":\"continued\"}\n"
     );
-    assert!(host.read_transcript("Project", "absent").is_err());
+    assert!(
+        host.read_transcript("Project", &claude_code("absent"))
+            .is_err()
+    );
     assert_eq!(
         host.load("Nowhere").unwrap().records.len(),
         0,
@@ -366,4 +379,72 @@ fn a_local_save_holding_a_kept_token_is_refused() {
         !store.join("projects/Project/memory.jsonl").exists(),
         "nothing written"
     );
+}
+
+#[test]
+fn another_agents_session_is_found_beside_claude_codes_and_a_sidecar_is_not_a_session() {
+    let temp = Temp::new("agents");
+    let (bare, work) = host_and_machine(&temp);
+    let project = work.join("projects/Project");
+    let foreign = project.join("agents/dsh-desktop");
+    fs::create_dir_all(&foreign).expect("agents");
+    fs::write(
+        foreign.join("session-1.jsonl"),
+        "{\"type\":\"user\",\"uuid\":\"u1\",\"timestamp\":\"2026-09-30T08:00:00Z\",\
+         \"message\":{\"content\":\"exports fixed at last\"}}\n",
+    )
+    .expect("foreign");
+    // Claude Code's own directory of a session: its subagents are not sessions of the project.
+    fs::create_dir_all(project.join("older/subagents")).expect("sidecar");
+    fs::write(
+        project.join("older/subagents/agent-a.jsonl"),
+        "{\"type\":\"user\",\"message\":{\"content\":\"exports fixed at last\"}}\n",
+    )
+    .expect("sidecar");
+    git(&work, &["add", "-A"], None);
+    git(
+        &work,
+        &["commit", "--quiet", "-m", "foreign"],
+        Some("2026-09-04T10:00:00Z"),
+    );
+    git(&work, &["push", "--quiet", "origin", "main"], None);
+    let host = GitMemories::new(bare, "host".to_owned());
+    let local = StoreMemories::new(work, "mac-test".to_owned());
+
+    for memories in [&host as &dyn Memories, &local] {
+        let mut found: Vec<(Option<String>, String)> = memories
+            .transcripts("Project")
+            .unwrap()
+            .into_iter()
+            .map(|transcript| (transcript.agent, transcript.session))
+            .collect();
+        found.sort();
+        assert_eq!(
+            found,
+            vec![
+                (None, "newer".to_owned()),
+                (None, "older".to_owned()),
+                (Some("dsh-desktop".to_owned()), "session-1".to_owned()),
+            ]
+        );
+        let answer = tools::call(
+            "history_search",
+            &json!({ "query": "exports fixed" }),
+            &CALLER,
+            memories,
+        )
+        .unwrap();
+        assert_eq!(
+            answer["results"],
+            json!([{
+                "project": "Project",
+                "agent": "dsh-desktop",
+                "session": "session-1",
+                "at": "2026-09-30T08:00:00Z",
+                "role": "user",
+                "excerpt": "exports fixed at last",
+            }]),
+            "the agent's words, and not the subagent's copy of them"
+        );
+    }
 }

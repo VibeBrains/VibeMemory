@@ -26,6 +26,33 @@ pub struct KeptToken {
     pub file: PathBuf,
     /// What is wrong, if anything: a file missing, or reachable by others than the owner.
     pub problems: Vec<String>,
+    /// When a memory server last started on this machine as this agent. `None` means no client
+    /// ever called it by this name here: a token with nobody to use it.
+    pub client_started: Option<String>,
+}
+
+/// Where the memory server notes each agent name it is started as: one file per name, holding when.
+pub const CLIENTS_DIR: &str = "clients";
+
+/// Notes that a memory server started as `agent`. The agent name is a slug, checked by the server
+/// before it gets here, so it is a safe file name.
+///
+/// # Errors
+///
+/// The text of what went wrong.
+pub fn record_client(engine_dir: &Path, agent: &str, stamp: &str) -> Result<(), String> {
+    let dir = engine_dir.join(CLIENTS_DIR);
+    std::fs::create_dir_all(&dir).map_err(|error| format!("{}: {error}", dir.display()))?;
+    let path = dir.join(agent);
+    std::fs::write(&path, format!("{stamp}\n"))
+        .map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// When a memory server last started as `agent`, if ever.
+#[must_use]
+pub fn client_started(engine_dir: &Path, agent: &str) -> Option<String> {
+    let text = std::fs::read_to_string(engine_dir.join(CLIENTS_DIR).join(agent)).ok()?;
+    Some(text.trim().to_owned()).filter(|stamp| !stamp.is_empty())
 }
 
 /// The sidecar `connect` writes beside a token.
@@ -58,7 +85,9 @@ pub fn kept_tokens(layout: &Layout) -> Vec<KeptToken> {
                 .is_some_and(|extension| extension == SIDECAR_EXTENSION)
                 && !name.ends_with(FRAGMENT_SUFFIX);
             if is_sidecar {
-                tokens.push(inspect(&path));
+                let mut token = inspect(&path);
+                token.client_started = client_started(&layout.engine_dir, &token.agent);
+                tokens.push(token);
             }
         }
     }
@@ -80,6 +109,7 @@ fn inspect(sidecar: &Path) -> KeptToken {
             cabinet: sidecar.cabinet,
             file: file.clone(),
             problems: Vec::new(),
+            client_started: None,
         },
         Err(error) => KeptToken {
             team: String::new(),
@@ -92,6 +122,7 @@ fn inspect(sidecar: &Path) -> KeptToken {
             cabinet: String::new(),
             file: file.clone(),
             problems: vec![format!("its sidecar is unreadable: {error}")],
+            client_started: None,
         },
     };
     for path in [sidecar.to_path_buf(), file.clone(), fragment_file(&file)] {

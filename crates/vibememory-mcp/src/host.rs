@@ -392,8 +392,12 @@ impl Memories for TeamMemories {
         self.git.transcripts(project)
     }
 
-    fn read_transcript(&self, project: &str, session: &str) -> Result<Vec<u8>, String> {
-        self.git.read_transcript(project, session)
+    fn read_transcript(
+        &self,
+        project: &str,
+        transcript: &TranscriptRef,
+    ) -> Result<Vec<u8>, String> {
+        self.git.read_transcript(project, transcript)
     }
 
     fn new_version(&self, id: &str) -> String {

@@ -14,7 +14,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use vibememory_core::memory::journal::{self, Event, Memory, fold};
 
-use crate::memories::{DirectoryProject, Memories, TranscriptRef, next_write, version_name};
+use crate::memories::{
+    DirectoryProject, Memories, TranscriptRef, next_write, transcript_of, version_name,
+};
 
 /// The branch the store keeps its history on.
 const BRANCH: &str = vibememory_cli::tick::BRANCH;
@@ -521,14 +523,13 @@ impl Memories for GitMemories {
 
     fn transcripts(&self, project: &str) -> Result<Vec<TranscriptRef>, String> {
         let dir = format!("projects/{project}/");
-        let listed = self.text(&["ls-tree", "--name-only", BRANCH, &dir], &[])?;
-        let mut sessions: BTreeMap<String, u64> = listed
+        // Recursive: the sessions other agents handed over sit one directory down, under `agents/`.
+        let listed = self.text(&["ls-tree", "-r", "--name-only", BRANCH, &dir], &[])?;
+        let mut sessions: BTreeMap<(Option<String>, String), u64> = listed
             .lines()
             .filter_map(|line| line.strip_prefix(dir.as_str()))
-            .filter_map(|name| name.strip_suffix(".jsonl"))
-            // The memory journal lives beside the transcripts and is not one of them.
-            .filter(|session| *session != "memory")
-            .map(|session| (session.to_owned(), 0))
+            .filter_map(transcript_of)
+            .map(|key| (key, 0))
             .collect();
         // A bare repository keeps no modification times. The time of the last commit that touched
         // a file is the same answer the tick would have given by writing it.
@@ -540,10 +541,8 @@ impl Memories for GitMemories {
         for line in log.lines() {
             if let Some(stamp) = line.strip_prefix('@') {
                 time = stamp.parse().unwrap_or(0);
-            } else if let Some(session) = line
-                .strip_prefix(dir.as_str())
-                .and_then(|name| name.strip_suffix(".jsonl"))
-                && let Some(modified) = sessions.get_mut(session)
+            } else if let Some(key) = line.strip_prefix(dir.as_str()).and_then(transcript_of)
+                && let Some(modified) = sessions.get_mut(&key)
                 && *modified == 0
             {
                 *modified = time;
@@ -551,7 +550,11 @@ impl Memories for GitMemories {
         }
         let mut found: Vec<TranscriptRef> = sessions
             .into_iter()
-            .map(|(session, modified)| TranscriptRef { session, modified })
+            .map(|((agent, session), modified)| TranscriptRef {
+                agent,
+                session,
+                modified,
+            })
             .collect();
         found.sort_by(|left, right| {
             right
@@ -562,9 +565,18 @@ impl Memories for GitMemories {
         Ok(found)
     }
 
-    fn read_transcript(&self, project: &str, session: &str) -> Result<Vec<u8>, String> {
-        self.blob(BRANCH, &format!("projects/{project}/{session}.jsonl"))?
-            .ok_or_else(|| format!("no transcript {session} in {project}"))
+    fn read_transcript(
+        &self,
+        project: &str,
+        transcript: &TranscriptRef,
+    ) -> Result<Vec<u8>, String> {
+        let path = vibememory_core::foreign::session_path(
+            project,
+            transcript.agent.as_deref(),
+            &transcript.session,
+        );
+        self.blob(BRANCH, &path)?
+            .ok_or_else(|| format!("no transcript {} in {project}", transcript.session))
     }
 
     fn new_version(&self, id: &str) -> String {

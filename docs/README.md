@@ -16,6 +16,7 @@ docs/
 │   ├── configSpec.md       # спека ~/.vibememory/config.json для модели (сейчас: nameOverrides, ignoreCwd)
 │   ├── desktopFixtures.md  # как добавить кейс в fixtures/desktop/, четыре списка кейсов, мутации гейта
 │   ├── exportFixtures.md   # как добавить кейс в fixtures/export/, метки provenance, мутационная проверка гейта
+│   ├── foreignSessionSpec.md # спека сессии чужого агента для модели: vibememory session put, поля, перевод лога DSH
 │   ├── hostShellSpec.md    # спека входа ключом машины: четыре команды shell, коды отказов, правила pre-receive
 │   ├── hostStatusSpec.md   # спека отчёта хоста: applied.json, host.json и ответ status участнику
 │   ├── hostSetup.md        # хост стора: ключ, bare-репозиторий и зеркало, привязка машины, команды хоста, бэкап сторов команд

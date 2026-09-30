@@ -139,7 +139,7 @@ fn report(strict: bool, json: bool) -> ExitCode {
     if json {
         return report_json(
             &config,
-            &layout.engine_dir,
+            &layout,
             &actions,
             mirror.as_ref(),
             disk.as_ref(),
@@ -191,6 +191,7 @@ fn report(strict: bool, json: bool) -> ExitCode {
             file.since
         );
     }
+    print_foreign_sessions(&layout);
     if let Some(mirror) = &mirror {
         println!("{}", mirror.describe());
         if mirror.is_fault() {
@@ -320,6 +321,41 @@ fn print_teams(layout: &Layout) -> usize {
     wrong
 }
 
+/// The sessions other agents handed over with `session put`, by store and agent: a wrapper that
+/// stopped working shows as a date that no longer moves.
+fn print_foreign_sessions(layout: &Layout) {
+    for (store, agent, sessions, newest) in foreign_sessions(layout) {
+        println!(
+            "agent    {} — {sessions} session(s) in the {store} store, newest written {newest}",
+            vibememory_core::terminal::printable(&agent)
+        );
+    }
+}
+
+/// Every store's sessions of other agents: the store (`personal` or `team <id>`), the agent, how
+/// many sessions and when the newest was written. One list for the text report and the JSON one.
+fn foreign_sessions(layout: &Layout) -> Vec<(String, String, usize, String)> {
+    let mut stores = vec![("personal".to_owned(), layout.store())];
+    stores.extend(
+        vibememory_cli::team_connect::connected_teams(layout)
+            .into_iter()
+            .map(|team| (format!("team {team}"), layout.team_store(&team))),
+    );
+    let mut found = Vec::new();
+    for (store, clone) in stores {
+        for (agent, delivered) in vibememory_cli::foreign_session::delivered(&clone) {
+            let newest = i64::try_from(delivered.newest).unwrap_or(i64::MAX);
+            found.push((
+                store.clone(),
+                agent,
+                delivered.sessions,
+                vibememory_cli::clock::iso8601(newest),
+            ));
+        }
+    }
+    found
+}
+
 /// The credentials section: each kept token, and what is wrong with its files. Answers how many
 /// tokens have something wrong.
 fn print_tokens(tokens: &[vibememory_cli::credentials::KeptToken]) -> usize {
@@ -338,6 +374,19 @@ fn print_tokens(tokens: &[vibememory_cli::credentials::KeptToken]) -> usize {
         }
         for problem in &token.problems {
             println!("         {}", vibememory_core::terminal::printable(problem));
+        }
+        // Not a failure: a token may be taken before its client is set up. It is said because a
+        // token nobody uses looks exactly like a working one everywhere else.
+        match &token.client_started {
+            Some(stamp) => println!(
+                "         client: a memory server started as --agent {} at {stamp}",
+                vibememory_core::terminal::printable(&token.agent)
+            ),
+            None => println!(
+                "         client: no memory server has started as --agent {} on this machine; \
+                 the client that uses this token must pass exactly this name",
+                vibememory_core::terminal::printable(&token.agent)
+            ),
         }
     }
     wrong
@@ -422,6 +471,7 @@ fn tokens_json(tokens: &[vibememory_cli::credentials::KeptToken]) -> Vec<serde_j
                 "cabinet": token.cabinet,
                 "file": token.file.display().to_string(),
                 "problems": token.problems,
+                "clientStarted": token.client_started,
             })
         })
         .collect()
@@ -1176,7 +1226,12 @@ fn route_which(config: &Config, dir: Option<String>) -> ExitCode {
 /// next tick commits it into the team.
 fn session_command(args: &[String]) -> ExitCode {
     const USAGE: &str = "usage: vibememory session share <session-id>\n       \
-                         vibememory session release <machine> <session-id> --confirm";
+                         vibememory session release <machine> <session-id> --confirm\n       \
+                         vibememory session put --agent <name> --id <session-id> --cwd <dir> \
+                         --from <file.jsonl> [--end]";
+    if args.first().is_some_and(|verb| verb == "put") {
+        return session_put(args.get(1..).unwrap_or_default(), USAGE);
+    }
     if let [verb, machine, session, confirm] = args
         && verb == "release"
     {
@@ -1228,6 +1283,98 @@ fn session_command(args: &[String]) -> ExitCode {
         );
         ExitCode::FAILURE
     }
+}
+
+/// `session put`: a session of another agent, as a file in the format of
+/// `docs/manuals/foreignSessionSpec.md`, goes into the store of its working directory.
+fn session_put(args: &[String], usage: &str) -> ExitCode {
+    let mut agent = None;
+    let mut session = None;
+    let mut cwd = None;
+    let mut source = None;
+    let mut ended = false;
+    let mut rest = args.iter();
+    while let Some(flag) = rest.next() {
+        let slot = match flag.as_str() {
+            "--end" => {
+                ended = true;
+                continue;
+            }
+            "--agent" => &mut agent,
+            "--id" => &mut session,
+            "--cwd" => &mut cwd,
+            "--from" => &mut source,
+            _ => {
+                eprintln!("{usage}");
+                return ExitCode::from(2);
+            }
+        };
+        let Some(value) = rest.next() else {
+            eprintln!("{flag} takes a value\n{usage}");
+            return ExitCode::from(2);
+        };
+        *slot = Some(value.clone());
+    }
+    let (Some(agent), Some(session), Some(cwd), Some(source)) = (agent, session, cwd, source)
+    else {
+        eprintln!("{usage}");
+        return ExitCode::from(2);
+    };
+    let layout = layout();
+    let config = match read_config(&layout) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("session put: the engine is not configured here: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let syntax = vibememory_cli::hook::session_start::host_syntax();
+    let cwd = canonical_cwd(&cwd, syntax);
+    let stamp = vibememory_cli::clock::now();
+    let request = vibememory_cli::foreign_session::Request {
+        agent: &agent,
+        session: &session,
+        cwd: &cwd,
+        portable_cwd: &portable_cwd(&config, &cwd),
+        source: std::path::Path::new(&source),
+        ended,
+        stamp: &stamp,
+    };
+    let placed = match vibememory_cli::foreign_session::put(&layout, &config, &request) {
+        Ok(placed) => placed,
+        Err(error) => {
+            eprintln!("session put: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let store = placed
+        .store
+        .team
+        .as_deref()
+        .map_or_else(|| "personal".to_owned(), |team| format!("team {team}"));
+    let outcome = if !placed.held.is_empty() {
+        format!(
+            "held on this machine: it holds agent token(s) {}; revoke them in the cabinet",
+            placed.held.join(", ")
+        )
+    } else if placed.committed {
+        "committed".to_owned()
+    } else {
+        "unchanged since the last put".to_owned()
+    };
+    println!(
+        "put: {} record(s), {} searchable, into project {} of the {store} store ({}) — {outcome}",
+        placed.checked.lines, placed.checked.spoken, placed.project, placed.relative
+    );
+    // A push that does not happen costs nothing: the commit is on this disk, and the tick pushes
+    // again in two minutes.
+    let _ = push_if_due(
+        &placed.store.clone,
+        &placed.store.state_dir,
+        epoch_seconds(),
+        PUSH_DEBOUNCE,
+    );
+    ExitCode::SUCCESS
 }
 
 /// `session release <machine> <sid> --confirm`: clears another machine's claim that a session is
@@ -1421,6 +1568,15 @@ fn session_progress_hook(ended: bool) -> ExitCode {
     // The transcript is reached through the link, so its real path is inside a store's clone —
     // the personal one or a team's — unless this session is one the hook could not link, and then
     // there is nothing to commit here.
+    // An empty path is not a session that has written nothing yet: it is a caller that did not say
+    // where the session is, and staying silent about it means its sessions never arrive.
+    if input.transcript_path.trim().is_empty() {
+        eprintln!(
+            "vibememory: hook with an empty transcript_path; nothing to commit. An agent other \
+             than Claude Code hands its sessions over with `vibememory session put`"
+        );
+        return ExitCode::SUCCESS;
+    }
     let transcript = std::path::PathBuf::from(&input.transcript_path);
     let Ok(real) = std::fs::canonicalize(&transcript) else {
         return ExitCode::SUCCESS;
@@ -2578,7 +2734,7 @@ fn wants_json(args: &[String]) -> bool {
 /// The exit code is the same as the human form's, so a check can use either.
 fn report_json(
     config: &Config,
-    engine_dir: &std::path::Path,
+    layout: &Layout,
     actions: &[vibememory_cli::install::Action],
     mirror: Option<&vibememory_cli::mirror::Mirror>,
     disk: Option<&Result<vibememory_cli::mirror::Disk, String>>,
@@ -2621,10 +2777,7 @@ fn report_json(
     };
     let disk_low = matches!(disk, Some(Ok(disk)) if disk.is_low());
     let tokens_wrong = tokens.iter().any(|token| !token.problems.is_empty());
-    let teams = vibememory_cli::team_connect::team_facts(&vibememory_cli::install::Layout {
-        config_dir: std::path::PathBuf::new(),
-        engine_dir: engine_dir.to_path_buf(),
-    });
+    let teams = vibememory_cli::team_connect::team_facts(layout);
     let teams_wrong = teams
         .iter()
         .any(|facts| facts.pause.is_some() || !facts.problems.is_empty());
@@ -2641,8 +2794,14 @@ fn report_json(
         "mirror": mirror_value,
         "hostDisk": disk_value,
         "credentials": tokens_json(tokens),
-        "held": held_json(engine_dir),
+        "held": held_json(&layout.engine_dir),
         "teams": teams_json(&teams),
+        "agents": foreign_sessions(layout)
+            .into_iter()
+            .map(|(store, agent, sessions, newest)| serde_json::json!({
+                "store": store, "agent": agent, "sessions": sessions, "newest": newest,
+            }))
+            .collect::<Vec<_>>(),
         "ok": !failed,
     });
     match serde_json::to_string_pretty(&report) {

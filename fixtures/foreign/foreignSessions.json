@@ -1,0 +1,213 @@
+{
+  "description": "Session files of agents other than Claude Code, as `vibememory session put` receives them, and the verdict of `foreign::check`. Format: docs/manuals/foreignSessionSpec.md",
+  "cases": [
+    {
+      "id": "dshConvertedSession",
+      "provenance": "computed",
+      "note": "A DeepSeek Harness log as its wrapper converts it: user and assistant records carry words, a tool call is kept but not searched",
+      "text": "{\"type\":\"user\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T08:00:01Z\",\"message\":{\"role\":\"user\",\"content\":\"почини экспорт отчёта\"}}\n{\"type\":\"tool/call\",\"uuid\":\"22222222-2222-4222-8222-000000000002\",\"timestamp\":\"2026-09-30T08:00:02Z\",\"data\":{\"name\":\"bash\",\"arguments\":\"{}\"}}\n{\"type\":\"assistant\",\"uuid\":\"22222222-2222-4222-8222-000000000003\",\"timestamp\":\"2026-09-30T08:00:03.125Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Экспорт починен\"}]}}\n",
+      "expect": {
+        "lines": 3,
+        "spoken": 2
+      }
+    },
+    {
+      "id": "contentAsString",
+      "provenance": "computed",
+      "note": "message.content may be a plain string, as Claude Code writes a typed prompt",
+      "text": "{\"type\":\"user\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T08:00:01Z\",\"message\":{\"role\":\"user\",\"content\":\"hello\"}}\n",
+      "expect": {
+        "lines": 1,
+        "spoken": 1
+      }
+    },
+    {
+      "id": "blocksWithoutText",
+      "provenance": "computed",
+      "note": "An assistant record of tool blocks only is valid and holds nothing to search",
+      "text": "{\"type\":\"assistant\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T08:00:01Z\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"bash\"}]}}\n",
+      "expect": {
+        "lines": 1,
+        "spoken": 0
+      }
+    },
+    {
+      "id": "crlfLines",
+      "provenance": "computed",
+      "note": "A file written on Windows ends its lines with CRLF; the carriage return is not part of the record",
+      "text": "{\"type\":\"user\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T08:00:01Z\",\"message\":{\"role\":\"user\",\"content\":\"a\"}}\r\n{\"type\":\"assistant\",\"uuid\":\"22222222-2222-4222-8222-000000000002\",\"timestamp\":\"2026-09-30T08:00:02.125Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"b\"}]}}\r\n",
+      "expect": {
+        "lines": 2,
+        "spoken": 2
+      }
+    },
+    {
+      "id": "empty",
+      "provenance": "computed",
+      "note": "A file with no record is a wrapper that converted nothing",
+      "text": "",
+      "expect": {
+        "refused": {
+          "line": 0,
+          "problem": "empty"
+        }
+      }
+    },
+    {
+      "id": "noFinalNewline",
+      "provenance": "computed",
+      "note": "A file cut in the middle of a record: the last line never ended",
+      "text": "{\"type\":\"user\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T08:00:01Z\",\"message\":{\"role\":\"user\",\"content\":\"a\"}}\n{\"type\":\"assistant\",\"uuid\":\"22222222-2222-4222-8222-000000000002\",\"timestamp\":\"2026-09-30T08:00:02.125Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"b\"}]}}",
+      "expect": {
+        "refused": {
+          "line": 0,
+          "problem": "noFinalNewline"
+        }
+      }
+    },
+    {
+      "id": "blankLine",
+      "provenance": "computed",
+      "note": "An empty line between records",
+      "text": "{\"type\":\"user\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T08:00:01Z\",\"message\":{\"role\":\"user\",\"content\":\"a\"}}\n\n{\"type\":\"assistant\",\"uuid\":\"22222222-2222-4222-8222-000000000002\",\"timestamp\":\"2026-09-30T08:00:02.125Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"b\"}]}}\n",
+      "expect": {
+        "refused": {
+          "line": 2,
+          "problem": "blankLine"
+        }
+      }
+    },
+    {
+      "id": "notAnObject",
+      "provenance": "computed",
+      "note": "An array is JSON but not a record",
+      "text": "{\"type\":\"user\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T08:00:01Z\",\"message\":{\"role\":\"user\",\"content\":\"a\"}}\n[1,2]\n",
+      "expect": {
+        "refused": {
+          "line": 2,
+          "problem": "notAnObject"
+        }
+      }
+    },
+    {
+      "id": "brokenJson",
+      "provenance": "computed",
+      "note": "Half a record",
+      "text": "{\"type\":\"user\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T08:00:01Z\",\"message\":{\"role\":\"user\",\"content\":\"a\"}}\n{\"type\":\"user\"\n",
+      "expect": {
+        "refused": {
+          "line": 2,
+          "problem": "notAnObject"
+        }
+      }
+    },
+    {
+      "id": "noUuid",
+      "provenance": "computed",
+      "note": "Without uuid an edited line survives beside its old version after a merge",
+      "text": "{\"type\":\"user\",\"timestamp\":\"2026-09-30T08:00:01Z\",\"message\":{\"content\":\"a\"}}\n",
+      "expect": {
+        "refused": {
+          "line": 1,
+          "problem": "missing:uuid"
+        }
+      }
+    },
+    {
+      "id": "noType",
+      "provenance": "computed",
+      "note": "A record without a type",
+      "text": "{\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T08:00:01Z\"}\n",
+      "expect": {
+        "refused": {
+          "line": 1,
+          "problem": "missing:type"
+        }
+      }
+    },
+    {
+      "id": "noTimestamp",
+      "provenance": "computed",
+      "note": "Without a timestamp two machines' lines cannot be put in order",
+      "text": "{\"type\":\"user\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"message\":{\"content\":\"a\"}}\n",
+      "expect": {
+        "refused": {
+          "line": 1,
+          "problem": "missing:timestamp"
+        }
+      }
+    },
+    {
+      "id": "epochMilliseconds",
+      "provenance": "computed",
+      "note": "DeepSeek Harness keeps time as epoch milliseconds; a number is not the string the merge compares",
+      "text": "{\"type\":\"user\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":1790000000000,\"message\":{\"content\":\"a\"}}\n",
+      "expect": {
+        "refused": {
+          "line": 1,
+          "problem": "missing:timestamp"
+        }
+      }
+    },
+    {
+      "id": "offsetNotUtc",
+      "provenance": "computed",
+      "note": "An offset compares as text, not as time",
+      "text": "{\"type\":\"user\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T11:00:00+03:00\",\"message\":{\"role\":\"user\",\"content\":\"a\"}}\n",
+      "expect": {
+        "refused": {
+          "line": 1,
+          "problem": "timestamp"
+        }
+      }
+    },
+    {
+      "id": "dateOnly",
+      "provenance": "computed",
+      "note": "A date is not a moment",
+      "text": "{\"type\":\"user\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30Z\",\"message\":{\"role\":\"user\",\"content\":\"a\"}}\n",
+      "expect": {
+        "refused": {
+          "line": 1,
+          "problem": "timestamp"
+        }
+      }
+    },
+    {
+      "id": "duplicateUuid",
+      "provenance": "computed",
+      "note": "Two records under one uuid collapse into one on the other machine",
+      "text": "{\"type\":\"user\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T08:00:01Z\",\"message\":{\"role\":\"user\",\"content\":\"a\"}}\n{\"type\":\"assistant\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T08:00:02Z\",\"message\":{\"content\":\"b\"}}\n",
+      "expect": {
+        "refused": {
+          "line": 2,
+          "problem": "duplicateUuid"
+        }
+      }
+    },
+    {
+      "id": "noContent",
+      "provenance": "computed",
+      "note": "A user record without message.content has nothing for the search to read",
+      "text": "{\"type\":\"user\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T08:00:01Z\",\"message\":{\"role\":\"user\"}}\n",
+      "expect": {
+        "refused": {
+          "line": 1,
+          "problem": "missing:message.content"
+        }
+      }
+    },
+    {
+      "id": "contentNumber",
+      "provenance": "computed",
+      "note": "message.content that is neither a string nor a list",
+      "text": "{\"type\":\"assistant\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T08:00:01Z\",\"message\":{\"content\":42}}\n",
+      "expect": {
+        "refused": {
+          "line": 1,
+          "problem": "content"
+        }
+      }
+    }
+  ]
+}

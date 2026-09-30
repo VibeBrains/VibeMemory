@@ -114,8 +114,9 @@ pub fn catalogue() -> Value {
 fn history_search_entry() -> Value {
     json!({
         "name": "history_search",
-        "description": "Search past sessions by words said in them. Returns which session, \
-                        when, and a short excerpt — never whole transcripts. Newest first, \
+        "description": "Search past sessions by words said in them — Claude Code's and those \
+                        other agents handed over. Returns which session of which agent, when, and \
+                        a short excerpt — never whole transcripts. Newest first, \
                         because that is the order a person asks about their own history in. \
                         Narrow with `project` when you know it: the corpus is gigabytes.",
         "inputSchema": {
@@ -717,21 +718,26 @@ fn history_search(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memorie
     let mut sessions = Vec::new();
     for project in scope(arguments, caller, memories)? {
         for transcript in memories.transcripts(&project)? {
-            sessions.push((transcript.modified, project.clone(), transcript.session));
+            sessions.push((project.clone(), transcript));
         }
     }
-    sessions.sort_by_key(|(modified, _, _)| std::cmp::Reverse(*modified));
+    sessions.sort_by_key(|(_, transcript)| std::cmp::Reverse(transcript.modified));
 
     let mut found = Vec::new();
-    for (_, project, session) in sessions {
+    for (project, transcript) in sessions {
         if found.len() >= limit {
             break;
         }
-        let bytes = memories.read_transcript(&project, &session)?;
+        let bytes = memories.read_transcript(&project, &transcript)?;
+        let agent = transcript
+            .agent
+            .as_deref()
+            .unwrap_or(vibememory_core::foreign::CLAUDE_CODE);
         for hit in matches_in(&bytes, &words, limit - found.len()) {
             found.push(json!({
                 "project": project,
-                "session": session,
+                "agent": agent,
+                "session": transcript.session,
                 "at": hit.at,
                 "role": hit.role,
                 "excerpt": hit.excerpt,

@@ -62,6 +62,13 @@ MCP-серверов (`name`), структура объектов и поряд
   Все кейсы `computed`, кроме Windows-раскладки стора Desktop (`unverified`, этап 4).
   Описание ключей для модели — [docs/manuals/configSpec.md](../docs/manuals/configSpec.md).
 
+## `foreign/` — сессии чужих агентов
+
+- `foreignSessions.json` — файлы, которые агент отдаёт `vibememory session put`, и вердикт проверки
+  формата: принят (сколько записей и сколько ищется) или отказ с номером строки и правилом.
+  Все кейсы `computed`, идентификаторы синтетические. Формат для модели и порядок добавления кейса —
+  [docs/manuals/foreignSessionSpec.md](../docs/manuals/foreignSessionSpec.md).
+
 ## `access/` — снимок прав хоста
 
 - `accessSnapshots.json` — снимки `access.json` и первый код, который отвечает на них

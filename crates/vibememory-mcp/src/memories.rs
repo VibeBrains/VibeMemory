@@ -50,7 +50,8 @@ pub trait Memories {
     /// # Errors
     ///
     /// What went wrong reading the file.
-    fn read_transcript(&self, project: &str, session: &str) -> Result<Vec<u8>, String>;
+    fn read_transcript(&self, project: &str, transcript: &TranscriptRef)
+    -> Result<Vec<u8>, String>;
 
     /// A uuid for a new event: unique on this machine, and the same shape the engine writes.
     fn new_version(&self, id: &str) -> String;
@@ -118,8 +119,12 @@ impl<M: Memories + ?Sized> Memories for &M {
         (**self).transcripts(project)
     }
 
-    fn read_transcript(&self, project: &str, session: &str) -> Result<Vec<u8>, String> {
-        (**self).read_transcript(project, session)
+    fn read_transcript(
+        &self,
+        project: &str,
+        transcript: &TranscriptRef,
+    ) -> Result<Vec<u8>, String> {
+        (**self).read_transcript(project, transcript)
     }
 
     fn new_version(&self, id: &str) -> String {
@@ -155,11 +160,34 @@ pub fn next_write() -> u64 {
 /// One session of a project, without its content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranscriptRef {
+    /// The agent of a session another agent handed over with `session put`; `None` for Claude
+    /// Code's own, which sit at the top of the project.
+    pub agent: Option<String>,
     /// The session id, which is also the file name.
     pub session: String,
     /// When the file was last written, as seconds since the epoch. Only for ordering: the search
     /// goes newest first, because that is the order a person asks about their own history in.
     pub modified: u64,
+}
+
+/// The session a path inside a project directory is, if it is one: `<session>.jsonl` at the top for
+/// Claude Code, `agents/<agent>/<session>.jsonl` for another agent. Anything deeper — a session's
+/// own directory of subagents and tool results — and the memory journal are not sessions.
+#[must_use]
+pub fn transcript_of(name: &str) -> Option<(Option<String>, String)> {
+    let parts: Vec<&str> = name.split('/').collect();
+    match parts.as_slice() {
+        [file] => {
+            let session = file.strip_suffix(".jsonl")?;
+            (session != "memory" && !session.is_empty()).then(|| (None, session.to_owned()))
+        }
+        [dir, agent, file] if *dir == vibememory_core::foreign::AGENTS_DIR => {
+            let session = file.strip_suffix(".jsonl")?;
+            (!session.is_empty() && !agent.is_empty())
+                .then(|| (Some((*agent).to_owned()), session.to_owned()))
+        }
+        _ => None,
+    }
 }
 
 /// The real store under `<engine>/store/projects/<name>/memory.jsonl`.
@@ -268,32 +296,16 @@ impl Memories for StoreMemories {
 
     fn transcripts(&self, project: &str) -> Result<Vec<TranscriptRef>, String> {
         let dir = self.store.join("projects").join(project);
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(format!("{}: {error}", dir.display())),
-        };
-        let mut found: Vec<TranscriptRef> = entries
-            .filter_map(Result::ok)
-            .filter_map(|entry| {
-                let path = entry.path();
-                if path.extension()? != "jsonl" {
-                    return None;
+        let mut found = sessions_in(&dir, None)?;
+        let agents = dir.join(vibememory_core::foreign::AGENTS_DIR);
+        if let Ok(entries) = std::fs::read_dir(&agents) {
+            for agent in entries.filter_map(Result::ok) {
+                if agent.path().is_dir() {
+                    let name = agent.file_name().to_string_lossy().into_owned();
+                    found.extend(sessions_in(&agent.path(), Some(&name))?);
                 }
-                let session = path.file_stem()?.to_string_lossy().into_owned();
-                // The memory journal lives beside the transcripts and is not one of them.
-                if session == "memory" {
-                    return None;
-                }
-                let modified = entry
-                    .metadata()
-                    .ok()
-                    .and_then(|data| data.modified().ok())
-                    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map_or(0, |since| since.as_secs());
-                Some(TranscriptRef { session, modified })
-            })
-            .collect();
+            }
+        }
         found.sort_by(|left, right| {
             right
                 .modified
@@ -303,12 +315,16 @@ impl Memories for StoreMemories {
         Ok(found)
     }
 
-    fn read_transcript(&self, project: &str, session: &str) -> Result<Vec<u8>, String> {
-        let path = self
-            .store
-            .join("projects")
-            .join(project)
-            .join(format!("{session}.jsonl"));
+    fn read_transcript(
+        &self,
+        project: &str,
+        transcript: &TranscriptRef,
+    ) -> Result<Vec<u8>, String> {
+        let path = self.store.join(vibememory_core::foreign::session_path(
+            project,
+            transcript.agent.as_deref(),
+            &transcript.session,
+        ));
         std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))
     }
 
@@ -363,8 +379,38 @@ pub fn version_name(machine_id: &str, now: &str, nth: u64, id: &str) -> String {
     format!("{machine_id}-{now}-{nth}-{id}")
 }
 
+/// The sessions of one directory: its `*.jsonl` files, the memory journal aside.
+fn sessions_in(dir: &Path, agent: Option<&str>) -> Result<Vec<TranscriptRef>, String> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("{}: {error}", dir.display())),
+    };
+    Ok(entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let (_, session) = transcript_of(&name)?;
+            let modified = entry
+                .metadata()
+                .ok()
+                .and_then(|data| data.modified().ok())
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |since| since.as_secs());
+            Some(TranscriptRef {
+                agent: agent.map(str::to_owned),
+                session,
+                modified,
+            })
+        })
+        .collect())
+}
+
 /// One transcript of the fake: session id, modified time, raw lines.
 pub type FakeTranscript = (String, u64, String);
+
+/// A transcript of the fake with the agent that handed it over, `None` for Claude Code.
+pub type FakeSession = (Option<String>, FakeTranscript);
 
 /// A journal held in memory, for tests and for anyone embedding the server. Behind locks, because
 /// the HTTP server answers each connection on its own thread.
@@ -376,8 +422,8 @@ pub struct FakeMemories {
     pub stamp: String,
     /// Same job as the real one's: a fixed clock makes collisions certain rather than likely.
     written: AtomicU64,
-    /// Transcripts by project.
-    pub history: Mutex<BTreeMap<String, Vec<FakeTranscript>>>,
+    /// Transcripts by project, each with the agent that handed it over (`None` for Claude Code).
+    pub history: Mutex<BTreeMap<String, Vec<FakeSession>>>,
     /// How many transcripts were actually read. The cap on results is cheap to check; the cap on
     /// *reading* is the one that matters on a 1.7 GiB corpus, and it is invisible without this.
     pub reads: AtomicU64,
@@ -424,7 +470,7 @@ impl FakeMemories {
         held(&self.history)
             .entry(project.to_owned())
             .or_default()
-            .push(transcript);
+            .push((None, transcript));
     }
 
     /// Seeds what [`Memories::project_of_directory`] answers for one directory.
@@ -464,7 +510,8 @@ impl Memories for FakeMemories {
             .get(project)
             .into_iter()
             .flatten()
-            .map(|(session, modified, _)| TranscriptRef {
+            .map(|(agent, (session, modified, _))| TranscriptRef {
+                agent: agent.clone(),
                 session: session.clone(),
                 modified: *modified,
             })
@@ -473,15 +520,19 @@ impl Memories for FakeMemories {
         Ok(found)
     }
 
-    fn read_transcript(&self, project: &str, session: &str) -> Result<Vec<u8>, String> {
+    fn read_transcript(
+        &self,
+        project: &str,
+        transcript: &TranscriptRef,
+    ) -> Result<Vec<u8>, String> {
         self.reads.fetch_add(1, Ordering::Relaxed);
         held(&self.history)
             .get(project)
             .into_iter()
             .flatten()
-            .find(|(id, _, _)| id == session)
-            .map(|(_, _, text)| text.clone().into_bytes())
-            .ok_or_else(|| format!("no transcript {session}"))
+            .find(|(agent, (id, _, _))| *agent == transcript.agent && *id == transcript.session)
+            .map(|(_, (_, _, text))| text.clone().into_bytes())
+            .ok_or_else(|| format!("no transcript {}", transcript.session))
     }
 
     fn new_version(&self, id: &str) -> String {

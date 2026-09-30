@@ -22,6 +22,7 @@ Git даёт то, чего облачная папка не даёт принц
 | Сущность | Где | Режим |
 |---|---|---|
 | `projects/<name>/<sid>.jsonl`, `<sid>/{tool-results,subagents,workflows,custom-title.json}` | стор (git) | union по ключу `(uuid \| байты, номер копии)`; база решает членство (удаление уважается, кроме предков выживших записей), но не порядок; локальный файл — хребет, чужие строки вставляются после последней общей записи с `uuid` и чередуются по `timestamp`; отбрасывается только хвост без `\n`; файлы ≥ 45 МБ не коммитятся (производные, для resume не нужны) |
+| `projects/<name>/agents/<agent>/<sid>.jsonl` | стор (git) | сессии чужих агентов, отданные `vibememory session put` плоским JSONL ([спека](../manuals/foreignSessionSpec.md)); слияние то же, что у транскриптов; вне верхнего уровня, чтобы не попасть в `/resume` Claude Code |
 | `projects/<name>/memory/**` | стор | **записи** (§6); проекция в markdown; арбитраж базой, а правка с обеих сторон — keep-both: наша версия в файле, чужая в `~/.vibememory/quarantine/` + `additionalContext` «сведи», никогда LWW |
 | `projects/<name>/.keep` | стор | защита от rmdir-свипера пустых каталогов |
 | `config/{CLAUDE.md,settings.json}`, `config/skills/` | стор | skills — ссылка; CLAUDE.md/settings.json — управляемые копии с 3-way по last-synced-хешам |

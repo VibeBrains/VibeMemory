@@ -914,6 +914,14 @@
   rename, с подписью и проверкой запуском; `vibememory-mcp` научился `--version`, иначе проверять
   было нечем. Замер и честно названный предел (гейта на само поведение ядра нет) —
   [knowledge/design/binaryReplacement.md](knowledge/design/binaryReplacement.md).
+- [x] **Сессии чужих агентов: `vibememory session put`** — ✅ (2026-09-30, next) повод — DeepSeek Harness:
+  его сессии не попадали в стор, `history_search` их не видел. Агент отдаёт сессию плоским JSONL (`type`,
+  `uuid`, `timestamp` UTC, `message.content`), файл проверяется целиком и ложится в
+  `projects/<проект>/agents/<агент>/` тем же путём, что после `hook stop`; `history_search` читает оба уровня
+  и отдаёт `agent`, и в клоне, и в bare-сторе хоста. `status` — строка на агента, `doctor` — запускался ли
+  сервер памяти под именем токена; сервер отказывается стартовать на имени не по правилу; `Stop` с пустым
+  `transcript_path` говорит об этом. Фикстура `fixtures/foreign/`, спека для модели, мутации ловятся.
+  [knowledge](knowledge/design/foreignSessions.md).
 
 ## Этап 6 — SaaS для команд (start0)
 
