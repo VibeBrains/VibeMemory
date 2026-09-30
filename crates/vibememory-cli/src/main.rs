@@ -45,6 +45,7 @@ fn main() -> ExitCode {
         }
         Some("tick") => tick_command(&args.collect::<Vec<String>>()),
         Some("update") => update_command(),
+        Some("mcp-config") => mcp_config_command(args.next().as_deref()),
         Some("migrate") => migrate_command(&args.collect::<Vec<String>>()),
         Some("switch") => switch_command(&args.collect::<Vec<String>>()),
         Some("relink") => relink_command(&args.collect::<Vec<String>>(), false),
@@ -175,27 +176,7 @@ fn report(strict: bool, json: bool) -> ExitCode {
             _ => {}
         }
     }
-    // Not a step and never a failure: `ignoreCwd` is the owner's rule, and obeying it is correct.
-    // It is printed because obeying it silently means a directory whose transcripts never leave
-    // this machine cannot be found out about from anywhere.
-    let ignored = vibememory_cli::guard::TickState::read(&layout.engine_dir).ignored;
-    for directory in &ignored {
-        println!(
-            "left alone {} ({}) — {} transcript(s) stay on this machine only",
-            directory.enc, directory.reason, directory.transcripts
-        );
-    }
-    // Not a failure either: a session file that holds an agent token stays here by design, and
-    // what the person does is revoke the token.
-    for (path, file) in &vibememory_cli::held::Held::read(&layout.engine_dir).files {
-        println!(
-            "held     {} — holds agent token {}; stays on this machine since {}",
-            vibememory_core::terminal::printable(path),
-            file.tokens.iter().cloned().collect::<Vec<_>>().join(", "),
-            file.since
-        );
-    }
-    print_foreign_sessions(&layout);
+    print_kept_here(&layout);
     if let Some(mirror) = &mirror {
         println!("{}", mirror.describe());
         if mirror.is_fault() {
@@ -213,6 +194,7 @@ fn report(strict: bool, json: bool) -> ExitCode {
         None => {}
     }
     wrong += print_tokens(&tokens);
+    print_clients(&layout, &tokens);
     wrong += print_teams(&layout);
     print_advice(&layout, &config);
     if strict && wrong > 0 {
@@ -325,6 +307,32 @@ fn print_teams(layout: &Layout) -> usize {
     wrong
 }
 
+/// What stays on this machine by rule, and what other agents handed over: never a failure, and
+/// said because silence about it would look the same as nothing being there.
+fn print_kept_here(layout: &Layout) {
+    // Not a step and never a failure: `ignoreCwd` is the owner's rule, and obeying it is correct.
+    // It is printed because obeying it silently means a directory whose transcripts never leave
+    // this machine cannot be found out about from anywhere.
+    let ignored = vibememory_cli::guard::TickState::read(&layout.engine_dir).ignored;
+    for directory in &ignored {
+        println!(
+            "left alone {} ({}) — {} transcript(s) stay on this machine only",
+            directory.enc, directory.reason, directory.transcripts
+        );
+    }
+    // Not a failure either: a session file that holds an agent token stays here by design, and
+    // what the person does is revoke the token.
+    for (path, file) in &vibememory_cli::held::Held::read(&layout.engine_dir).files {
+        println!(
+            "held     {} — holds agent token {}; stays on this machine since {}",
+            vibememory_core::terminal::printable(path),
+            file.tokens.iter().cloned().collect::<Vec<_>>().join(", "),
+            file.since
+        );
+    }
+    print_foreign_sessions(layout);
+}
+
 /// The first line of `status` and `doctor`: which version runs, and a newer one the tick heard of.
 fn print_version(layout: &Layout) {
     match vibememory_cli::update::newer_known(layout) {
@@ -369,6 +377,19 @@ fn foreign_sessions(layout: &Layout) -> Vec<(String, String, usize, String)> {
         }
     }
     found
+}
+
+/// The agents a memory server started as here and that no kept token names: a client of the
+/// personal store needs no token, and this is the only place it shows.
+fn print_clients(layout: &Layout, tokens: &[vibememory_cli::credentials::KeptToken]) {
+    for (agent, stamp) in vibememory_cli::credentials::started_clients(&layout.engine_dir) {
+        if tokens.iter().all(|token| token.agent != agent) {
+            println!(
+                "client   {} \u{2014} a memory server started as this agent at {stamp}",
+                vibememory_core::terminal::printable(&agent)
+            );
+        }
+    }
 }
 
 /// The credentials section: each kept token, and what is wrong with its files. Answers how many
@@ -772,10 +793,32 @@ fn connect_personal(
         );
     }
     let installed = install(false);
+    print_agent_hints(layout);
     println!(
         "next:      open a new terminal, run vibememory doctor, and sign in to Claude Code again"
     );
     installed
+}
+
+/// The end of a `connect` that set up a store: the line that registers the memory server with
+/// Claude Code when it is not registered, and where the rest of the clients are told how.
+/// Registering stays the person's: every client keeps it in a file of its own.
+fn print_agent_hints(layout: &Layout) {
+    if let Ok(config) = read_config(layout) {
+        let registered = vibememory_cli::registrations::read(layout);
+        for line in vibememory_cli::registrations::advice(layout, &config, &registered) {
+            println!("mcp       {line}");
+        }
+    }
+    let others: Vec<&str> = vibememory_cli::mcp_config::CLIENTS
+        .iter()
+        .filter(|client| **client != vibememory_cli::mcp_config::Client::ClaudeCode)
+        .map(|client| client.name())
+        .collect();
+    println!(
+        "agents    memory for other agents: vibememory mcp-config <{}>",
+        others.join("|")
+    );
 }
 
 /// A machine key answer: the key kept and the team's store cloned, or why not — with the key's id
@@ -810,6 +853,7 @@ fn connect_key(
                     " (kept, now on the new key)"
                 }
             );
+            print_agent_hints(layout);
             println!(
                 "next:      vibememory route add <dir> --to {} for each project of the team, or move one with \
                  vibememory project move <dir> --to {}",
@@ -846,17 +890,14 @@ fn print_connected(
     let layout = layout();
     // with the engine here, the one local server reaches the team through the directories routed
     // to it; a server of the team's own would only make the agent guess between two memories
-    if let Ok(config) = read_config(&layout) {
+    if read_config(&layout).is_ok() {
         println!(
             "route     vibememory route add <dir> --to {}: the local memory server {} reaches the team in that \
              directory",
             grant.team,
             vibememory_cli::registrations::LOCAL_SERVER
         );
-        let registered = vibememory_cli::registrations::read(&layout);
-        for line in vibememory_cli::registrations::advice(&layout, &config, &registered) {
-            println!("mcp       {line}");
-        }
+        print_agent_hints(&layout);
         return;
     }
     println!("register with Claude Code:");
@@ -2085,6 +2126,31 @@ fn find_transcript(store: &std::path::Path, session_id: &str) -> Option<String> 
 }
 
 /// `tick` — fetch, merge what is safe to merge, push, and keep the store honest.
+/// `mcp-config [<client>]`: how to connect the memory server to a client on this machine, printed
+/// for a person to put into that client's own configuration.
+fn mcp_config_command(client: Option<&str>) -> ExitCode {
+    let Some(name) = client else {
+        print!("{}", vibememory_cli::mcp_config::overview());
+        return ExitCode::SUCCESS;
+    };
+    let Some(client) = vibememory_cli::mcp_config::Client::named(name) else {
+        eprint!(
+            "mcp-config: no client {:?}\n{}",
+            vibememory_core::terminal::printable(name),
+            vibememory_cli::mcp_config::overview()
+        );
+        return ExitCode::from(2);
+    };
+    print!(
+        "{}",
+        vibememory_cli::mcp_config::instructions(
+            client,
+            &vibememory_cli::mcp_config::Machine::of(&layout())
+        )
+    );
+    ExitCode::SUCCESS
+}
+
 /// `update`: the newest release from the host, installed over this one by its own `install`.
 fn update_command() -> ExitCode {
     let layout = layout();
@@ -2931,6 +2997,10 @@ fn report_json(
         "credentials": tokens_json(tokens),
         "held": held_json(&layout.engine_dir),
         "teams": teams_json(&teams),
+        "clients": vibememory_cli::credentials::started_clients(&layout.engine_dir)
+            .into_iter()
+            .map(|(agent, started)| serde_json::json!({ "agent": agent, "started": started }))
+            .collect::<Vec<_>>(),
         "agents": foreign_sessions(layout)
             .into_iter()
             .map(|(store, agent, sessions, newest)| serde_json::json!({
@@ -2958,7 +3028,8 @@ fn usage() {
     println!("vibememory {}", env!("CARGO_PKG_VERSION"));
     println!(
         "commands: status [--json], doctor [--json], install [--dry-run], \
-         update, connect --cabinet <address> [--agent <name>], disconnect <team>, hook <event>, \
+         update, mcp-config [<client>], connect --cabinet <address> [--agent <name>], \
+         disconnect <team>, hook <event>, \
          merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>, tick [--release-deletions], \
          relink <enc> <name> <cwd>, import <enc> <name> <cwd>, \
          session put --agent <name> --id <session-id> --cwd <dir> --from <file.jsonl> [--end], \

@@ -1240,10 +1240,75 @@ fn push_schedule_step(layout: &Layout, actions: &mut Vec<Action>) {
             (State::Satisfied, other) | (other, _) => other,
         }
     };
+    // the file alone says what would be handed to the scheduler, not that the scheduler has it: a
+    // refused registration leaves a perfect file behind and no tick at all
+    let state = with_registration(state, schedule_registered(layout));
     actions.push(Action {
         step: Step::Schedule,
         state,
     });
+}
+
+/// The schedule step once the scheduler has been asked: a file in place whose tick the scheduler
+/// does not hold is missing, and `install` hands it over again. `None` is a scheduler that was not
+/// asked — a redirected engine, a system without one this build knows.
+#[must_use]
+pub fn with_registration(file: State, registered: Option<Result<bool, String>>) -> State {
+    match (file, registered) {
+        (State::Satisfied, Some(Ok(false))) => State::Missing,
+        (State::Satisfied, Some(Err(reason))) => State::Unknown {
+            reason: format!("the scheduler could not be asked: {reason}"),
+        },
+        (file, _) => file,
+    }
+}
+
+/// Whether the system's scheduler holds the tick: the Task Scheduler's task on Windows, launchd's
+/// loaded agent on macOS, the enabled timer or the cron line on Linux. Only for the real engine,
+/// the one whose schedule `install` hands over.
+fn schedule_registered(layout: &Layout) -> Option<Result<bool, String>> {
+    if !is_real_engine(layout) {
+        return None;
+    }
+    let succeeds = |program: &str, args: &[&str]| {
+        std::process::Command::new(program)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .map_err(|error| format!("{program}: {error}"))
+    };
+    if cfg!(windows) {
+        return Some(succeeds(
+            "schtasks",
+            &["/Query", "/TN", SCHEDULED_TASK_NAME],
+        ));
+    }
+    if cfg!(target_os = "macos") {
+        let uid = std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .map_err(|error| format!("id: {error}"));
+        return Some(uid.and_then(|uid| {
+            let target = format!(
+                "gui/{}/{SCHEDULE_LABEL}",
+                String::from_utf8_lossy(&uid.stdout).trim()
+            );
+            succeeds("launchctl", &["print", &target])
+        }));
+    }
+    let timer = format!("{SYSTEMD_UNIT}.timer");
+    if succeeds("systemctl", &["--user", "is-enabled", &timer]).unwrap_or(false) {
+        return Some(Ok(true));
+    }
+    let crontab = std::process::Command::new("crontab").arg("-l").output();
+    Some(Ok(crontab.is_ok_and(|listed| {
+        String::from_utf8_lossy(&listed.stdout)
+            .lines()
+            .any(|line| line.ends_with(CRON_MARKER))
+    })))
 }
 
 /// Adds the MCP server step, and only when this machine has anything to do about it.

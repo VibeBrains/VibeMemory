@@ -31,6 +31,7 @@ pub mod install;
 pub mod links_file;
 pub mod local_only;
 pub mod managed;
+pub mod mcp_config;
 pub mod memory;
 pub mod merge_driver;
 pub mod merge_report;

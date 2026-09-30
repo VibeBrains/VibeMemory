@@ -48,6 +48,25 @@ pub fn record_client(engine_dir: &Path, agent: &str, stamp: &str) -> Result<(), 
         .map_err(|error| format!("{}: {error}", path.display()))
 }
 
+/// Every agent name a memory server started as on this machine, with when it last did, by name.
+/// The one list that knows each client — Claude Code, Codex, an IDE — without reading any client's
+/// configuration.
+#[must_use]
+pub fn started_clients(engine_dir: &Path) -> Vec<(String, String)> {
+    let Ok(entries) = std::fs::read_dir(engine_dir.join(CLIENTS_DIR)) else {
+        return Vec::new();
+    };
+    let mut clients: Vec<(String, String)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let agent = entry.file_name().to_string_lossy().into_owned();
+            client_started(engine_dir, &agent).map(|stamp| (agent, stamp))
+        })
+        .collect();
+    clients.sort();
+    clients
+}
+
 /// When a memory server last started as `agent`, if ever.
 #[must_use]
 pub fn client_started(engine_dir: &Path, agent: &str) -> Option<String> {

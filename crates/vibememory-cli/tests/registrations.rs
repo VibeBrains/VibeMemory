@@ -75,10 +75,13 @@ fn a_team_reached_only_by_its_own_server_is_told_to_route_first() {
     assert_eq!(registered.teams, vec!["acme".to_owned()]);
     assert!(!registered.local);
     let lines = advice(&layout, &config(), &registered);
+    // an engine outside its default place is named to the server, or it would look for another
     assert!(
-        lines
-            .iter()
-            .any(|line| line.contains("claude mcp add -s user vibememory")),
+        lines.iter().any(
+            |line| line.contains("claude mcp add -s user -e VIBEMEMORY_DIR=")
+                && line.contains(" vibememory -- ")
+                && line.ends_with("--agent claude-code")
+        ),
         "{lines:?}"
     );
     assert!(

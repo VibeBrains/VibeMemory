@@ -13,9 +13,6 @@ use crate::install::Layout;
 /// The name of the local server.
 pub const LOCAL_SERVER: &str = "vibememory";
 
-/// The agent the printed registration names.
-const AGENT: &str = "claude-code";
-
 /// What Claude Code has registered.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Registered {
@@ -78,8 +75,8 @@ pub fn advice(
     let mut lines = Vec::new();
     if !registered.local {
         lines.push(format!(
-            "the local memory server is not registered: claude mcp add -s user {LOCAL_SERVER} {} -- --agent {AGENT}",
-            crate::install::installed_named(layout, crate::install::MCP_BINARY).display()
+            "the local memory server is not registered: {}",
+            crate::mcp_config::claude_code_command(&crate::mcp_config::Machine::of(layout))
         ));
     }
     let routed: Vec<&str> = config.routes.patterns().map(|(_, team, _)| team).collect();

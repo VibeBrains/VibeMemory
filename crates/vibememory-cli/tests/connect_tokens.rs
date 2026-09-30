@@ -18,7 +18,7 @@ use std::fs;
 
 use support::TempDir;
 use vibememory_cli::connect::{claude_code_registration, disconnect, headers_of, keep_token};
-use vibememory_cli::credentials::{kept_tokens, record_client};
+use vibememory_cli::credentials::{kept_tokens, record_client, started_clients};
 use vibememory_cli::install::{Layout, Step, plan_binaries};
 use vibememory_core::claim::{Claim, TokenGrant, read_answer};
 
@@ -156,6 +156,17 @@ fn doctor_finds_the_token_and_says_when_others_can_read_it() {
         kept_tokens(&layout)[0].client_started.as_deref(),
         Some("2026-09-30T09:00:00Z"),
         "by the token's own agent name, not by any client that ran"
+    );
+    assert_eq!(
+        started_clients(&layout.engine_dir),
+        vec![
+            ("claude-code".to_owned(), "2026-09-30T09:00:00Z".to_owned()),
+            (
+                "deepseek-typo".to_owned(),
+                "2026-09-30T09:00:01Z".to_owned()
+            ),
+        ],
+        "every client that started a server, with a token or without"
     );
 
     #[cfg(unix)]

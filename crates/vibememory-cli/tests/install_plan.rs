@@ -1298,3 +1298,31 @@ fn an_earlier_installs_launch_agent_is_replaced_and_somebody_elses_is_not() {
         "not even one that appeared after the plan"
     );
 }
+
+#[test]
+fn a_schedule_file_the_scheduler_does_not_hold_is_not_in_place() {
+    use vibememory_cli::install::with_registration;
+    assert_eq!(
+        with_registration(State::Satisfied, Some(Ok(true))),
+        State::Satisfied
+    );
+    assert_eq!(
+        with_registration(State::Satisfied, Some(Ok(false))),
+        State::Missing,
+        "a perfect file and no tick: a registration the scheduler refused"
+    );
+    assert!(matches!(
+        with_registration(State::Satisfied, Some(Err("gone".to_owned()))),
+        State::Unknown { .. }
+    ));
+    assert_eq!(
+        with_registration(State::Satisfied, None),
+        State::Satisfied,
+        "a redirected engine hands nothing to a scheduler"
+    );
+    // a file that is not in place says so whatever the scheduler holds
+    assert_eq!(
+        with_registration(State::Missing, Some(Ok(true))),
+        State::Missing
+    );
+}
