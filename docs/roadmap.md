@@ -738,6 +738,10 @@
   чистые функции с гейтами; десять подделок. Исполнение — только на GPD, и там же главный открытый
   вопрос: не будет ли задание открывать консольное окно каждые две минуты.
   [knowledge](knowledge/design/windowsReadiness.md).
+- [x] **Тик на Windows без администратора** — ✅ (2026-09-27, next) первый `connect` на GPD получил от Планировщика
+  отказ в доступе: триггеры входа и разблокировки Windows без администратора не регистрирует, а таймер — да (замерено
+  на GPD). Задание теперь — один `TimeTrigger` каждые 2 минуты с `StartWhenAvailable`; гейт падает на триггере,
+  требующем администратора. [knowledge](knowledge/design/windowsReadiness.md).
 - [ ] `CLAUDE_CONFIG_DIR=%USERPROFILE%\.claude` (setx + Desktop Settings), `.claude.json`
   переезжает локально, `.credentials.json` не переносится (relogin), junction Desktop-стора
   снимается, реальный каталог в userData действующей установки (MSIX / Squirrel).

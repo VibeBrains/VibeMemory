@@ -1372,12 +1372,18 @@ pub const SCHEDULED_TASK_NAME: &str = "VibeMemory\\tick";
 /// variable.
 const HEADLESS_CONSOLE: &str = r"%windir%\System32\conhost.exe";
 
+/// When the clock trigger starts repeating: any moment in the past will do, so a fixed one.
+const SCHEDULED_TASK_START: &str = "2000-01-01T00:00:00";
+
 /// The task file `install` writes under the engine directory and hands the Task Scheduler.
 const SCHEDULED_TASK_FILE: &str = "tick-task.xml";
 
-/// The Task Scheduler task: after logon every two minutes, and at every unlock.
+/// The Task Scheduler task: every two minutes from a start long past, and at once after a missed run.
 ///
-/// The triggers are the ones `docs/spec/architecture.md` §5 named for Windows. `InteractiveToken`
+/// A clock trigger and nothing else: a user without elevation may not register a logon or an unlock
+/// trigger — the Task Scheduler answers "Access is denied" to both, and `install` runs unelevated.
+/// An unlock needs no trigger of its own either: `StartWhenAvailable` runs the missed tick at once,
+/// and the next is at most two minutes away. `InteractiveToken`
 /// runs it in the owner's session and with the owner's environment — git needs the ssh key and the
 /// `PATH` of that session. No second copy while one runs: the tick has its own lock, and a stack of
 /// waiting ticks after a sleep is exactly what launchd is told to avoid on macOS.
@@ -1392,6 +1398,7 @@ pub fn scheduled_task(layout: &Layout) -> String {
         "        <Interval>PT{}M</Interval>",
         TICK_INTERVAL_SECONDS / 60
     );
+    let start = format!("      <StartBoundary>{SCHEDULED_TASK_START}</StartBoundary>");
     let command = format!("      <Command>{HEADLESS_CONSOLE}</Command>");
     let arguments = format!(
         "      <Arguments>--headless &quot;{}&quot; tick</Arguments>",
@@ -1404,17 +1411,14 @@ pub fn scheduled_task(layout: &Layout) -> String {
         "    <Description>VibeMemory: keeps this machine's store in step with the others.</Description>",
         "  </RegistrationInfo>",
         "  <Triggers>",
-        "    <LogonTrigger>",
+        "    <TimeTrigger>",
         "      <Enabled>true</Enabled>",
+        start.as_str(),
         "      <Repetition>",
         interval.as_str(),
         "        <StopAtDurationEnd>false</StopAtDurationEnd>",
         "      </Repetition>",
-        "    </LogonTrigger>",
-        "    <SessionStateChangeTrigger>",
-        "      <Enabled>true</Enabled>",
-        "      <StateChange>SessionUnlock</StateChange>",
-        "    </SessionStateChangeTrigger>",
+        "    </TimeTrigger>",
         "  </Triggers>",
         "  <Principals>",
         r#"    <Principal id="Author">"#,

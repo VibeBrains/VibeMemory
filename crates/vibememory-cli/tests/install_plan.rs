@@ -1037,7 +1037,7 @@ fn git_bash_is_found_the_way_claude_code_finds_it() {
 }
 
 #[test]
-fn the_scheduled_task_runs_the_tick_after_logon_every_two_minutes_and_at_unlock() {
+fn the_scheduled_task_runs_the_tick_every_two_minutes_on_a_clock_trigger_alone() {
     let temp = TempDir::new("install-task");
     // `&` in a folder name: bare, it makes the task file unreadable to the Task Scheduler.
     let layout = Layout {
@@ -1046,9 +1046,9 @@ fn the_scheduled_task_runs_the_tick_after_logon_every_two_minutes_and_at_unlock(
     };
     let task = scheduled_task(&layout);
     for part in [
+        "<TimeTrigger>",
         "<Interval>PT2M</Interval>",
-        "<StateChange>SessionUnlock</StateChange>",
-        "<LogonTrigger>",
+        "<StartWhenAvailable>true</StartWhenAvailable>",
         "<LogonType>InteractiveToken</LogonType>",
         "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
         // one console nobody sees for the tick and every git it starts, not a window every two minutes
@@ -1060,6 +1060,17 @@ fn the_scheduled_task_runs_the_tick_after_logon_every_two_minutes_and_at_unlock(
         assert!(task.contains(part), "{part} is missing:\n{task}");
     }
     assert!(!task.contains("R&D"), "a bare ampersand:\n{task}");
+    // Without elevation the Task Scheduler refuses these with "Access is denied", and the whole task with them
+    for elevated in [
+        "<LogonTrigger>",
+        "<SessionStateChangeTrigger>",
+        "<BootTrigger>",
+    ] {
+        assert!(
+            !task.contains(elevated),
+            "{elevated} needs elevation:\n{task}"
+        );
+    }
 
     let bytes = utf16_with_bom(&task);
     assert_eq!(&bytes[..2], &[0xFF, 0xFE], "UTF-16LE says so up front");
