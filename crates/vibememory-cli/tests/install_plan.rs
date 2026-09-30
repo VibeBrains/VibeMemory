@@ -1138,3 +1138,31 @@ fn linux_runs_the_tick_from_a_user_timer_every_two_minutes_or_from_cron() {
         "{cron}"
     );
 }
+
+#[test]
+fn a_copy_an_earlier_install_moved_aside_is_removed_by_the_next() {
+    use vibememory_cli::install::installed_binary;
+
+    let temp = TempDir::new("install-aside");
+    let layout = layout(&temp);
+    let bin = installed_binary(&layout)
+        .parent()
+        .expect("bin directory")
+        .to_path_buf();
+    fs::create_dir_all(&bin).expect("bin");
+    let name = installed_binary(&layout)
+        .file_name()
+        .expect("name")
+        .to_string_lossy()
+        .into_owned();
+    // what Windows leaves when the running copy was renamed to make room
+    let aside = bin.join(format!("{name}.old-4242"));
+    fs::write(&aside, b"old").expect("aside");
+    let unrelated = bin.join("notes.old-4242");
+    fs::write(&unrelated, b"mine").expect("unrelated");
+
+    let applied = apply(&layout, &plan(&layout, &config(), &[]), false);
+    assert!(applied.is_complete(), "{:?}", applied.failed);
+    assert!(!aside.exists(), "the set-aside copy is gone");
+    assert!(unrelated.exists(), "only our binaries' copies are touched");
+}

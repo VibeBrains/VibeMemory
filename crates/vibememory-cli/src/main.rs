@@ -44,6 +44,7 @@ fn main() -> ExitCode {
             headers_command(&args.collect::<Vec<String>>())
         }
         Some("tick") => tick_command(&args.collect::<Vec<String>>()),
+        Some("update") => update_command(),
         Some("migrate") => migrate_command(&args.collect::<Vec<String>>()),
         Some("switch") => switch_command(&args.collect::<Vec<String>>()),
         Some("relink") => relink_command(&args.collect::<Vec<String>>(), false),
@@ -116,6 +117,9 @@ fn engine_configured(layout: &Layout) -> bool {
 fn report(strict: bool, json: bool) -> ExitCode {
     let layout = layout();
     let tokens = vibememory_cli::credentials::kept_tokens(&layout);
+    if !json {
+        print_version(&layout);
+    }
     if !engine_configured(&layout) {
         return report_without_engine(&layout, &tokens, strict, json);
     }
@@ -321,6 +325,17 @@ fn print_teams(layout: &Layout) -> usize {
     wrong
 }
 
+/// The first line of `status` and `doctor`: which version runs, and a newer one the tick heard of.
+fn print_version(layout: &Layout) {
+    match vibememory_cli::update::newer_known(layout) {
+        Some(newer) => println!(
+            "version  vibememory {} \u{2014} {newer} is out: vibememory update",
+            vibememory_cli::update::CURRENT
+        ),
+        None => println!("version  vibememory {}", vibememory_cli::update::CURRENT),
+    }
+}
+
 /// The sessions other agents handed over with `session put`, by store and agent: a wrapper that
 /// stopped working shows as a date that no longer moves.
 fn print_foreign_sessions(layout: &Layout) {
@@ -411,6 +426,8 @@ fn report_without_engine(
         .count();
     if json {
         let report = serde_json::json!({
+            "version": vibememory_cli::update::CURRENT,
+            "newerRelease": vibememory_cli::update::newer_known(layout),
             "engine": "notInstalled",
             "steps": steps_json(&actions),
             "stepsWrong": wrong_steps,
@@ -509,6 +526,9 @@ fn connect_command(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    if let Some(handed_over) = update_before_connect(&cabinet, args) {
+        return handed_over;
+    }
     let Some(code) = claim_code() else {
         return ExitCode::from(2);
     };
@@ -560,6 +580,16 @@ fn connect_command(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    keep_granted_token(&layout, &grant, agent.as_deref())
+}
+
+/// The end of a `connect` that brought a token: it is kept, and the line that registers the client
+/// is printed. An agent name asked for that is not the code's is said, not obeyed.
+fn keep_granted_token(
+    layout: &Layout,
+    grant: &vibememory_core::claim::TokenGrant,
+    agent: Option<&str>,
+) -> ExitCode {
     if let Some(agent) = agent
         && agent != grant.agent
     {
@@ -568,7 +598,7 @@ fn connect_command(args: &[String]) -> ExitCode {
             grant.agent, grant.agent
         );
     }
-    let kept = match vibememory_cli::connect::keep_token(&layout, &grant) {
+    let kept = match vibememory_cli::connect::keep_token(layout, grant) {
         Ok(kept) => kept,
         Err(error) => {
             eprintln!(
@@ -579,8 +609,66 @@ fn connect_command(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    print_connected(&grant, &kept);
+    print_connected(grant, &kept);
     ExitCode::SUCCESS
+}
+
+/// Before the code is asked for: when the cabinet's host publishes a newer release, installs it and
+/// runs `connect` again with the new program, which then asks for the code itself. A newer cabinet
+/// may hand out what an older engine cannot read, and a code is spent the moment it is read.
+///
+/// `None` when this program goes on: nothing newer, the host unreadable, or the update failing —
+/// said in one line, since the version running may well be enough.
+fn update_before_connect(cabinet: &str, args: &[String]) -> Option<ExitCode> {
+    if std::env::var_os(vibememory_cli::update::NO_SELF_UPDATE_VAR).is_some() {
+        return None;
+    }
+    let layout = layout();
+    let base = std::env::var(vibememory_cli::update::RELEASES_VAR)
+        .ok()
+        .filter(|base| !base.trim().is_empty())
+        .unwrap_or_else(|| vibememory_cli::update::base_of_cabinet(cabinet));
+    let newer = match vibememory_cli::update::latest(&base) {
+        Ok(version)
+            if vibememory_core::release::is_newer(&version, vibememory_cli::update::CURRENT) =>
+        {
+            version
+        }
+        Ok(_) => return None,
+        Err(error) => {
+            eprintln!(
+                "connect: could not ask for a newer release ({error}); going on with this one"
+            );
+            return None;
+        }
+    };
+    eprintln!(
+        "connect: vibememory {newer} is out (this is {}); updating first",
+        vibememory_cli::update::CURRENT
+    );
+    if let Err(error) = vibememory_cli::update::update(&layout, &base) {
+        eprintln!("connect: the update failed ({error}); going on with this version");
+        return None;
+    }
+    let installed = vibememory_cli::install::installed_binary(&layout);
+    let status = std::process::Command::new(&installed)
+        .arg("connect")
+        .args(args)
+        .env(vibememory_cli::update::NO_SELF_UPDATE_VAR, "1")
+        .status();
+    Some(match status {
+        Ok(status) => status
+            .code()
+            .and_then(|code| u8::try_from(code).ok())
+            .map_or(ExitCode::FAILURE, ExitCode::from),
+        Err(error) => {
+            eprintln!(
+                "connect: {} could not be started: {error}",
+                installed.display()
+            );
+            ExitCode::FAILURE
+        }
+    })
 }
 
 /// The claim code, asked for at the terminal or read from a pipe; `None` after saying why not.
@@ -631,6 +719,14 @@ fn print_claim_failure(
         eprintln!(
             "connect: the cabinet may have issued a token or a key for this code: look at the \
                  team's page and revoke the ones you do not recognise"
+        );
+    }
+    // an answer this version cannot read is most often one a newer version can
+    if matches!(failure, vibememory_core::claim::ClaimFailure::Malformed(_)) {
+        eprintln!(
+            "connect: this is vibememory {}, and it does not know this answer; `vibememory \
+             update`, then a new code",
+            vibememory_cli::update::CURRENT
         );
     }
 }
@@ -1519,6 +1615,12 @@ fn session_start_hook() -> ExitCode {
     for note in quarantine_notes(&layout.engine_dir) {
         notes.push(note);
     }
+    if let Some(newer) = vibememory_cli::update::newer_known(&layout) {
+        notes.push(format!(
+            "VibeMemory {newer} is out (this machine runs {}): `vibememory update` installs it.",
+            vibememory_cli::update::CURRENT
+        ));
+    }
     if let Some(message) = decision.additional_context() {
         notes.push(message);
     }
@@ -1983,6 +2085,29 @@ fn find_transcript(store: &std::path::Path, session_id: &str) -> Option<String> 
 }
 
 /// `tick` — fetch, merge what is safe to merge, push, and keep the store honest.
+/// `update`: the newest release from the host, installed over this one by its own `install`.
+fn update_command() -> ExitCode {
+    let layout = layout();
+    let base = vibememory_cli::update::releases_base(&layout);
+    match vibememory_cli::update::update(&layout, &base) {
+        Ok(vibememory_cli::update::Updated::Current(version)) => {
+            println!("vibememory {version} is the newest release");
+            ExitCode::SUCCESS
+        }
+        Ok(vibememory_cli::update::Updated::Installed(version)) => {
+            println!(
+                "updated: vibememory {} \u{2192} {version}",
+                vibememory_cli::update::CURRENT
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("update: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn tick_command(args: &[String]) -> ExitCode {
     // One run released from the deletion cap, and only one: passing a rail by weakening it in the
     // config would weaken it for every run after, which is how a guard quietly stops guarding.
@@ -2073,6 +2198,14 @@ fn tick_command(args: &[String]) -> ExitCode {
     // nothing would ever say so.
     if let Some(state) = mirror_watch(&layout, &config) {
         println!("mirror: {state}");
+    }
+    // Once a day, whether a newer release is out: the tick only asks and remembers, `SessionStart`
+    // and `doctor` say it, and installing stays a person's `vibememory update`.
+    let release_dir = vibememory_cli::update::releases_base(&layout);
+    if let Some(newer) =
+        vibememory_cli::update::check_if_due(&layout, &release_dir, epoch_seconds())
+    {
+        println!("update: vibememory {newer} is out \u{2014} vibememory update");
     }
     if failed {
         ExitCode::FAILURE
@@ -2787,6 +2920,8 @@ fn report_json(
         || tokens_wrong
         || teams_wrong;
     let report = serde_json::json!({
+        "version": vibememory_cli::update::CURRENT,
+        "newerRelease": vibememory_cli::update::newer_known(layout),
         "machineId": config.machine_id,
         "remote": config.remote,
         "steps": steps,
@@ -2823,9 +2958,10 @@ fn usage() {
     println!("vibememory {}", env!("CARGO_PKG_VERSION"));
     println!(
         "commands: status [--json], doctor [--json], install [--dry-run], \
-         connect --cabinet <address> [--agent <name>], disconnect <team>, hook <event>, \
+         update, connect --cabinet <address> [--agent <name>], disconnect <team>, hook <event>, \
          merge-driver <jsonl|keepboth> %O %A %B %P, forget <session-id>, tick [--release-deletions], \
          relink <enc> <name> <cwd>, import <enc> <name> <cwd>, \
+         session put --agent <name> --id <session-id> --cwd <dir> --from <file.jsonl> [--end], \
          migrate --from <dir> [--apply], switch --from <dir> [--apply|--rollback], --version"
     );
 }

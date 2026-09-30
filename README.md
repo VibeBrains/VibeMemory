@@ -21,7 +21,7 @@ Codex, Gemini CLI, Cursor, Zed, Cline) читает и пишет ту же па
 
 - **Движок `vibememory`** — один бинарь (Rust) под macOS и Windows: хуки Claude Code, фоновый
   тик, git-транспорт с детерминированным слиянием транскриптов, реконсиляция ссылок,
-  миграция, `doctor`.
+  миграция, `doctor`, обновление себя одной командой `vibememory update`.
 - **MCP-сервер памяти** — `memory_search / get / save / update` для любого агента поверх того
   же стора; сессии любого агента ложатся в общую историю через `vibememory session put` и ищутся
   `history_search` наравне с сессиями Claude Code.

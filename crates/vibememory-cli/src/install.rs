@@ -997,6 +997,51 @@ fn binary_state(layout: &Layout) -> State {
     }
 }
 
+/// Where a running copy of a binary is moved to make room for the new one.
+const SET_ASIDE_MARK: &str = ".old-";
+
+/// Puts `temporary` where `target` is, by a rename.
+///
+/// On Windows a program that is running cannot be renamed over — the `update` that installs, the
+/// memory server a client keeps open — but it can itself be renamed. The running copy then moves
+/// aside under a name of its own and runs on from there, the new one takes its place, and the next
+/// install removes what is left.
+fn replace_with(temporary: &Path, target: &Path) -> Result<(), String> {
+    match std::fs::rename(temporary, target) {
+        Ok(()) => Ok(()),
+        Err(error) if cfg!(windows) && target.exists() => {
+            let mut name = target.file_name().unwrap_or_default().to_os_string();
+            name.push(format!("{SET_ASIDE_MARK}{}", std::process::id()));
+            let aside = target.with_file_name(name);
+            std::fs::rename(target, &aside)
+                .map_err(|_| format!("{}: {error}", target.display()))?;
+            std::fs::rename(temporary, target).map_err(|second| {
+                let _ = std::fs::rename(&aside, target);
+                format!("{}: {second}", target.display())
+            })
+        }
+        Err(error) => Err(format!("{}: {error}", target.display())),
+    }
+}
+
+/// Removes the copies an earlier install moved aside. One still running stays until a later run.
+fn remove_set_aside(target: &Path) {
+    let (Some(dir), Some(name)) = (target.parent(), target.file_name()) else {
+        return;
+    };
+    let mut prefix = name.to_os_string();
+    prefix.push(SET_ASIDE_MARK);
+    let prefix = prefix.to_string_lossy().into_owned();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Copies this binary into the engine directory, through a temporary file and a rename so a
 /// hook that fires mid-copy runs either the old binary or the new one, never half of one.
 fn install_binary(layout: &Layout) -> Result<(), String> {
@@ -1005,6 +1050,7 @@ fn install_binary(layout: &Layout) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
+    remove_set_aside(&target);
     let temporary = target.with_extension("new");
     std::fs::copy(&source, &temporary).map_err(|e| e.to_string())?;
     #[cfg(unix)]
@@ -1013,7 +1059,7 @@ fn install_binary(layout: &Layout) -> Result<(), String> {
         std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o755))
             .map_err(|e| e.to_string())?;
     }
-    std::fs::rename(&temporary, &target).map_err(|e| e.to_string())?;
+    replace_with(&temporary, &target)?;
     // Installed is not the same as working. On macOS a binary written over in place loses its
     // signature and the kernel kills it with SIGKILL — seen on this machine, from a careless
     // `cp` — and the hooks that call it would then fail on every session with nothing to read.
@@ -1194,6 +1240,7 @@ pub fn install_named(layout: &Layout, name: &str, source: &Path) -> Result<(), S
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
+    remove_set_aside(&target);
     let temporary = target.with_extension("new");
     std::fs::copy(source, &temporary).map_err(|e| e.to_string())?;
     #[cfg(unix)]
@@ -1206,7 +1253,7 @@ pub fn install_named(layout: &Layout, name: &str, source: &Path) -> Result<(), S
     // been executed made the kernel kill every later run with SIGKILL and nothing on stderr,
     // while `codesign --verify` kept calling the file valid on disk. A rename makes a new inode
     // and the problem cannot arise.
-    std::fs::rename(&temporary, &target).map_err(|e| e.to_string())?;
+    replace_with(&temporary, &target)?;
     let bytes = std::fs::read(source).map_err(|e| e.to_string())?;
     std::fs::write(source_note_named(layout, name), crate::sha256::hex(&bytes))
         .map_err(|e| e.to_string())?;
