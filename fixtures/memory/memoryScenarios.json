@@ -97,6 +97,49 @@
       }
     },
     {
+      "id": "rivalNameIsPortable",
+      "provenance": "observed",
+      "note": "A version starts with the moment it was written, and Windows takes no `:` in a file name: a personal store holding `….rival-2026-09-23T18:58:39Z-….md` cloned on Windows and stopped at the checkout (2026-09-27). The rival file's name carries `-` where the version has `:`; the version inside the file stays whole, and a rival file under the old name is stale.",
+      "journal": [
+        "{\"uuid\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"The base decides membership.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-03T10:02:00Z\"}}",
+        "{\"uuid\": \"2026-09-23T18:58:39Z-mac\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Mac wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-23T19:00:00Z\"}}",
+        "{\"uuid\": \"2026-09-23T19:46:47Z-gpd\", \"parent\": \"e3\", \"action\": \"upsert\", \"record\": {\"id\": \"merge-rules\", \"kind\": \"project\", \"project\": \"VibeMemory\", \"description\": \"one line about merge rules\", \"body\": \"Windows wrote this one.\", \"links\": [], \"agent\": \"claude-code\", \"createdAt\": \"2026-09-03T10:02:00Z\", \"updatedAt\": \"2026-09-23T19:00:00Z\"}}"
+      ],
+      "expect": {
+        "records": [
+          {
+            "id": "merge-rules",
+            "version": "2026-09-23T18:58:39Z-mac",
+            "rivals": [
+              "2026-09-23T19:46:47Z-gpd"
+            ]
+          }
+        ],
+        "forgotten": [],
+        "unreadable": 0,
+        "fileNames": [
+          "MEMORY.md",
+          "merge-rules.md",
+          "merge-rules.rival-2026-09-23T19-46-47Z-gpd.md"
+        ],
+        "import": {
+          "stamp": "2026-09-27T12:00:00Z",
+          "agent": "claude-code",
+          "documents": [
+            {
+              "name": "merge-rules.rival-2026-09-23T19:46:47Z-gpd.md",
+              "text": "---\nname: merge-rules\ndescription: one line about merge rules\nmetadata:\n  type: project\n  project: VibeMemory\n  agent: claude-code\n  created: 2026-09-03T10:02:00Z\n  updated: 2026-09-23T19:00:00Z\n  version: 2026-09-23T19:46:47Z-gpd\n---\n\nWindows wrote this one.\n"
+            }
+          ],
+          "events": [],
+          "rejected": [],
+          "stale": [
+            "merge-rules.rival-2026-09-23T19:46:47Z-gpd.md"
+          ]
+        }
+      }
+    },
+    {
       "id": "deleteForgets",
       "provenance": "computed",
       "note": "Nothing was written after the delete saw the record, so the record stops being projected — and the journal still holds every version of it.",

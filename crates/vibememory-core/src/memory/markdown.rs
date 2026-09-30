@@ -74,9 +74,24 @@ pub fn document_name(id: &RecordId) -> String {
 }
 
 /// `<id>.rival-<version>.md` — a version written at the same time as the one in `<id>.md`.
+///
+/// A version starts with the moment it was written, `2026-09-23T18:58:39Z`, and Windows takes no
+/// `:` in a file name: a store holding such a file cloned on Windows and stopped at the checkout.
+/// Every character Windows refuses becomes `-` in the name; the version inside the file is whole.
+/// A rival file under the old name is no longer the name of its version, and goes as stale.
 fn rival_name(id: &RecordId, version: &str) -> String {
+    let portable: String = version
+        .chars()
+        .map(|c| {
+            if matches!(c, ':' | '<' | '>' | '"' | '|' | '?' | '*' | '/' | '\\') || c.is_control() {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
     format!(
-        "{}{RIVAL_MARKER}{version}.{DOCUMENT_EXTENSION}",
+        "{}{RIVAL_MARKER}{portable}.{DOCUMENT_EXTENSION}",
         id.as_str()
     )
 }

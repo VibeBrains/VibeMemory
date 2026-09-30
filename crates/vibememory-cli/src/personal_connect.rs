@@ -112,8 +112,12 @@ pub fn connect(
     let ssh = ssh_command(&state_dir);
     let cloned = if store.join(".git").exists() {
         set_clone(&store, &ssh, &record.git_url()).map_err(failed)?;
+        if existing.is_none() {
+            complete_checkout(&store).map_err(failed)?;
+        }
         false
     } else {
+        crate::team_connect::announce_size(&state_dir, &record);
         clone_main(&store, &ssh, &record.git_url()).map_err(failed)?;
         true
     };
@@ -132,24 +136,54 @@ pub fn connect(
     })
 }
 
+/// Lays out every file of the store's own history on a machine the engine never ran on: a clone
+/// that stopped at its checkout — a name the system refused, a closed terminal — holds the history
+/// but not the files, and the tick would read every missing file as a deletion. With no
+/// `config.json` nothing here was ever the machine's own work, so the history is the truth.
+fn complete_checkout(store: &Path) -> Result<(), String> {
+    // a store with no history yet has nothing to lay out
+    let born = crate::git::run_capturing(
+        crate::git::command(store, &["rev-parse", "--verify", "--quiet", "HEAD"]),
+        CLONE_TIMEOUT,
+    )?;
+    if born.is_err() {
+        return Ok(());
+    }
+    match crate::git::run_capturing(
+        crate::git::command(store, &["checkout", "--force", "HEAD", "--", "."]),
+        CLONE_TIMEOUT,
+    )? {
+        Ok(_) => Ok(()),
+        Err(stderr) => Err(format!(
+            "the store's files could not be laid out: {}",
+            vibememory_core::terminal::printable(&stderr)
+        )),
+    }
+}
+
 /// Clones the personal store as the main store, with its own ssh and the store's settings from the
 /// first moment.
 fn clone_main(store: &Path, ssh: &str, url: &str) -> Result<(), String> {
     let parent = store.parent().ok_or("the store has no parent directory")?;
     std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    // git's own progress goes to the person: a clone of every transcript takes minutes, and a
+    // silent terminal reads as a hang
     let mut command = crate::git::command(
         parent,
-        &["-c", &format!("core.sshCommand={ssh}"), "clone", "--quiet"],
+        &[
+            "-c",
+            &format!("core.sshCommand={ssh}"),
+            "clone",
+            "--progress",
+        ],
     );
     for (key, value, _why) in crate::install::GIT_SETTINGS {
         command.arg("-c").arg(format!("{key}={value}"));
     }
     command.arg(url).arg(store);
-    if let Err(stderr) = crate::git::run_capturing(command, CLONE_TIMEOUT)? {
-        return Err(format!(
-            "the personal store could not be cloned: {}",
-            vibememory_core::terminal::printable(&stderr)
-        ));
+    command.stderr(std::process::Stdio::inherit());
+    if crate::git::run_capturing(command, CLONE_TIMEOUT)?.is_err() {
+        return Err("the personal store could not be cloned: git said why above".to_owned());
     }
     set_clone(store, ssh, url)
 }

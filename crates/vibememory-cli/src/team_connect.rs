@@ -179,6 +179,7 @@ pub fn keep_key(
         set_clone(&clone, &ssh, &record.git_url()).map_err(failed)?;
         false
     } else {
+        announce_size(&state_dir, &record);
         clone_store(&state_dir, &record, &record.git_url()).map_err(failed)?;
         true
     };
@@ -200,22 +201,84 @@ pub(crate) fn clone_store(
 ) -> Result<PathBuf, String> {
     let clone = state_dir.join("store");
     let ssh = ssh_command(state_dir);
+    // git's own progress goes to the person: a store with sessions takes minutes, and a silent
+    // terminal reads as a hang
     let mut command = crate::git::command(
         state_dir,
-        &["-c", &format!("core.sshCommand={ssh}"), "clone", "--quiet"],
+        &[
+            "-c",
+            &format!("core.sshCommand={ssh}"),
+            "clone",
+            "--progress",
+        ],
     );
     for (key, value, _why) in crate::install::GIT_SETTINGS {
         command.arg("-c").arg(format!("{key}={value}"));
     }
     command.arg(source).arg(&clone);
-    if let Err(stderr) = crate::git::run_capturing(command, CLONE_TIMEOUT)? {
-        return Err(format!(
-            "the team's store could not be cloned: {}",
-            vibememory_core::terminal::printable(&stderr)
-        ));
+    command.stderr(std::process::Stdio::inherit());
+    if crate::git::run_capturing(command, CLONE_TIMEOUT)?.is_err() {
+        return Err("the team's store could not be cloned: git said why above".to_owned());
     }
     set_clone(&clone, &ssh, &record.git_url())?;
     Ok(clone)
+}
+
+/// Says how big a store is before it is cloned, from the host's own `status` over the new key: the
+/// clone then shows git's progress against a number the person already knows. Silent when the
+/// host does not say — the clone goes ahead either way.
+pub fn announce_size(state_dir: &Path, record: &StoreRecord) {
+    let output = Command::new("ssh")
+        .args(["-F", "none", "-i"])
+        .arg(state_dir.join(KEY_FILE))
+        .args([
+            "-o",
+            "IdentitiesOnly=yes",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "-o",
+        ])
+        .arg(format!(
+            "UserKnownHostsFile={}",
+            state_dir.join(KNOWN_HOSTS_FILE).display()
+        ))
+        .arg(format!("{}@{}", record.ssh_user, record.ssh_host))
+        .arg("status")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
+    let size = output
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| serde_json::from_slice::<serde_json::Value>(&output.stdout).ok())
+        .and_then(|status| {
+            status
+                .get("teams")?
+                .get(&record.team)?
+                .get("sizeBytes")?
+                .as_u64()
+        });
+    if let Some(bytes) = size {
+        println!(
+            "cloning:   {} on the host — git shows its progress below",
+            readable_size(bytes)
+        );
+    }
+}
+
+/// Bytes as a person reads them: MiB below a GiB, GiB with one decimal above.
+#[must_use]
+pub fn readable_size(bytes: u64) -> String {
+    const MIB: u64 = 1024 * 1024;
+    const GIB: u64 = 1024 * MIB;
+    if bytes < GIB {
+        format!("{} MiB", bytes.div_ceil(MIB))
+    } else {
+        let tenths = (bytes * 10).div_ceil(GIB);
+        format!("{}.{} GiB", tenths / 10, tenths % 10)
+    }
 }
 
 /// The clone's own ssh: this team's key and host keys only, the user's configuration not read,

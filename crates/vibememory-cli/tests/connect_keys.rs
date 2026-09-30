@@ -338,3 +338,29 @@ fn a_machine_id_is_a_name_every_system_takes_as_a_directory() {
     assert_eq!(machine_id(Some(" gpd ")).as_deref(), Some("gpd"));
     assert_eq!(machine_id(Some("a/b")), None);
 }
+
+#[test]
+fn a_clone_that_stopped_at_its_checkout_is_laid_out_on_a_machine_the_engine_never_ran_on() {
+    let temp = TempDir::new("connect-personal-partial");
+    let layout = layout(&temp);
+    let store = layout.store();
+    fs::create_dir_all(&store).unwrap();
+    git(&store, &["init", "--quiet"]);
+    git(&store, &["config", "user.email", "t@example.invalid"]);
+    git(&store, &["config", "user.name", "t"]);
+    fs::create_dir_all(store.join("projects/Acme")).unwrap();
+    fs::write(store.join("projects/Acme/s.jsonl"), "{}\n").unwrap();
+    git(&store, &["add", "-A"]);
+    git(&store, &["commit", "--quiet", "-m", "history"]);
+    git(&store, &["remote", "add", "origin", "old@host:store.git"]);
+    // what a checkout refused on Windows leaves: the history, not the files
+    fs::remove_file(store.join("projects/Acme/s.jsonl")).unwrap();
+
+    let pending = PendingKey::make(&layout).unwrap();
+    vibememory_cli::personal_connect::connect(&layout, &personal_grant(), pending, Some("gpd"))
+        .unwrap();
+    assert!(
+        store.join("projects/Acme/s.jsonl").is_file(),
+        "the history's files are laid out"
+    );
+}
