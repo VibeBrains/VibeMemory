@@ -116,7 +116,7 @@ pub struct Stopped {
 /// changed — unless the snapshot holds an agent token, as `kept` recognises one.
 ///
 /// `relative` is the path inside the store, `/`-separated. `stamp` is the moment, from the
-/// caller.
+/// caller. `agent` signs the commit: the author name is the machine, from the store's settings.
 ///
 /// # Errors
 ///
@@ -128,6 +128,7 @@ pub fn commit_snapshot(
     relative: &str,
     stamp: &str,
     kept: &crate::held::Kept,
+    agent: &str,
 ) -> Result<Stopped, String> {
     let bytes = match std::fs::read(transcript) {
         Ok(bytes) => bytes,
@@ -172,11 +173,14 @@ pub fn commit_snapshot(
 
     let committed = if index_differs_from_head(store)? {
         let message = format!("vibememory: {relative} at {stamp}");
-        git::run_with_timeout(
-            git::command(store, &["commit", "--quiet", "-m", &message]),
-            TIMEOUT,
-        )?
-        .ok_or_else(|| "git refused to commit".to_owned())?;
+        // the store's settings sign as this machine and the engine; the session is the agent's
+        let mut commit = git::command(store, &["commit", "--quiet", "-m", &message]);
+        let email = crate::install::signature_email(agent);
+        commit
+            .env("GIT_AUTHOR_EMAIL", &email)
+            .env("GIT_COMMITTER_EMAIL", &email);
+        git::run_with_timeout(commit, TIMEOUT)?
+            .ok_or_else(|| "git refused to commit".to_owned())?;
         true
     } else {
         false

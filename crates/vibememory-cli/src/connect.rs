@@ -69,6 +69,7 @@ pub fn ask_cabinet(
     cabinet: &str,
     code: &str,
     public_key: Option<&str>,
+    machine: Option<&str>,
 ) -> Result<CabinetReply, String> {
     let url = format!("{cabinet}{CLAIM_PATH}");
     let protocol = if cabinet.starts_with("https://") {
@@ -101,11 +102,17 @@ pub fn ask_cabinet(
         .map_err(|error| format!("curl could not be started: {error}"))?;
     // a fresh public key goes with every code: only the answer says whether the code was for a
     // machine, and a key the cabinet did not take is dropped
-    let body = match public_key {
-        Some(key) => serde_json::json!({ "code": code, "publicKey": key }),
-        None => serde_json::json!({ "code": code }),
+    // the machine's name goes with a code for an agent too: the cabinet shows on which machine
+    // each token lives, and two agents of one name on two machines are otherwise one row twice
+    let mut body = serde_json::Map::new();
+    body.insert("code".to_owned(), code.into());
+    if let Some(key) = public_key {
+        body.insert("publicKey".to_owned(), key.into());
     }
-    .to_string();
+    if let Some(machine) = machine {
+        body.insert("machine".to_owned(), machine.into());
+    }
+    let body = serde_json::Value::Object(body).to_string();
     child
         .stdin
         .take()

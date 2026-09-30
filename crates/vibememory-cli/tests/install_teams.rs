@@ -57,6 +57,9 @@ fn a_teams_clone_gets_the_merge_drivers_and_the_machines_directory() {
     let clone = layout.team_store(&record.team);
     fs::create_dir_all(&clone).unwrap();
     git_repo_with_commit(&clone);
+    // a clone `connect` makes has no identity of its own: the harness's is only for its commit
+    support::git(&clone, &["config", "--unset", "user.name"]);
+    support::git(&clone, &["config", "--unset", "user.email"]);
     // as `connect` clones it: with the store's settings from the first moment
     for (key, value, _why) in vibememory_cli::install::GIT_SETTINGS {
         support::git(&clone, &["config", key, value]);
@@ -79,6 +82,15 @@ fn a_teams_clone_gets_the_merge_drivers_and_the_machines_directory() {
     let applied = apply(&layout, &before, false);
     assert!(applied.failed.is_empty(), "{:?}", applied.failed);
     assert!(setting(&clone, "merge.vibememory-jsonl.driver").is_some());
+    // every commit of the engine into the team's store is signed by this machine's name in it
+    assert_eq!(
+        setting(&clone, "user.name").as_deref(),
+        Some(record.store_name.as_str())
+    );
+    assert_eq!(
+        setting(&clone, "user.email").as_deref(),
+        Some("vibememory@vibememory.invalid")
+    );
     assert!(
         clone
             .join("machines")

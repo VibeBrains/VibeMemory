@@ -107,7 +107,14 @@ pub fn put(layout: &Layout, config: &Config, request: &Request<'_>) -> Result<Pl
     place(&store.state_dir, &target, &bytes)?;
 
     let kept = crate::held::Kept::read(&store.state_dir);
-    let stopped = stop::commit_snapshot(&store.clone, &target, &relative, request.stamp, &kept)?;
+    let stopped = stop::commit_snapshot(
+        &store.clone,
+        &target,
+        &relative,
+        request.stamp,
+        &kept,
+        request.agent,
+    )?;
     if stopped.held.is_empty() {
         crate::held::release(&store.state_dir, &relative)?;
     } else {

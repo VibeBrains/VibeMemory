@@ -26,6 +26,7 @@ use vibememory_cli::hook::stop::{
 
 const STAMP: &str = "2026-09-05T09:00:00Z";
 const RELATIVE: &str = "projects/Project/session.jsonl";
+const AGENT: &str = "claude-code";
 
 fn store(temp: &TempDir) -> std::path::PathBuf {
     let store = temp.dir("store");
@@ -62,8 +63,15 @@ fn a_half_written_record_is_never_committed() {
     let transcript = temp.path().join("live.jsonl");
     fs::write(&transcript, live_transcript()).expect("write transcript");
 
-    let stopped =
-        commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default()).expect("commit");
+    let stopped = commit_snapshot(
+        &store,
+        &transcript,
+        RELATIVE,
+        STAMP,
+        &Kept::default(),
+        AGENT,
+    )
+    .expect("commit");
     assert!(stopped.committed);
     assert_eq!(stopped.truncated, 18, "the unfinished record is left out");
 
@@ -92,8 +100,15 @@ fn a_snapshot_holding_an_agent_token_is_not_committed() {
     bytes.extend_from_slice(token_case("transcriptToolResult").as_bytes());
     fs::write(&transcript, bytes).expect("write transcript");
 
-    let stopped =
-        commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default()).expect("commit");
+    let stopped = commit_snapshot(
+        &store,
+        &transcript,
+        RELATIVE,
+        STAMP,
+        &Kept::default(),
+        AGENT,
+    )
+    .expect("commit");
     assert_eq!(
         stopped.held.into_iter().collect::<Vec<_>>(),
         ["tk_7q2m9x4a"],
@@ -130,7 +145,15 @@ fn the_live_file_is_never_staged() {
     let transcript = temp.path().join("live.jsonl");
     fs::write(&transcript, live_transcript()).expect("write transcript");
 
-    commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default()).expect("commit");
+    commit_snapshot(
+        &store,
+        &transcript,
+        RELATIVE,
+        STAMP,
+        &Kept::default(),
+        AGENT,
+    )
+    .expect("commit");
 
     let output = std::process::Command::new("git")
         .args(["ls-tree", "-r", "--name-only", "HEAD"])
@@ -153,12 +176,26 @@ fn a_session_that_added_nothing_makes_no_commit() {
     fs::write(&transcript, live_transcript()).expect("write transcript");
 
     assert!(
-        commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default())
-            .expect("first")
-            .committed
+        commit_snapshot(
+            &store,
+            &transcript,
+            RELATIVE,
+            STAMP,
+            &Kept::default(),
+            AGENT
+        )
+        .expect("first")
+        .committed
     );
-    let second =
-        commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default()).expect("second");
+    let second = commit_snapshot(
+        &store,
+        &transcript,
+        RELATIVE,
+        STAMP,
+        &Kept::default(),
+        AGENT,
+    )
+    .expect("second");
     assert!(
         !second.committed,
         "an unchanged transcript may not produce an empty commit every two minutes"
@@ -175,6 +212,7 @@ fn a_session_that_never_wrote_anything_is_not_an_error() {
         RELATIVE,
         STAMP,
         &Kept::default(),
+        AGENT,
     )
     .expect("a missing transcript is normal");
     assert!(!stopped.committed && stopped.blob.is_none());
@@ -258,7 +296,15 @@ fn the_store_repository_is_left_on_a_clean_index() {
     let store = store(&temp);
     let transcript = temp.path().join("live.jsonl");
     fs::write(&transcript, live_transcript()).expect("write");
-    commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default()).expect("commit");
+    commit_snapshot(
+        &store,
+        &transcript,
+        RELATIVE,
+        STAMP,
+        &Kept::default(),
+        AGENT,
+    )
+    .expect("commit");
 
     // Nothing may be left staged behind us: the next commit of the tick would carry it blindly.
     git(&store, &["diff-index", "--quiet", "--cached", "HEAD", "--"]);
@@ -307,7 +353,15 @@ fn a_push_waits_for_its_debounce_and_reaches_the_remote() {
 
     let transcript = temp.path().join("live.jsonl");
     fs::write(&transcript, live_transcript()).expect("write");
-    commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default()).expect("commit");
+    commit_snapshot(
+        &store,
+        &transcript,
+        RELATIVE,
+        STAMP,
+        &Kept::default(),
+        AGENT,
+    )
+    .expect("commit");
     git(
         &store,
         &["push", "--quiet", "--set-upstream", "origin", "main"],
@@ -339,7 +393,15 @@ fn a_store_without_a_remote_does_not_bother_the_session() {
     let engine = temp.dir("engine");
     let transcript = temp.path().join("live.jsonl");
     fs::write(&transcript, live_transcript()).expect("write");
-    commit_snapshot(&store, &transcript, RELATIVE, STAMP, &Kept::default()).expect("commit");
+    commit_snapshot(
+        &store,
+        &transcript,
+        RELATIVE,
+        STAMP,
+        &Kept::default(),
+        AGENT,
+    )
+    .expect("commit");
 
     push_if_due(&store, &engine, 1_000_000, Duration::from_secs(20))
         .expect("a missing remote is not an error the session should hear about");
@@ -384,4 +446,30 @@ fn a_session_is_live_from_its_start_not_from_its_first_stop() {
     let live: Live =
         serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("parse");
     assert_eq!(live.sessions.len(), 1);
+}
+
+#[test]
+fn a_snapshot_is_signed_by_the_agent_whose_session_it_is() {
+    let temp = TempDir::new("stop-signed");
+    let store = store(&temp);
+    let transcript = temp.path().join("live.jsonl");
+    fs::write(&transcript, live_transcript()).expect("write transcript");
+    commit_snapshot(
+        &store,
+        &transcript,
+        RELATIVE,
+        STAMP,
+        &Kept::default(),
+        "dsh-desktop",
+    )
+    .expect("commit");
+    let output = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%ae"])
+        .current_dir(&store)
+        .output()
+        .expect("git log");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "dsh-desktop@vibememory.invalid"
+    );
 }

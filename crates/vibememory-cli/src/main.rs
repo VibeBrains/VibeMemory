@@ -556,10 +556,16 @@ fn connect_command(args: &[String]) -> ExitCode {
     let layout = layout();
     // a key goes with every code; without ssh-keygen only a code for a machine is refused
     let pending = vibememory_cli::team_connect::PendingKey::make(&layout).ok();
+    // the name the machine goes by in the store, or its network name on a machine without one
+    let machine = read_config(&layout).map_or_else(
+        |_| vibememory_cli::personal_connect::machine_id(machine_id.as_deref()),
+        |config| Some(config.machine_id),
+    );
     let reply = match vibememory_cli::connect::ask_cabinet(
         &cabinet,
         &code,
         pending.as_ref().map(|key| key.public.as_str()),
+        machine.as_deref(),
     ) {
         Ok(reply) => reply,
         Err(error) => {
@@ -1739,7 +1745,14 @@ fn session_progress_hook(ended: bool) -> ExitCode {
     let stamp = vibememory_cli::clock::now();
 
     let kept = vibememory_cli::held::Kept::read(&owner.state_dir);
-    let stopped = match commit_snapshot(&store, &real, &relative, &stamp, &kept) {
+    let stopped = match commit_snapshot(
+        &store,
+        &real,
+        &relative,
+        &stamp,
+        &kept,
+        vibememory_core::foreign::CLAUDE_CODE,
+    ) {
         Ok(stopped) => stopped,
         Err(error) => {
             return say(&format!(

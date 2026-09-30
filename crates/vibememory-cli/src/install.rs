@@ -15,6 +15,20 @@ use vibememory_core::naming::PathSyntax;
 
 use crate::config::Config;
 
+/// The agent an engine commit is signed with when no one agent made it: the tick's sweep, an install.
+pub const ENGINE_AGENT: &str = "vibememory";
+
+/// The mail domain of an engine commit's signature: reserved, so no signature reaches anyone.
+pub const SIGNATURE_DOMAIN: &str = "vibememory.invalid";
+
+/// The mail an engine commit is signed with: the agent whose work it is, before the domain. The
+/// author name is the machine. The host reads both back into its report, and the cabinet shows
+/// which agent on which machine last wrote into a project.
+#[must_use]
+pub fn signature_email(agent: &str) -> String {
+    format!("{agent}@{SIGNATURE_DOMAIN}")
+}
+
 /// Git settings the store repository must carry, with the reason each one exists.
 pub const GIT_SETTINGS: &[(&str, &str, &str)] = &[
     (
@@ -370,7 +384,7 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
     let store = layout.store();
     let mut actions = Vec::new();
 
-    push_git_settings(layout, &store, None, &mut actions);
+    push_git_settings(layout, &store, None, &config.machine_id, &mut actions);
     actions.push(Action {
         step: Step::Gitattributes,
         state: file_state(&store.join(".gitattributes"), GITATTRIBUTES),
@@ -1149,9 +1163,16 @@ fn install_binary(layout: &Layout) -> Result<(), String> {
     }
 }
 
-/// Adds the git settings of the store: the fixed ones, then the merge drivers, whose lines name
-/// this machine's binary.
-fn push_git_settings(layout: &Layout, store: &Path, team: Option<&str>, actions: &mut Vec<Action>) {
+/// Adds the git settings of the store: the fixed ones, the signature every commit of the engine
+/// carries — this machine by its name in the store — then the merge drivers, whose lines name this
+/// machine's binary.
+fn push_git_settings(
+    layout: &Layout,
+    store: &Path,
+    team: Option<&str>,
+    machine: &str,
+    actions: &mut Vec<Action>,
+) {
     for (key, value, _why) in GIT_SETTINGS {
         actions.push(Action {
             step: Step::GitSetting {
@@ -1160,6 +1181,20 @@ fn push_git_settings(layout: &Layout, store: &Path, team: Option<&str>, actions:
                 value: (*value).to_owned(),
             },
             state: git_setting_state(store, key, value),
+        });
+    }
+    for (key, value) in [
+        ("user.name", machine.to_owned()),
+        ("user.email", signature_email(ENGINE_AGENT)),
+    ] {
+        let state = git_setting_state(store, key, &value);
+        actions.push(Action {
+            step: Step::GitSetting {
+                team: team.map(str::to_owned),
+                key,
+                value,
+            },
+            state,
         });
     }
     for (key, driver) in MERGE_DRIVERS {
@@ -1187,7 +1222,7 @@ pub fn plan_team(layout: &Layout, team: &str) -> Vec<Action> {
         return actions;
     };
     let clone = layout.team_store(team);
-    push_git_settings(layout, &clone, Some(team), &mut actions);
+    push_git_settings(layout, &clone, Some(team), &record.store_name, &mut actions);
     let relative = format!("machines/{}", record.store_name);
     let state = dir_state(&clone.join(&relative));
     actions.push(Action {

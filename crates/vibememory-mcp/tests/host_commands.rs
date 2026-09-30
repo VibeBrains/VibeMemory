@@ -232,6 +232,32 @@ fn project_facts_split(project: &serde_json::Value) {
             .is_some_and(|author| !author.is_empty()),
         "{project}"
     );
+    assert!(
+        project.get("lastAgent").is_none(),
+        "a commit not signed by an engine names no agent: {project}"
+    );
+}
+
+#[test]
+fn an_engine_commit_names_its_agent_and_nothing_else_does() {
+    use vibememory_mcp::status::engine_agent;
+    assert_eq!(
+        engine_agent("claude-code@vibememory.invalid").as_deref(),
+        Some("claude-code")
+    );
+    assert_eq!(
+        engine_agent("dsh-desktop@vibememory.invalid").as_deref(),
+        Some("dsh-desktop")
+    );
+    for other in [
+        "test@example.invalid",
+        "vibememory-mcp@host-tk_7a9b2c4d.invalid",
+        "Claude@vibememory.invalid",
+        "@vibememory.invalid",
+        "claude-code@vibememory.invalid.evil",
+    ] {
+        assert_eq!(engine_agent(other), None, "{other}");
+    }
 }
 
 #[test]

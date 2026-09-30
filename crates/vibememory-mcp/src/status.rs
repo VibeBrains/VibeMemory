@@ -104,6 +104,22 @@ pub struct ProjectFacts {
     pub last_commit_at: Option<String>,
     /// Who made that commit: the machine's git author, or the writer the memory server commits as.
     pub last_author: Option<String>,
+    /// The agent that commit is signed with, when a machine's engine made it: the author is then
+    /// the machine by its name in the store. Absent for a commit of the memory server, of the host,
+    /// or of an engine older than the signature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_agent: Option<String>,
+}
+
+/// The agent an engine commit is signed with, from its author mail `<agent>@vibememory.invalid`.
+/// `None` for any other mail: a commit of the memory server, of the host, of a person.
+#[must_use]
+pub fn engine_agent(email: &str) -> Option<String> {
+    let domain = format!("@{}", vibememory_cli::install::SIGNATURE_DOMAIN);
+    email
+        .strip_suffix(&domain)
+        .filter(|agent| vibememory_core::naming::slug::is_slug(agent))
+        .map(str::to_owned)
 }
 
 /// Free and total space of the partition the stores live on.

@@ -1388,18 +1388,23 @@ fn project_facts(
         .iter()
         .map(|project| {
             let path = format!("projects/{project}/");
-            let last = text(&["log", "-1", "--format=%ct%x09%an", main, "--", &path]).ok();
-            let (seconds, author) = last
+            let last = text(&["log", "-1", "--format=%ct%x09%an%x09%ae", main, "--", &path]).ok();
+            let mut fields = last
                 .as_deref()
-                .and_then(|line| line.split_once('\t'))
-                .map_or((None, None), |(seconds, author)| {
-                    (seconds.parse::<i64>().ok(), Some(author.to_owned()))
-                });
+                .unwrap_or_default()
+                .trim_end()
+                .splitn(3, '\t');
+            let seconds = fields
+                .next()
+                .and_then(|seconds| seconds.parse::<i64>().ok());
+            let author = fields.next().filter(|author| !author.is_empty());
+            let agent = fields.next().and_then(crate::status::engine_agent);
             let facts = ProjectFacts {
                 size_bytes: sizes.get(project.as_str()).copied().unwrap_or_default(),
                 memory_bytes: Some(memory.get(project.as_str()).copied().unwrap_or_default()),
                 last_commit_at: seconds.map(vibememory_cli::clock::iso8601),
-                last_author: author.filter(|author| !author.is_empty()),
+                last_author: author.map(str::to_owned),
+                last_agent: agent,
             };
             (project.clone(), facts)
         })
