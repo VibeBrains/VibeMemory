@@ -885,3 +885,26 @@ fn a_write_past_the_team_quota_is_refused_and_forgetting_still_works() {
     tools::call("memory_save", &fresh, &caller, &fake)
         .expect("room again once the store is smaller than the quota");
 }
+
+#[test]
+fn reasoning_is_not_searched_as_what_was_said() {
+    let fake = memories();
+    let line = json!({
+        "type": "assistant",
+        "timestamp": "2026-09-30T09:00:00Z",
+        "message": { "content": [
+            { "type": "reasoning", "text": "обдумываю тайный план" },
+            { "type": "text", "text": "готово" },
+        ] }
+    });
+    fake.add_transcript("Promed", ("dsh".to_owned(), 100, line.to_string()));
+
+    let thought = call("history_search", &json!({"query": "тайный"}), &fake).expect("search");
+    assert_eq!(
+        thought["results"],
+        json!([]),
+        "a reasoning block is not speech"
+    );
+    let said = call("history_search", &json!({"query": "готово"}), &fake).expect("search");
+    assert_eq!(said["results"][0]["excerpt"], "готово");
+}

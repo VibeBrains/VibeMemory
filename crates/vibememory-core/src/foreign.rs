@@ -37,7 +37,8 @@ pub fn session_path(project: &str, agent: Option<&str>, session: &str) -> String
 pub struct Checked {
     /// Records in the file.
     pub lines: usize,
-    /// Records the history search reads: `user` and `assistant` with words in them.
+    /// Records the history search reads: `user` and `assistant` with words in a string or in a
+    /// block of type `text`.
     pub spoken: usize,
 }
 
@@ -137,6 +138,7 @@ pub fn check(bytes: &[u8]) -> Result<Checked, Refusal> {
                 Value::Array(blocks) => {
                     if blocks
                         .iter()
+                        .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
                         .filter_map(|block| block.get("text").and_then(Value::as_str))
                         .any(|said| !said.trim().is_empty())
                     {

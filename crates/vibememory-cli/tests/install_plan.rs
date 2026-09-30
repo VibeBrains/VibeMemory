@@ -1166,3 +1166,135 @@ fn a_copy_an_earlier_install_moved_aside_is_removed_by_the_next() {
     assert!(!aside.exists(), "the set-aside copy is gone");
     assert!(unrelated.exists(), "only our binaries' copies are touched");
 }
+
+/// The task file 0.3.0 wrote on Windows: logon and unlock triggers, which an unelevated Task
+/// Scheduler refuses. Kept verbatim to prove a later install recognises it as its own.
+const TASK_OF_0_3_0: &str = r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>VibeMemory: keeps this machine's store in step with the others.</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <Repetition>
+        <Interval>PT2M</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+    </LogonTrigger>
+    <SessionStateChangeTrigger>
+      <Enabled>true</Enabled>
+      <StateChange>SessionUnlock</StateChange>
+    </SessionStateChangeTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>%windir%\System32\conhost.exe</Command>
+      <Arguments>--headless &quot;D:\engine\bin\vibememory.exe&quot; tick</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+"#;
+
+#[test]
+fn every_schedule_file_an_install_ever_wrote_is_ours_and_nothing_else_is() {
+    use vibememory_cli::install::{is_our_schedule, launch_agent, systemd_service, systemd_timer};
+    let temp = TempDir::new("install-ours");
+    let layout = layout(&temp);
+    for (what, bytes) in [
+        ("the task of 0.3.0", utf16_with_bom(TASK_OF_0_3_0)),
+        ("this task", utf16_with_bom(&scheduled_task(&layout))),
+        ("this LaunchAgent", launch_agent(&layout).into_bytes()),
+        (
+            "a LaunchAgent of another interval",
+            launch_agent(&layout)
+                .replace("<integer>120</integer>", "<integer>300</integer>")
+                .into_bytes(),
+        ),
+        ("this service", systemd_service(&layout).into_bytes()),
+        ("this timer", systemd_timer().into_bytes()),
+    ] {
+        assert!(is_our_schedule(&bytes), "{what}");
+    }
+    for (what, bytes) in [
+        ("an empty file", Vec::new()),
+        (
+            "somebody's LaunchAgent",
+            launch_agent(&layout)
+                .replace("dev.vibememory.tick", "com.example.backup")
+                .into_bytes(),
+        ),
+        (
+            "somebody's task",
+            utf16_with_bom(&TASK_OF_0_3_0.replace("VibeMemory: keeps", "Backup: keeps")),
+        ),
+        (
+            "somebody's unit",
+            b"[Unit]\nDescription=Backup every hour\n".to_vec(),
+        ),
+    ] {
+        assert!(!is_our_schedule(&bytes), "{what}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn an_earlier_installs_launch_agent_is_replaced_and_somebody_elses_is_not() {
+    use vibememory_cli::install::{launch_agent, schedule_path};
+    let temp = TempDir::new("install-schedule-upgrade");
+    let layout = layout(&temp);
+    let path = schedule_path(&layout);
+    fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+
+    let earlier = launch_agent(&layout).replace("<integer>120</integer>", "<integer>300</integer>");
+    fs::write(&path, &earlier).expect("earlier");
+    assert_eq!(
+        state_of(&plan(&layout, &config(), &[]), &Step::Schedule),
+        &State::Missing,
+        "an earlier install's agent is ours to replace"
+    );
+    let applied = apply(&layout, &plan(&layout, &config(), &[]), false);
+    assert!(applied.is_complete(), "{:?}", applied.failed);
+    assert_eq!(
+        fs::read_to_string(&path).expect("read"),
+        launch_agent(&layout)
+    );
+
+    let foreign = launch_agent(&layout).replace("dev.vibememory.tick", "com.example.backup");
+    fs::write(&path, &foreign).expect("foreign");
+    assert!(matches!(
+        state_of(&plan(&layout, &config(), &[]), &Step::Schedule),
+        State::Conflict { .. }
+    ));
+    let _ = apply(&layout, &plan(&layout, &config(), &[]), false);
+    assert_eq!(
+        fs::read_to_string(&path).expect("read"),
+        foreign,
+        "somebody else's agent is never written over"
+    );
+
+    // planned while absent, and somebody's agent appears before the apply
+    fs::remove_file(&path).expect("remove");
+    let planned = plan(&layout, &config(), &[]);
+    assert_eq!(state_of(&planned, &Step::Schedule), &State::Missing);
+    fs::write(&path, &foreign).expect("foreign again");
+    let _ = apply(&layout, &planned, false);
+    assert_eq!(
+        fs::read_to_string(&path).expect("read"),
+        foreign,
+        "not even one that appeared after the plan"
+    );
+}

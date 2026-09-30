@@ -32,6 +32,16 @@
       }
     },
     {
+      "id": "reasoningIsNotSpeech",
+      "provenance": "computed",
+      "note": "DeepSeek Harness keeps reasoning as a block with a text field; only blocks of type text are what was said",
+      "text": "{\"type\":\"assistant\",\"uuid\":\"22222222-2222-4222-8222-000000000001\",\"timestamp\":\"2026-09-30T08:00:01Z\",\"message\":{\"content\":[{\"type\":\"reasoning\",\"text\":\"let me think\"}]}}\n",
+      "expect": {
+        "lines": 1,
+        "spoken": 0
+      }
+    },
+    {
       "id": "crlfLines",
       "provenance": "computed",
       "note": "A file written on Windows ends its lines with CRLF; the carriage return is not part of the record",

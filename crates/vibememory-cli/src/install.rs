@@ -877,29 +877,89 @@ fn is_real_engine(layout: &Layout) -> bool {
     home_dir().is_some_and(|home| layout.engine_dir == home.join(".vibememory"))
 }
 
+/// Whether a scheduler's file describes the tick as some install of this engine wrote it — this
+/// version's or an earlier one's, whose triggers or interval may differ. The task file of Windows is
+/// UTF-16; the others are UTF-8.
+#[must_use]
+pub fn is_our_schedule(bytes: &[u8]) -> bool {
+    let text = match bytes {
+        [0xFF, 0xFE, rest @ ..] => {
+            let units: Vec<u16> = rest
+                .chunks_exact(2)
+                .filter_map(|pair| <[u8; 2]>::try_from(pair).ok())
+                .map(u16::from_le_bytes)
+                .collect();
+            String::from_utf16_lossy(&units)
+        }
+        _ => String::from_utf8_lossy(bytes).into_owned(),
+    };
+    text.contains(&format!("<string>{SCHEDULE_LABEL}</string>"))
+        || text.contains(&format!("<Description>{SCHEDULE_DESCRIPTION}"))
+        || text
+            .lines()
+            .any(|line| line.starts_with("Description=VibeMemory"))
+}
+
+/// A scheduler's file an earlier install wrote is not somebody else's: it is replaced, the way an
+/// earlier install's hooks and drivers are. Without this every release that changes the schedule
+/// finds its own old file in the way on every machine.
+fn ours_is_missing(path: &Path, state: State) -> State {
+    match state {
+        State::Conflict { .. }
+            if std::fs::read(path).is_ok_and(|bytes| is_our_schedule(&bytes)) =>
+        {
+            State::Missing
+        }
+        other => other,
+    }
+}
+
+/// Writes a scheduler's file when it is absent or ours, whole — through a temporary file and a
+/// rename. A file that is somebody else's, even one that appeared since the plan, is left as it is.
+/// Answers whether an earlier file of ours was replaced.
+fn write_schedule(path: &Path, bytes: &[u8]) -> Result<bool, String> {
+    let replacing = match std::fs::read(path) {
+        Ok(found) if !is_our_schedule(&found) => return Ok(false),
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(format!("{}: {error}", path.display())),
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".new");
+    let temporary = path.with_file_name(name);
+    std::fs::write(&temporary, bytes).map_err(|e| format!("{}: {e}", temporary.display()))?;
+    std::fs::rename(&temporary, path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(replacing)
+}
+
 /// Writes the scheduler's description of the tick and, for the real engine, hands it over: the
 /// `LaunchAgent` to launchd on macOS, the task to the Task Scheduler on Windows.
 fn install_schedule(layout: &Layout) -> Result<(), String> {
     let path = schedule_path(layout);
     if cfg!(windows) {
-        write_new(&path, &utf16_with_bom(&scheduled_task(layout)))?;
+        // `/F` replaces a registered task of the same name, so a replaced file needs nothing more
+        write_schedule(&path, &utf16_with_bom(&scheduled_task(layout)))?;
         if is_real_engine(layout) {
             register_scheduled_task(&path)?;
         }
         return Ok(());
     }
     if !cfg!(target_os = "macos") {
-        write_new(
+        // `daemon-reload` below reads replaced units again
+        write_schedule(
             &systemd_service_path(layout),
             systemd_service(layout).as_bytes(),
         )?;
-        write_new(&path, systemd_timer().as_bytes())?;
+        write_schedule(&path, systemd_timer().as_bytes())?;
         if is_real_engine(layout) {
             start_linux_schedule(layout)?;
         }
         return Ok(());
     }
-    write_new(&path, launch_agent(layout).as_bytes())?;
+    let replaced = write_schedule(&path, launch_agent(layout).as_bytes())?;
     if real_launch_agents_dir(layout).is_none() {
         return Ok(());
     }
@@ -910,6 +970,15 @@ fn install_schedule(layout: &Layout) -> Result<(), String> {
         .output()
         .map_err(|e| e.to_string())?;
     let domain = format!("gui/{}", String::from_utf8_lossy(&uid.stdout).trim());
+    // launchd keeps running a loaded agent as it read it: a replaced file takes effect only after
+    // the old one is taken out
+    if replaced {
+        let _ = std::process::Command::new("launchctl")
+            .args(["bootout", &domain, &path.display().to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
     let _ = std::process::Command::new("launchctl")
         .args(["bootstrap", &domain, &path.display().to_string()])
         .stdout(std::process::Stdio::null())
@@ -1142,18 +1211,30 @@ fn push_team_stores(layout: &Layout, actions: &mut Vec<Action>) {
 /// macOS, the Task Scheduler's task on Windows — each compared as the bytes `install` writes.
 fn push_schedule_step(layout: &Layout, actions: &mut Vec<Action>) {
     let state = if cfg!(target_os = "macos") {
-        file_state(&schedule_path(layout), &launch_agent(layout))
-    } else if cfg!(windows) {
-        bytes_state(
+        ours_is_missing(
             &schedule_path(layout),
-            &utf16_with_bom(&scheduled_task(layout)),
+            file_state(&schedule_path(layout), &launch_agent(layout)),
+        )
+    } else if cfg!(windows) {
+        ours_is_missing(
+            &schedule_path(layout),
+            bytes_state(
+                &schedule_path(layout),
+                &utf16_with_bom(&scheduled_task(layout)),
+            ),
         )
     } else {
         // Linux: the timer and its service, both as written; a machine without a user systemd runs
         // the tick from cron, which the step reports as done once the line is there
         match (
-            file_state(&schedule_path(layout), &systemd_timer()),
-            file_state(&systemd_service_path(layout), &systemd_service(layout)),
+            ours_is_missing(
+                &schedule_path(layout),
+                file_state(&schedule_path(layout), &systemd_timer()),
+            ),
+            ours_is_missing(
+                &systemd_service_path(layout),
+                file_state(&systemd_service_path(layout), &systemd_service(layout)),
+            ),
         ) {
             (State::Satisfied, State::Satisfied) => State::Satisfied,
             (State::Satisfied, other) | (other, _) => other,
@@ -1300,7 +1381,7 @@ pub fn launch_agent(layout: &Layout) -> String {
          \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
          <plist version=\"1.0\">\n\
          <dict>\n\
-         \t<key>Label</key><string>dev.vibememory.tick</string>\n\
+         \t<key>Label</key><string>{SCHEDULE_LABEL}</string>\n\
          \t<key>ProgramArguments</key>\n\
          \t<array><string>{binary}</string><string>tick</string></array>\n\
          \t<key>EnvironmentVariables</key>\n\
@@ -1335,7 +1416,7 @@ fn systemd_service_path(layout: &Layout) -> PathBuf {
 #[must_use]
 pub fn systemd_service(layout: &Layout) -> String {
     format!(
-        "[Unit]\nDescription=VibeMemory: keeps this machine's store in step with the others\n\n\
+        "[Unit]\nDescription={SCHEDULE_DESCRIPTION}\n\n\
          [Service]\nType=oneshot\nEnvironment=\"VIBEMEMORY_DIR={}\"\nExecStart=\"{}\" tick\n",
         layout.engine_dir.display(),
         installed_binary(layout).display()
@@ -1422,6 +1503,11 @@ const HEADLESS_CONSOLE: &str = r"%windir%\System32\conhost.exe";
 /// When the clock trigger starts repeating: any moment in the past will do, so a fixed one.
 const SCHEDULED_TASK_START: &str = "2000-01-01T00:00:00";
 
+/// What the Windows task and the systemd service call the tick. Written into their files and read
+/// back to tell the engine's own file — of this version or an earlier one — from somebody else's; the
+/// `LaunchAgent` is told by its label.
+const SCHEDULE_DESCRIPTION: &str = "VibeMemory: keeps this machine's store in step with the others";
+
 /// The task file `install` writes under the engine directory and hands the Task Scheduler.
 const SCHEDULED_TASK_FILE: &str = "tick-task.xml";
 
@@ -1446,6 +1532,7 @@ pub fn scheduled_task(layout: &Layout) -> String {
         TICK_INTERVAL_SECONDS / 60
     );
     let start = format!("      <StartBoundary>{SCHEDULED_TASK_START}</StartBoundary>");
+    let description = format!("    <Description>{SCHEDULE_DESCRIPTION}.</Description>");
     let command = format!("      <Command>{HEADLESS_CONSOLE}</Command>");
     let arguments = format!(
         "      <Arguments>--headless &quot;{}&quot; tick</Arguments>",
@@ -1455,7 +1542,7 @@ pub fn scheduled_task(layout: &Layout) -> String {
         r#"<?xml version="1.0" encoding="UTF-16"?>"#,
         r#"<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">"#,
         "  <RegistrationInfo>",
-        "    <Description>VibeMemory: keeps this machine's store in step with the others.</Description>",
+        description.as_str(),
         "  </RegistrationInfo>",
         "  <Triggers>",
         "    <TimeTrigger>",

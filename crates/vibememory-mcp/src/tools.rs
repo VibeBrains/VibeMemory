@@ -802,8 +802,11 @@ fn spoken_text(record: &Value) -> String {
     };
     match content {
         Value::String(text) => text.clone(),
+        // Only `text` blocks are speech: an agent's reasoning may carry a `text` field too, and it
+        // is not what was said
         Value::Array(blocks) => blocks
             .iter()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
             .filter_map(|block| block.get("text").and_then(Value::as_str))
             .collect::<Vec<_>>()
             .join(" "),
