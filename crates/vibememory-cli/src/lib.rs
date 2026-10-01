@@ -15,6 +15,7 @@
     clippy::disallowed_macros
 )]
 
+pub mod agents;
 pub mod clock;
 pub mod config;
 pub mod connect;

@@ -26,25 +26,52 @@ pub struct KeptToken {
     pub file: PathBuf,
     /// What is wrong, if anything: a file missing, or reachable by others than the owner.
     pub problems: Vec<String>,
-    /// When a memory server last started on this machine as this agent. `None` means no client
-    /// ever called it by this name here: a token with nobody to use it.
-    pub client_started: Option<String>,
+    /// When a memory server last started on this machine as this agent, and which version it was.
+    /// `None` means no client ever called it by this name here: a token with nobody to use it.
+    pub client_started: Option<ClientStart>,
 }
 
-/// Where the memory server notes each agent name it is started as: one file per name, holding when.
+/// Where the memory server notes each agent name it is started as: one file per name, holding when
+/// and which version.
 pub const CLIENTS_DIR: &str = "clients";
 
-/// Notes that a memory server started as `agent`. The agent name is a slug, checked by the server
-/// before it gets here, so it is a safe file name.
+/// One start of a memory server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientStart {
+    /// When it started.
+    pub stamp: String,
+    /// Its version. `None` for a note of a server older than the version field.
+    pub version: Option<String>,
+}
+
+impl ClientStart {
+    /// Whether the server started older than the engine on this disk: it keeps running the old
+    /// binary until its client restarts it, and an old server answers as if the new features were
+    /// not there.
+    #[must_use]
+    pub fn behind(&self, current: &str) -> bool {
+        self.version
+            .as_deref()
+            .is_some_and(|version| vibememory_core::release::is_newer(current, version))
+    }
+}
+
+/// Notes that a memory server of `version` started as `agent`. The agent name is a slug, checked
+/// by the server before it gets here, so it is a safe file name.
 ///
 /// # Errors
 ///
 /// The text of what went wrong.
-pub fn record_client(engine_dir: &Path, agent: &str, stamp: &str) -> Result<(), String> {
+pub fn record_client(
+    engine_dir: &Path,
+    agent: &str,
+    stamp: &str,
+    version: &str,
+) -> Result<(), String> {
     let dir = engine_dir.join(CLIENTS_DIR);
     std::fs::create_dir_all(&dir).map_err(|error| format!("{}: {error}", dir.display()))?;
     let path = dir.join(agent);
-    std::fs::write(&path, format!("{stamp}\n"))
+    std::fs::write(&path, format!("{stamp} {version}\n"))
         .map_err(|error| format!("{}: {error}", path.display()))
 }
 
@@ -52,26 +79,32 @@ pub fn record_client(engine_dir: &Path, agent: &str, stamp: &str) -> Result<(), 
 /// The one list that knows each client — Claude Code, Codex, an IDE — without reading any client's
 /// configuration.
 #[must_use]
-pub fn started_clients(engine_dir: &Path) -> Vec<(String, String)> {
+pub fn started_clients(engine_dir: &Path) -> Vec<(String, ClientStart)> {
     let Ok(entries) = std::fs::read_dir(engine_dir.join(CLIENTS_DIR)) else {
         return Vec::new();
     };
-    let mut clients: Vec<(String, String)> = entries
+    let mut clients: Vec<(String, ClientStart)> = entries
         .flatten()
         .filter_map(|entry| {
             let agent = entry.file_name().to_string_lossy().into_owned();
-            client_started(engine_dir, &agent).map(|stamp| (agent, stamp))
+            client_started(engine_dir, &agent).map(|start| (agent, start))
         })
         .collect();
-    clients.sort();
+    clients.sort_by(|left, right| left.0.cmp(&right.0));
     clients
 }
 
-/// When a memory server last started as `agent`, if ever.
+/// When a memory server last started as `agent`, if ever, and which version it was. A note written
+/// before the version field holds the time alone.
 #[must_use]
-pub fn client_started(engine_dir: &Path, agent: &str) -> Option<String> {
+pub fn client_started(engine_dir: &Path, agent: &str) -> Option<ClientStart> {
     let text = std::fs::read_to_string(engine_dir.join(CLIENTS_DIR).join(agent)).ok()?;
-    Some(text.trim().to_owned()).filter(|stamp| !stamp.is_empty())
+    let mut parts = text.split_whitespace();
+    let stamp = parts.next()?.to_owned();
+    Some(ClientStart {
+        stamp,
+        version: parts.next().map(str::to_owned),
+    })
 }
 
 /// The sidecar `connect` writes beside a token.

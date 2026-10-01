@@ -139,6 +139,9 @@ pub fn put(layout: &Layout, config: &Config, request: &Request<'_>) -> Result<Pl
     if request.ended {
         stop::record_end(&store.clone, &store.machine_id, request.session)?;
     }
+    // The proof the agent's wrapper works, for `doctor`: a lost note costs a warning that the agent
+    // is silent until its next put, never a session.
+    let _ = crate::agents::record_put(layout, request.agent);
     Ok(Placed {
         project,
         relative,

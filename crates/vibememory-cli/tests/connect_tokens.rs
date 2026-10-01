@@ -18,7 +18,7 @@ use std::fs;
 
 use support::TempDir;
 use vibememory_cli::connect::{claude_code_registration, disconnect, headers_of, keep_token};
-use vibememory_cli::credentials::{kept_tokens, record_client, started_clients};
+use vibememory_cli::credentials::{ClientStart, kept_tokens, record_client, started_clients};
 use vibememory_cli::install::{Layout, Step, plan_binaries};
 use vibememory_core::claim::{Claim, TokenGrant, read_answer};
 
@@ -45,6 +45,14 @@ fn grant() -> TokenGrant {
         panic!("the fixture's token case must read")
     };
     grant
+}
+
+/// A start of a memory server as the clients note reads it back.
+fn started(stamp: &str, version: Option<&str>) -> ClientStart {
+    ClientStart {
+        stamp: stamp.to_owned(),
+        version: version.map(str::to_owned),
+    }
 }
 
 #[test]
@@ -150,23 +158,62 @@ fn doctor_finds_the_token_and_says_when_others_can_read_it() {
         tokens[0].client_started, None,
         "a token no client has used yet says so"
     );
-    record_client(&layout.engine_dir, "claude-code", "2026-09-30T09:00:00Z").unwrap();
-    record_client(&layout.engine_dir, "deepseek-typo", "2026-09-30T09:00:01Z").unwrap();
+    record_client(
+        &layout.engine_dir,
+        "claude-code",
+        "2026-09-30T09:00:00Z",
+        "0.5.0",
+    )
+    .unwrap();
+    record_client(
+        &layout.engine_dir,
+        "deepseek-typo",
+        "2026-09-30T09:00:01Z",
+        "0.4.3",
+    )
+    .unwrap();
     assert_eq!(
-        kept_tokens(&layout)[0].client_started.as_deref(),
-        Some("2026-09-30T09:00:00Z"),
+        kept_tokens(&layout)[0].client_started,
+        Some(started("2026-09-30T09:00:00Z", Some("0.5.0"))),
         "by the token's own agent name, not by any client that ran"
     );
     assert_eq!(
         started_clients(&layout.engine_dir),
         vec![
-            ("claude-code".to_owned(), "2026-09-30T09:00:00Z".to_owned()),
+            (
+                "claude-code".to_owned(),
+                started("2026-09-30T09:00:00Z", Some("0.5.0"))
+            ),
             (
                 "deepseek-typo".to_owned(),
-                "2026-09-30T09:00:01Z".to_owned()
+                started("2026-09-30T09:00:01Z", Some("0.4.3"))
             ),
         ],
         "every client that started a server, with a token or without"
+    );
+    // A server that started before the engine it runs beside was updated keeps the old binary
+    // until its client starts it again: that is what doctor warns about.
+    let clients = started_clients(&layout.engine_dir);
+    assert!(
+        clients[1].1.behind("0.5.0"),
+        "0.4.3 runs behind 0.5.0 on disk"
+    );
+    assert!(
+        !clients[0].1.behind("0.5.0"),
+        "the same version is not behind"
+    );
+
+    // A note from before the version field holds the time alone, and is read as such.
+    fs::write(
+        layout.engine_dir.join("clients").join("claude-code"),
+        "2026-09-29T08:00:00Z\n",
+    )
+    .unwrap();
+    let old = kept_tokens(&layout)[0].client_started.clone().unwrap();
+    assert_eq!(old, started("2026-09-29T08:00:00Z", None));
+    assert!(
+        !old.behind("0.5.0"),
+        "a note without a version proves nothing either way"
     );
 
     #[cfg(unix)]

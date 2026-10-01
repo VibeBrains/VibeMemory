@@ -162,6 +162,7 @@ fn serve_local(agent: &str) -> ExitCode {
         &engine_dir,
         agent,
         &vibememory_cli::clock::now(),
+        env!("CARGO_PKG_VERSION"),
     );
     // The directory the client started us in. Measured 2026-09-13: Claude Code starts its stdio
     // servers in the session's project directory — which also decides the store: a team's project

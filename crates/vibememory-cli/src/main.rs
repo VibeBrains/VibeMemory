@@ -195,6 +195,7 @@ fn report(strict: bool, json: bool) -> ExitCode {
     }
     wrong += print_tokens(&tokens);
     print_clients(&layout, &tokens);
+    wrong += print_watched_agents(&layout);
     wrong += print_teams(&layout);
     print_advice(&layout, &config);
     if strict && wrong > 0 {
@@ -382,14 +383,34 @@ fn foreign_sessions(layout: &Layout) -> Vec<(String, String, usize, String)> {
 /// The agents a memory server started as here and that no kept token names: a client of the
 /// personal store needs no token, and this is the only place it shows.
 fn print_clients(layout: &Layout, tokens: &[vibememory_cli::credentials::KeptToken]) {
-    for (agent, stamp) in vibememory_cli::credentials::started_clients(&layout.engine_dir) {
+    for (agent, start) in vibememory_cli::credentials::started_clients(&layout.engine_dir) {
         if tokens.iter().all(|token| token.agent != agent) {
             println!(
-                "client   {} \u{2014} a memory server started as this agent at {stamp}",
-                vibememory_core::terminal::printable(&agent)
+                "client   {} \u{2014} a memory server started as this agent {}",
+                vibememory_core::terminal::printable(&agent),
+                describe_start(&start)
             );
         }
     }
+}
+
+/// When and as which version a memory server started, and what to do when it is older than the
+/// engine on this disk: it runs the old binary until its client starts it again.
+fn describe_start(start: &vibememory_cli::credentials::ClientStart) -> String {
+    let version = start
+        .version
+        .as_deref()
+        .map_or_else(String::new, |version| format!(" (version {version})"));
+    let behind = if start.behind(vibememory_cli::update::CURRENT) {
+        format!(
+            " \u{2014} older than vibememory {} on this disk: restart the client so it starts the \
+             new server",
+            vibememory_cli::update::CURRENT
+        )
+    } else {
+        String::new()
+    };
+    format!("at {}{version}{behind}", start.stamp)
 }
 
 /// The credentials section: each kept token, and what is wrong with its files. Answers how many
@@ -414,9 +435,10 @@ fn print_tokens(tokens: &[vibememory_cli::credentials::KeptToken]) -> usize {
         // Not a failure: a token may be taken before its client is set up. It is said because a
         // token nobody uses looks exactly like a working one everywhere else.
         match &token.client_started {
-            Some(stamp) => println!(
-                "         client: a memory server started as --agent {} at {stamp}",
-                vibememory_core::terminal::printable(&token.agent)
+            Some(start) => println!(
+                "         client: a memory server started as --agent {} {}",
+                vibememory_core::terminal::printable(&token.agent),
+                describe_start(start)
             ),
             None => println!(
                 "         client: no memory server has started as --agent {} on this machine; \
@@ -509,7 +531,8 @@ fn tokens_json(tokens: &[vibememory_cli::credentials::KeptToken]) -> Vec<serde_j
                 "cabinet": token.cabinet,
                 "file": token.file.display().to_string(),
                 "problems": token.problems,
-                "clientStarted": token.client_started,
+                "clientStarted": token.client_started.as_ref().map(|start| &start.stamp),
+                "clientVersion": token.client_started.as_ref().and_then(|start| start.version.as_ref()),
             })
         })
         .collect()
@@ -1371,9 +1394,15 @@ fn session_command(args: &[String]) -> ExitCode {
     const USAGE: &str = "usage: vibememory session share <session-id>\n       \
                          vibememory session release <machine> <session-id> --confirm\n       \
                          vibememory session put --agent <name> --id <session-id> --cwd <dir> \
-                         --from <file.jsonl> [--end]";
+                         --from <file.jsonl> [--end]\n       \
+                         vibememory session agent add --agent <name> --dir <log-dir> --run \
+                         <wrapper>\n       \
+                         vibememory session agent remove --agent <name>";
     if args.first().is_some_and(|verb| verb == "put") {
         return session_put(args.get(1..).unwrap_or_default(), USAGE);
+    }
+    if args.first().is_some_and(|verb| verb == "agent") {
+        return session_agent(args.get(1..).unwrap_or_default(), USAGE);
     }
     if let [verb, machine, session, confirm] = args
         && verb == "release"
@@ -1518,6 +1547,82 @@ fn session_put(args: &[String], usage: &str) -> ExitCode {
         PUSH_DEBOUNCE,
     );
     ExitCode::SUCCESS
+}
+
+/// `session agent add|remove`: an agent without hooks of its own, watched by the tick — each log
+/// written into its directory goes to its wrapper, which hands the session over with `session put`.
+fn session_agent(args: &[String], usage: &str) -> ExitCode {
+    let Some((verb, rest)) = args.split_first() else {
+        eprintln!("{usage}");
+        return ExitCode::from(2);
+    };
+    let mut agent = None;
+    let mut dir = None;
+    let mut run = None;
+    let mut flags = rest.iter();
+    while let Some(flag) = flags.next() {
+        let slot = match flag.as_str() {
+            "--agent" => &mut agent,
+            "--dir" => &mut dir,
+            "--run" => &mut run,
+            _ => {
+                eprintln!("{usage}");
+                return ExitCode::from(2);
+            }
+        };
+        let Some(value) = flags.next() else {
+            eprintln!("{flag} takes a value\n{usage}");
+            return ExitCode::from(2);
+        };
+        *slot = Some(value.clone());
+    }
+    let layout = layout();
+    match (verb.as_str(), agent, dir, run) {
+        ("add", Some(agent), Some(dir), Some(run)) => {
+            match vibememory_cli::agents::register(
+                &layout,
+                &agent,
+                std::path::Path::new(&dir),
+                std::path::Path::new(&run),
+            ) {
+                Ok(registration) => {
+                    println!(
+                        "watching {agent}: each log written into {} from now on goes to {}; the \
+                         tick looks every two minutes, and doctor says when sessions stop coming",
+                        registration.dir, registration.run
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("session agent add: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        ("remove", Some(agent), None, None) => {
+            match vibememory_cli::agents::unregister(&layout, &agent) {
+                Ok(true) => {
+                    println!("{agent} is no longer watched; its sessions in the store stay");
+                    ExitCode::SUCCESS
+                }
+                Ok(false) => {
+                    eprintln!(
+                        "session agent remove: {} is not watched here",
+                        vibememory_core::terminal::printable(&agent)
+                    );
+                    ExitCode::FAILURE
+                }
+                Err(error) => {
+                    eprintln!("session agent remove: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        _ => {
+            eprintln!("{usage}");
+            ExitCode::from(2)
+        }
+    }
 }
 
 /// `session release <machine> <sid> --confirm`: clears another machine's claim that a session is
@@ -2272,6 +2377,12 @@ fn tick_command(args: &[String]) -> ExitCode {
             }
         }
     }
+    // Agents without hooks of their own: each log written since the last run goes to its wrapper.
+    // A wrapper that fails is the agent's fault, not the sync's: it is written down for `doctor`,
+    // and the tick itself does not fail over it.
+    for ran in vibememory_cli::agents::tick(&layout) {
+        report_agent_run(&ran);
+    }
     // Once a day, ask whether the backup still follows the host. Nobody runs `doctor` on a
     // schedule, so without this a mirror could stop following the day after it was set up and
     // nothing would ever say so.
@@ -2291,6 +2402,112 @@ fn tick_command(args: &[String]) -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// One agent's part of the tick, said only when there is something to say.
+fn report_agent_run(ran: &vibememory_cli::agents::Ran) {
+    let agent = vibememory_core::terminal::printable(&ran.agent);
+    if ran.missing {
+        println!("agent {agent}: its log directory is not there");
+        return;
+    }
+    if ran.handed > 0 {
+        println!("agent {agent}: {} log(s) handed to the wrapper", ran.handed);
+    }
+    if let Some(failure) = &ran.failure {
+        println!(
+            "agent {agent}: the wrapper failed on {} \u{2014} {}",
+            vibememory_core::terminal::printable(&failure.log),
+            failure.outcome
+        );
+        for line in &failure.lines {
+            println!("  {line}");
+        }
+    }
+    if ran.waiting > 0 {
+        println!(
+            "agent {agent}: {} log(s) wait for the next run",
+            ran.waiting
+        );
+    }
+}
+
+/// The agents the tick watches here, and what is wrong with each: the wrapper failing, or logs
+/// written while no session comes. Answers how many are wrong.
+fn print_watched_agents(layout: &Layout) -> usize {
+    let mut wrong = 0;
+    if let Some(problem) = vibememory_cli::agents::registry_problem(layout) {
+        wrong += 1;
+        println!(
+            "watch    the agents file cannot be read, so no agent is watched: {}",
+            vibememory_core::terminal::printable(&problem)
+        );
+    }
+    let at =
+        |seconds: u64| vibememory_cli::clock::iso8601(i64::try_from(seconds).unwrap_or(i64::MAX));
+    for watched in vibememory_cli::agents::watched(layout) {
+        let agent = vibememory_core::terminal::printable(&watched.agent);
+        let put = watched.last_put.map_or_else(
+            || "no session put yet".to_owned(),
+            |put| format!("last put {}", at(put)),
+        );
+        println!(
+            "watch    {agent} \u{2014} logs in {}, wrapper {}; {put}",
+            vibememory_core::terminal::printable(&watched.registration.dir),
+            vibememory_core::terminal::printable(&watched.registration.run)
+        );
+        if watched.missing {
+            wrong += 1;
+            println!("         the log directory is not there: nothing of this agent is delivered");
+        }
+        if let Some(failure) = &watched.failure {
+            wrong += 1;
+            println!(
+                "         the wrapper failed at {} on {} \u{2014} {}",
+                at(failure.at),
+                vibememory_core::terminal::printable(&failure.log),
+                failure.outcome
+            );
+            for line in &failure.lines {
+                println!("           {line}");
+            }
+        }
+        if watched.silent {
+            wrong += 1;
+            println!(
+                "         silent: logs written at {} and no session put since; the wrapper runs \
+                 but does not deliver",
+                watched.newest_log.map_or_else(String::new, at)
+            );
+        }
+    }
+    wrong
+}
+
+/// The watched agents as `--json` gives them.
+fn watched_json(watched: &[vibememory_cli::agents::Watched]) -> Vec<serde_json::Value> {
+    watched
+        .iter()
+        .map(|watched| {
+            serde_json::json!({
+                "agent": watched.agent,
+                "dir": watched.registration.dir,
+                "run": watched.registration.run,
+                "since": watched.registration.since,
+                "lastPut": watched.last_put,
+                "lastLook": watched.last_look,
+                "newestLog": watched.newest_log,
+                "failure": watched.failure.as_ref().map(|failure| serde_json::json!({
+                    "at": failure.at,
+                    "log": failure.log,
+                    "outcome": failure.outcome,
+                    "lines": failure.lines,
+                })),
+                "silent": watched.silent,
+                "missing": watched.missing,
+            })
+        })
+        .collect()
 }
 
 /// What a person does about a team store's pause: the cabinet for the team's standing, a new
@@ -2993,11 +3210,18 @@ fn report_json(
     let teams_wrong = teams
         .iter()
         .any(|facts| facts.pause.is_some() || !facts.problems.is_empty());
+    let watched = vibememory_cli::agents::watched(layout);
+    let watch_problem = vibememory_cli::agents::registry_problem(layout);
+    let watched_wrong = watch_problem.is_some()
+        || watched
+            .iter()
+            .any(vibememory_cli::agents::Watched::is_wrong);
     let failed = wrong > 0
         || mirror.is_some_and(Mirror::is_fault)
         || disk_low
         || tokens_wrong
-        || teams_wrong;
+        || teams_wrong
+        || watched_wrong;
     let report = serde_json::json!({
         "version": vibememory_cli::update::CURRENT,
         "newerRelease": vibememory_cli::update::newer_known(layout),
@@ -3012,8 +3236,15 @@ fn report_json(
         "teams": teams_json(&teams),
         "clients": vibememory_cli::credentials::started_clients(&layout.engine_dir)
             .into_iter()
-            .map(|(agent, started)| serde_json::json!({ "agent": agent, "started": started }))
+            .map(|(agent, start)| serde_json::json!({
+                "agent": agent,
+                "started": start.stamp,
+                "version": start.version,
+                "behind": start.behind(vibememory_cli::update::CURRENT),
+            }))
             .collect::<Vec<_>>(),
+        "watched": watched_json(&watched),
+        "watchProblem": watch_problem,
         "agents": foreign_sessions(layout)
             .into_iter()
             .map(|(store, agent, sessions, newest)| serde_json::json!({

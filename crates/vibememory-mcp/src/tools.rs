@@ -118,12 +118,14 @@ fn history_search_entry() -> Value {
                         other agents handed over. Returns which session of which agent, when, and \
                         a short excerpt — never whole transcripts. Newest first, \
                         because that is the order a person asks about their own history in. \
-                        Narrow with `project` when you know it: the corpus is gigabytes.",
+                        Narrow with `project` when you know it: the corpus is gigabytes. Narrow \
+                        with `agent` to one agent's sessions — your own, or another's.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "query": { "type": "string", "description": "Words that must all appear in one message." },
                 "project": { "type": "string", "description": "Limit to one project. Omit to search all of them." },
+                "agent": { "type": "string", "description": "Limit to one agent's sessions, by the name in each result's `agent`: `claude-code` for Claude Code's own. Omit to search every agent." },
                 "limit": { "type": "integer", "description": "How many matches to return; 20 by default, 100 at most." }
             },
             "required": ["query"]
@@ -713,12 +715,22 @@ fn history_search(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memorie
                     .clamp(1, MAX_HISTORY_LIMIT)
             });
 
+    // One agent's sessions are told apart before a byte of them is read: the corpus is gigabytes,
+    // and the agent is known from where the file lies.
+    let only_agent = arguments.get("agent").and_then(Value::as_str);
+
     // Newest first across projects too, not project by project: "what did I say about X" is a
     // question about time, not about directories.
     let mut sessions = Vec::new();
     for project in scope(arguments, caller, memories)? {
         for transcript in memories.transcripts(&project)? {
-            sessions.push((project.clone(), transcript));
+            let agent = transcript
+                .agent
+                .as_deref()
+                .unwrap_or(vibememory_core::foreign::CLAUDE_CODE);
+            if only_agent.is_none_or(|wanted| wanted == agent) {
+                sessions.push((project.clone(), transcript));
+            }
         }
     }
     sessions.sort_by_key(|(_, transcript)| std::cmp::Reverse(transcript.modified));

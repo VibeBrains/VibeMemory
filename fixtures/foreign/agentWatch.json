@@ -1,0 +1,97 @@
+{
+  "description": "The two decisions of watching an agent without hooks: which logs are new since the tick last looked, and whether the agent has gone silent. Format and how to add a case: docs/manuals/foreignSessionSpec.md",
+  "changed": [
+    {
+      "id": "firstLookAfterRegistration",
+      "note": "Registration takes the directory as it is: nothing written before it is new",
+      "seen": { "a": 100, "b": 200 },
+      "found": { "a": 100, "b": 200 },
+      "expect": []
+    },
+    {
+      "id": "oneLogGrew",
+      "note": "A log written to since the last look is handed to the wrapper, the others are not",
+      "seen": { "a": 100, "b": 200 },
+      "found": { "a": 100, "b": 260 },
+      "expect": ["b"]
+    },
+    {
+      "id": "newLogsOldestFirst",
+      "note": "Logs that were not there before are new, in the order they were written",
+      "seen": { "a": 100 },
+      "found": { "a": 100, "c": 400, "d": 300 },
+      "expect": ["d", "c"]
+    },
+    {
+      "id": "clockSetBack",
+      "note": "A time that moved back still means the file changed",
+      "seen": { "a": 500 },
+      "found": { "a": 450 },
+      "expect": ["a"]
+    },
+    {
+      "id": "sameTimeByName",
+      "note": "Logs written in the same second come by name, so two runs hand them over in one order",
+      "seen": {},
+      "found": { "b": 300, "a": 300 },
+      "expect": ["a", "b"]
+    },
+    {
+      "id": "removedLogIsNotNew",
+      "note": "A log that is gone is nothing to hand over",
+      "seen": { "a": 100, "b": 200 },
+      "found": { "a": 100 },
+      "expect": []
+    }
+  ],
+  "silent": [
+    {
+      "id": "deliveredRecently",
+      "note": "The last put follows the newest log: the wrapper keeps up",
+      "newestLog": 10000,
+      "lastPut": 10060,
+      "registered": 1000,
+      "expect": false
+    },
+    {
+      "id": "slowWrapperWithinGrace",
+      "note": "Logs ahead of the last put by less than fifteen minutes: a slow wrapper, not a broken one",
+      "newestLog": 10900,
+      "lastPut": 10000,
+      "registered": 1000,
+      "expect": false
+    },
+    {
+      "id": "logsRunAhead",
+      "note": "Logs more than fifteen minutes ahead of the last put: the wrapper stopped delivering",
+      "newestLog": 10901,
+      "lastPut": 10000,
+      "registered": 1000,
+      "expect": true
+    },
+    {
+      "id": "neverDeliveredButNoNewLogs",
+      "note": "No put yet and nothing written since registration: history, not silence",
+      "newestLog": 900,
+      "lastPut": null,
+      "registered": 1000,
+      "expect": false
+    },
+    {
+      "id": "neverDelivered",
+      "note": "No put since registration while logs keep being written: the wrapper never worked here",
+      "newestLog": 2000,
+      "lastPut": null,
+      "registered": 1000,
+      "expect": true
+    },
+    {
+      "id": "putBeforeRegistration",
+      "note": "A put from before registration does not move the start of the count back",
+      "newestLog": 1500,
+      "lastPut": 100,
+      "registered": 1000,
+      "expect": false
+    }
+  ]
+}

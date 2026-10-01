@@ -446,5 +446,23 @@ fn another_agents_session_is_found_beside_claude_codes_and_a_sidecar_is_not_a_se
             }]),
             "the agent's words, and not the subagent's copy of them"
         );
+        let only = |agent: &str| {
+            tools::call(
+                "history_search",
+                &json!({ "query": "exports fixed", "agent": agent }),
+                &CALLER,
+                memories,
+            )
+            .unwrap()["results"]
+                .as_array()
+                .unwrap()
+                .len()
+        };
+        assert_eq!(only("dsh-desktop"), 1, "one agent's own sessions");
+        assert_eq!(
+            only("claude-code"),
+            0,
+            "Claude Code's sessions do not hold the words, and its subagent's copy is no session"
+        );
     }
 }

@@ -1370,6 +1370,9 @@ fn a_local_server_refuses_an_agent_name_at_start_and_notes_a_good_one() {
 
     let _ = run("dsh-desktop");
     let noted = fs::read_to_string(engine.join("clients/dsh-desktop")).unwrap();
-    assert!(noted.trim_end().ends_with('Z'), "{noted}");
+    // When it started and which build it was: by the build, doctor tells a server older than the engine
+    let (stamp, version) = noted.trim_end().split_once(' ').unwrap();
+    assert!(stamp.ends_with('Z'), "{noted}");
+    assert_eq!(version, env!("CARGO_PKG_VERSION"), "{noted}");
     fs::remove_dir_all(&engine).unwrap();
 }
