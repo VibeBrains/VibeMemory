@@ -58,3 +58,48 @@ pub fn token_ids(text: &[u8]) -> BTreeSet<String> {
         .map(|id| format!("{PUBLIC_ID_PREFIX}{id}"))
         .collect()
 }
+
+/// What stands in a text in place of an issued token's secret after [`redact`].
+pub const REDACTED: &str = "<token>";
+
+/// `text` with every issued token cut out: the prefix, the id, the `_` and the secret after it give
+/// way to [`REDACTED`]. The secret runs to the first whitespace, quote or backslash — where it ends
+/// in a line of JSON, in a shell command and in prose. The same text always gives the same result,
+/// so a log converted twice makes no change to commit.
+#[must_use]
+pub fn redact(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    let mut at = 0;
+    while let Some(found) = text.get(at..).and_then(|rest| rest.find(PREFIX)) {
+        let start = at + found;
+        let shape = bytes.get(start..start + SHAPE_BYTES);
+        let issued = shape.is_some_and(|shape| {
+            shape.last() == Some(&b'_')
+                && shape
+                    .get(PREFIX.len()..PREFIX.len() + ID_LENGTH)
+                    .and_then(|id| std::str::from_utf8(id).ok())
+                    .is_some_and(is_id)
+        });
+        if !issued {
+            at = start + PREFIX.len();
+            continue;
+        }
+        let secret = start + SHAPE_BYTES;
+        let end = bytes
+            .get(secret..)
+            .and_then(|rest| {
+                rest.iter().position(|byte| {
+                    byte.is_ascii_whitespace() || matches!(byte, b'"' | b'\'' | b'\\')
+                })
+            })
+            .map_or(bytes.len(), |length| secret + length);
+        out.push_str(text.get(copied..start).unwrap_or_default());
+        out.push_str(REDACTED);
+        copied = end;
+        at = end;
+    }
+    out.push_str(text.get(copied..).unwrap_or_default());
+    out
+}

@@ -86,6 +86,7 @@ impl Machine {
     }
 
     fn put(&self, cwd: &str, agent: &str, source: &Path, ended: bool) -> Result<Placed, String> {
+        let bytes = fs::read(source).unwrap();
         put(
             &self.layout,
             &self.config,
@@ -94,7 +95,8 @@ impl Machine {
                 session: SESSION,
                 cwd,
                 portable_cwd: cwd,
-                source,
+                origin: &source.display().to_string(),
+                bytes: &bytes,
                 ended,
                 stamp: STAMP,
             },

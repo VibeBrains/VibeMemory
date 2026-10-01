@@ -1,0 +1,344 @@
+{
+  "description": "Logs of DeepSeek Harness as zstd frames compressed by Node, and the session the engine makes of each. Built by fixtures/foreign/buildDshLogs.mjs; format: docs/manuals/foreignSessionSpec.md",
+  "cases": [
+    {
+      "id": "framesJoined",
+      "note": "A log is many frames; their records join in order, and the header gives the id and the directory",
+      "expect": {
+        "session": "session-11111111-1111-4111-8111-111111111111",
+        "cwd": "/work/Promed",
+        "lines": [
+          {
+            "type": "user",
+            "timestamp": "2026-09-21T14:13:21.000Z",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "list the files"
+                }
+              ]
+            },
+            "uuid": "u-1"
+          },
+          {
+            "type": "assistant",
+            "timestamp": "2026-09-21T14:13:22.007Z",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "reasoning",
+                  "text": "thinking it over"
+                },
+                {
+                  "type": "text",
+                  "text": "here they are"
+                }
+              ]
+            },
+            "uuid": "a-1"
+          },
+          {
+            "type": "tool/call",
+            "timestamp": "2026-09-21T14:13:23.000Z",
+            "data": {
+              "name": "shell",
+              "input": {
+                "command": "ls"
+              }
+            },
+            "uuid": "session-11111111-1111-4111-8111-111111111111-3"
+          }
+        ]
+      },
+      "log": "KLUv/WAqAR0JANYQMyFQpzYHoFCjFRk/F+JKbWTskFQVLyDvDoHCdC2eu5mIqgYqACkAKQDLynu9Syy7g05edzSXKDRcixQiCycDHJZmWel0UO4QJ7OWqlcr/yFZTwKqdxTcNSK8K4QM5fX1E2g6McrPPj7AWi46h76cmABEo7wC64t3C0XIeFAylD+rrCZkdfAtUF72ZS16sFy4qEHNOblZookyLjZ35Do1ygZXJ9/BhPee4vkOFcndn/TsDmnKpuKwbLB81mHJmuIdIhjGYFiGq6mKT/GsDyQgYIJRiswHBCRFgid0QLXJKGozFgbnF4lJkNBGzJc0Oj43Fg507aCrk/KRoVFAg2QYQMgecEcx7p1mXLiFZEoRPh5GaEOsBI+LB9JuQBn7tmhrmii1L/0gY6UCABJFEReANW7koIGEmp0bXOoZWBVGYiSiHFXsMMF7742fP0pTWqYBTKE12lXd5bX1nCBiwYIY8ptQn5T8se3kzGoEXqufXxbouwQAO0NfdQRQtt6CJw=="
+    },
+    {
+      "id": "lastFrameCut",
+      "note": "The last frame of a live log is still being written: it is dropped, and the next look takes it whole",
+      "expect": {
+        "session": "session-11111111-1111-4111-8111-111111111111",
+        "cwd": "/work/Promed",
+        "lines": [
+          {
+            "type": "user",
+            "timestamp": "2026-09-21T14:13:21.000Z",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "list the files"
+                }
+              ]
+            },
+            "uuid": "u-1"
+          },
+          {
+            "type": "assistant",
+            "timestamp": "2026-09-21T14:13:22.007Z",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "reasoning",
+                  "text": "thinking it over"
+                },
+                {
+                  "type": "text",
+                  "text": "here they are"
+                }
+              ]
+            },
+            "uuid": "a-1"
+          },
+          {
+            "type": "tool/call",
+            "timestamp": "2026-09-21T14:13:23.000Z",
+            "data": {
+              "name": "shell",
+              "input": {
+                "command": "ls"
+              }
+            },
+            "uuid": "session-11111111-1111-4111-8111-111111111111-3"
+          }
+        ]
+      },
+      "log": "KLUv/WCNAUUKAHZSNyFQiZsDIB3GJrKDRP1cs5gtJ2ZWdADuMg7wW/fk6c5MM3stACwALgDbomR8WXmvh4t1d9LJ69CDC6UBH0SBNE4GSBgYw2JOCQX/cLJ7TPVq5TsS1pGM8sHVyXdS9ZACr1EhXlsylNfXT6DMaVF+1vEB99im8/bltAQoGOUVWN88DMvhsC5XmWpGg2h9Y4zkzyarrFkhfAuU133dixyONTB67UEnM4YoopybzCG2TgGFGKO1uYSg1zii/qjTIRCtZaO09/Ywk4TDPyka/vGSZYnjWMOxZx3H3NM8TMUSLSCAgiGi4gOICYe1A+6PIGrhB+Mp1npnBFFFMyApEjylA8pNRlebuTA4v0BMhgQ2ar6k0PExY/lAzw6aOik7MjIKZpDMAIL2gDUK495txoVYSFKKEOLhQxViIeC4cCD/BpKxb4u2vQkotS/9IKHVAwBiRxgbcGtz9SJIuGhJgTKCbKz1/yVwDNWrNGf/vQEHgKZBNHZXdvRKreQ82aM0ORnfQ3r1qwwxeg=="
+    },
+    {
+      "id": "lastLineCut",
+      "note": "A frame that ends in the middle of a line: the cut line is dropped",
+      "expect": {
+        "session": "session-11111111-1111-4111-8111-111111111111",
+        "cwd": "/work/Promed",
+        "lines": [
+          {
+            "type": "user",
+            "timestamp": "2026-09-21T14:13:21.000Z",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "list the files"
+                }
+              ]
+            },
+            "uuid": "u-1"
+          },
+          {
+            "type": "assistant",
+            "timestamp": "2026-09-21T14:13:22.007Z",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "reasoning",
+                  "text": "thinking it over"
+                },
+                {
+                  "type": "text",
+                  "text": "here they are"
+                }
+              ]
+            },
+            "uuid": "a-1"
+          },
+          {
+            "type": "tool/call",
+            "timestamp": "2026-09-21T14:13:23.000Z",
+            "data": {
+              "name": "shell",
+              "input": {
+                "command": "ls"
+              }
+            },
+            "uuid": "session-11111111-1111-4111-8111-111111111111-3"
+          }
+        ]
+      },
+      "log": "KLUv/WC1AXUKAEYSNyJAiTgHOB3iF9lBkqGWNs2PVJf4ca5Nzj4C/SS7GZdh4RUBLQAsACwATMLFHS/v9U+x7Q9a2XnknkJhPPdQHo2VAxAFpuCkFWK9O6zcXKpevfwGZB0JRrha+Q+qPlLeVQKYrgwXy86dv0DTalmGtnGC5nLxObtjtQgkmOUdcL74twHbcDVVcTqYrGe5SA5tsprMK+FrsLzt25zUaNk8yTH3rMwUpMgyLjKPcq2YFQgraxhFrnFkHVJjOxwYw0Zhzu0fJpC/Q2ryu8Mlm8nTktES2qdlc4p/mFgWgyEwIIACIaLaA9gkmjQwfwOR4bA44OIIohZ+ME6xtndEEEW0AUmV4Ok6oN5kBLUZhc35pcSkJLSR8yWFjo8ayweadtDVSf2RmVFAg4QGELIH3KiPe5cZF/5CklKEEA8b2hALAceFA/luIBk7bdHWNAE="
+    },
+    {
+      "id": "tokenCutOut",
+      "note": "A token of ours caught in the log is cut out: a file holding one would stay on this machine",
+      "expect": {
+        "session": "session-11111111-1111-4111-8111-111111111111",
+        "cwd": "/work/Promed",
+        "lines": [
+          {
+            "type": "user",
+            "timestamp": "2026-09-21T14:13:21.000Z",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "connect with <token> please"
+                }
+              ]
+            },
+            "uuid": "u-1"
+          }
+        ]
+      },
+      "log": "KLUv/WB4AGUHAHLOKyFQaZwDIJ2iL7LTpJnxbYdv49rUshn5ROO2VTh5nJnTzB6GaTKYfGV3oGPRMMubcsAW+zCOZp10rPL3oOJU+Bak930fjKDnlBhBB0YrLyRqpNmy9cet1UonXK18hqn+SeI1MkxXhy3p9vYTqLM6pJuFPvCgW8bcebM6BCRWegXalz2uE7Hlzem9Pir2nWFWbn9gVCQIEUqJpFgZAIEspDkrRMYzrPygU706fWhh3QgYAHisdZUGPWvQqCf1mswsBbiQ4AIEWgf8cMG4d2HGhaaQuFKEKh5WoSDETgIQFyWQ5QZcxj63aFua"
+    },
+    {
+      "id": "repeatedIdAndNoSeq",
+      "note": "Two messages with one id, and a record without seq: every line still gets an id of its own",
+      "expect": {
+        "session": "session-11111111-1111-4111-8111-111111111111",
+        "cwd": "/work/Promed",
+        "lines": [
+          {
+            "type": "assistant",
+            "timestamp": "2026-09-21T14:13:21.007Z",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "reasoning",
+                  "text": "thinking it over"
+                },
+                {
+                  "type": "text",
+                  "text": "one"
+                }
+              ]
+            },
+            "uuid": "a-1"
+          },
+          {
+            "type": "assistant",
+            "timestamp": "2026-09-21T14:13:22.007Z",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "reasoning",
+                  "text": "thinking it over"
+                },
+                {
+                  "type": "text",
+                  "text": "two"
+                }
+              ]
+            },
+            "uuid": "session-11111111-1111-4111-8111-111111111111-2"
+          },
+          {
+            "type": "tool/result",
+            "timestamp": "2026-09-21T14:13:29.000Z",
+            "data": {
+              "ok": true
+            },
+            "uuid": "session-11111111-1111-4111-8111-111111111111-i2"
+          }
+        ]
+      },
+      "log": "KLUv/WCIAa0IADZQMSFQqaYDIO3sS9n4WrdatJi6I+MqPqjQZby/k5COrKomeg0oACcAJgDe69li1x30Of2RbLE4WEoWyYHPAAmlUZLyJRB7gs8rlerVyIcsrCcBqmho1wcZyOnpJ1DlY5AbC/nASrXo/HnyMQGKBnkF0hfP9okg48koZwXIu74rn2Q+NwpOkCfIuJh8CoZp/lDra5ARrj7fQdU/ll24qgKG1h5hi+xIPVuezE3JIhCtGTR/5TWzJ+Rh1cFZyrFUYxW+PjtLrVQMHwCwUL4W/G0H42vgAJkBoA5mFmlINKVrVLOlatg1W/EoaVnYLMpibDhwMzCpREEM8y405cGVIlTxsAoFIXYSgLgogSw34DL2uUXb0gQ="
+    },
+    {
+      "id": "recordWithoutTime",
+      "note": "A record without a time cannot be placed by the merge and is left out",
+      "expect": {
+        "session": "session-11111111-1111-4111-8111-111111111111",
+        "cwd": "/work/Promed",
+        "lines": [
+          {
+            "type": "user",
+            "timestamp": "2026-09-21T14:13:22.000Z",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            },
+            "uuid": "u-1"
+          }
+        ]
+      },
+      "log": "KLUv/WB8AB0HAFJNKCFQa5sD4wQjEW3YrscvWkwswsSC1WGqNejYGtRnMlOb4QSH9w6emVJ3OBe+Buld38VcsxKjOaZYM1pBXOJMWmPiy1E9k7Srew3pswcZlXTC1eizZ5LDu6rTSKOjv0CTEZF2bHOCxdKe5erIiBAAUNI7gL7nbZU7jSOn9/q22PXlGI3OsLZIEBp7JA+G0QEKREFQMiqyXcHoxZLq1ek3DOuGGgAqAnrCoLHO9B2ZMVrRIEEDMmRPgQYIeACMezDGAJJoaowLDSJxpQhVPKxCQYidBCAuSiDLDbiMfW7RtjQB"
+    },
+    {
+      "id": "unknownVersion",
+      "note": "A version of the format this engine was not written for is refused by name, never guessed at",
+      "expect": {
+        "problem": "unknownVersion",
+        "version": 5
+      },
+      "log": "KLUv/WBSALUGALLMJiFga5oDRuTjFu3oTcUj3z6bjJMKANFMmaqUaKoHSZAtyAOHpkFo3NZ6w8nwPUgv+7L2GKYW7rXVnNEHeY80WnS+qDWetMLV6CtI9Uviru/QXBdipNPTb6DKiEg3lnkBa2qR8vVkRAwEnPQSpC+62/UQ48npvd4pll1BRqcvzSmSBNcciWNhtEACOUhSRoB0XzCaNaV6dfpMw/oRFwAqAnrCoLFO6h2ZMQrQIEEDCGQP+I2Cce/CjAtNIXGlCFU8rEJBiJ0EIC5KIMsNuIx9btG2NAE="
+    },
+    {
+      "id": "emptyLog",
+      "note": "A session that has just begun has written nothing: not a failure, nothing to hand over yet",
+      "expect": {
+        "problem": "empty"
+      },
+      "log": ""
+    },
+    {
+      "id": "headerOnly",
+      "note": "Only the header: still nothing to hand over",
+      "expect": {
+        "problem": "empty"
+      },
+      "log": "KLUv/SC/LQQA8gcaHHCLOhAhQtIOrve9IDbiCzfGd6Ar4DbAs+pzCw6AxxVSDjqfv0GXT0EjVnohYmvVc+jpUwaBBb2E/Kq3hRbKeRq917dmoz/K57yCtSZJNDYl08FnAYMsSC4fg+0MnyO2VK9GX2qsHQELALhShCoeVqEgxE4CEBclkOUGXMY+t2hbmg=="
+    },
+    {
+      "id": "noHeader",
+      "note": "A log whose first record is not the header is not a log of this format",
+      "expect": {
+        "problem": "noHeader"
+      },
+      "log": "KLUv/SCThQMAgsYVGoCpGgPGuCglb4Tq/VgyAzFBIJ/Zf5hpTIGdgGUxLDOlFHEqdAv5Lt3FjPF9yUpGe0yxNn4CR1rJ0aJjNMYcQxicXJG048kT6sb1gJxTRNDUvXNNFrsSCAAqAnrCQOMKM5EBhpBg4riKpQuUAQ=="
+    },
+    {
+      "id": "damagedLine",
+      "note": "A line that is not JSON before the last one: the log is damaged, not merely being written",
+      "expect": {
+        "problem": "record",
+        "line": 2
+      },
+      "log": "KLUv/WBcAPUGAFLNKCFQa5sDJQdjE200WS90337GIUZ9fAZerUHH1nD5JGZiF2pIFB1EztbuMDJ8DdDrvi4fxzHGe7Llc/KSPBBarUq8YeuUQCtcnXxGqb5R3vVBXCrCYdNBSHRtqoFeX3+BMicE2rHOCVyyVczblxNCAGBB78D6qr9tj2p8Gb3Xv8W6M8rJ602+hZLw8qE8GE4OUCRLspiTAt8XnOySqV6NvtOwhgIXACoCesKgsc7sHZkxCtAgQQMSZI/6jYJxP8OMYJqy40oRqnhYhYIQOwlAXJRAlhtwGfvcom1pAg=="
+    }
+  ],
+  "logNames": [
+    {
+      "name": "session.v4.jsonl.zstd",
+      "expect": true
+    },
+    {
+      "name": "session.v5.jsonl.zstd",
+      "expect": true
+    },
+    {
+      "name": "session.v12.jsonl.zstd",
+      "expect": true
+    },
+    {
+      "name": "session.lock",
+      "expect": false
+    },
+    {
+      "name": "session.v.jsonl.zstd",
+      "expect": false
+    },
+    {
+      "name": "session.vx.jsonl.zstd",
+      "expect": false
+    },
+    {
+      "name": "session.v4.jsonl",
+      "expect": false
+    }
+  ]
+}

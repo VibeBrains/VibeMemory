@@ -6,6 +6,10 @@
 //! would be one more thing to install and one more thing to die without a witness. What decides is
 //! in `vibememory_core::agent_watch`; here are the files and the wrapper's process.
 //!
+//! An agent the engine knows by a preset — `DeepSeek` Harness, `--preset dsh` — needs no wrapper:
+//! the tick reads its log itself (`vibememory_core::dsh`) and places the session as `session put`
+//! would.
+//!
 //! Everything lives on this machine: the directory and the wrapper are this machine's, and a team
 //! store has no business knowing where an agent keeps its logs here.
 
@@ -16,9 +20,10 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use vibememory_core::agent_watch;
 use vibememory_core::naming::slug::is_slug;
+use vibememory_core::{agent_watch, dsh};
 
+use crate::config::Config;
 use crate::install::Layout;
 
 /// The registry, in the engine's directory: agent, log directory, wrapper.
@@ -51,14 +56,71 @@ pub const BINARY_VAR: &str = "VIBEMEMORY_BIN";
 /// The environment variable that names the agent the wrapper is run for.
 pub const AGENT_VAR: &str = "VIBEMEMORY_AGENT";
 
-/// One registered agent.
+/// An agent whose log the engine reads itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Preset {
+    /// `DeepSeek` Harness: `~/.dsh/sessions/<directory>/<session>/session.v4.jsonl.zstd`.
+    Dsh,
+}
+
+impl Preset {
+    /// The name `--preset` takes.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Dsh => "dsh",
+        }
+    }
+
+    /// The preset of a name.
+    #[must_use]
+    pub fn of(name: &str) -> Option<Self> {
+        (name == Self::Dsh.name()).then_some(Self::Dsh)
+    }
+
+    /// Where the agent keeps its logs when nothing else is said, under the home directory.
+    #[must_use]
+    pub fn default_dir(self, home: &Path) -> PathBuf {
+        match self {
+            Self::Dsh => home.join(".dsh").join("sessions"),
+        }
+    }
+
+    /// Whether a file under the log directory is a log: everything else beside it — a lock, a
+    /// temporary file — is neither handed over nor taken as a sign of life.
+    #[must_use]
+    pub fn is_log(self, path: &Path) -> bool {
+        match self {
+            Self::Dsh => path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(vibememory_core::dsh::is_log_name),
+        }
+    }
+}
+
+/// Who turns a log into a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Handler<'a> {
+    /// The agent's own wrapper, run with the path of one log.
+    Run(&'a Path),
+    /// The engine itself.
+    Preset(Preset),
+}
+
+/// One registered agent: with a wrapper or with a preset, never both.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Registration {
     /// The directory the agent writes its logs into, absolute.
     pub dir: String,
     /// The wrapper, absolute: run with the path of one log.
-    pub run: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// The preset the engine reads the log by.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<Preset>,
     /// When it was registered, seconds since the epoch: logs older than this are history.
     pub since: u64,
 }
@@ -87,9 +149,24 @@ struct Watch {
     last_look: Option<u64>,
     /// The last failure of the wrapper; cleared by its next success.
     failure: Option<Failure>,
+    /// Logs a preset could not hand over, each for a reason of its own, by path: tried again when
+    /// they are written to, and said by `doctor` until then.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    skipped: BTreeMap<String, Failure>,
 }
 
-/// Registers an agent: its logs from now on go to `run`, one log per run.
+/// Why a log was not delivered.
+enum Missed {
+    /// Whatever stopped this log stops the agent's others too: the wrapper failing, a format this
+    /// engine does not know. The log stays new, and the rest wait behind it.
+    Agent(Failure),
+    /// Only this log: its project directory is gone, it is damaged. The others go on, and this one
+    /// is set aside until it changes — tried every run, it would hold the agent's history forever.
+    Log(Failure),
+}
+
+/// Registers an agent: its logs from now on go to its wrapper or are read by its preset, one log at
+/// a time. With `backfill` the logs already there are handed over too, a bounded number per tick.
 ///
 /// # Errors
 ///
@@ -99,7 +176,8 @@ pub fn register(
     layout: &Layout,
     agent: &str,
     dir: &Path,
-    run: &Path,
+    handler: Handler<'_>,
+    backfill: bool,
 ) -> Result<Registration, String> {
     if !is_slug(agent) {
         return Err(format!(
@@ -112,13 +190,21 @@ pub fn register(
     if !dir.is_dir() {
         return Err(format!("{} is not a directory", dir.display()));
     }
-    let run = std::fs::canonicalize(run).map_err(|error| format!("{}: {error}", run.display()))?;
-    if !run.is_file() {
-        return Err(format!("{} is not a file", run.display()));
-    }
+    let (run, preset) = match handler {
+        Handler::Run(run) => {
+            let run = std::fs::canonicalize(run)
+                .map_err(|error| format!("{}: {error}", run.display()))?;
+            if !run.is_file() {
+                return Err(format!("{} is not a file", run.display()));
+            }
+            (Some(run.to_string_lossy().into_owned()), None)
+        }
+        Handler::Preset(preset) => (None, Some(preset)),
+    };
     let registration = Registration {
         dir: dir.to_string_lossy().into_owned(),
-        run: run.to_string_lossy().into_owned(),
+        run,
+        preset,
         since: now(),
     };
     let mut registry = registry(layout);
@@ -126,11 +212,17 @@ pub fn register(
     write_json(&layout.engine_dir.join(REGISTRY_FILE), &registry)?;
     // The directory as it is now is the baseline: what was written before registration is history,
     // and handing all of it to the wrapper in the first tick would hold the tick for as long as the
-    // history is long.
+    // history is long. Asked for the history, the baseline is empty, and the tick takes it in
+    // bounded portions.
     let watch = Watch {
-        seen: logs(&dir),
+        seen: if backfill {
+            BTreeMap::new()
+        } else {
+            logs(&dir, preset)
+        },
         last_look: Some(registration.since),
         failure: None,
+        skipped: BTreeMap::new(),
     };
     write_json(&state_path(layout, agent, "json"), &watch)?;
     Ok(registration)
@@ -211,6 +303,8 @@ pub struct Ran {
     pub waiting: usize,
     /// The wrapper's failure this run, if it failed.
     pub failure: Option<Failure>,
+    /// Logs set aside this run, each for a reason of its own.
+    pub skipped: Vec<Failure>,
     /// The log directory is not there.
     pub missing: bool,
 }
@@ -220,16 +314,22 @@ pub struct Ran {
 /// other logs wait behind it: they are the same wrapper, and it would fail on them for the same
 /// reason.
 #[must_use]
-pub fn tick(layout: &Layout) -> Vec<Ran> {
+pub fn tick(layout: &Layout, config: &Config) -> Vec<Ran> {
     let binary = std::env::current_exe().ok();
     registry(layout)
         .into_iter()
-        .map(|(agent, registration)| look(layout, &agent, &registration, binary.as_deref()))
+        .map(|(agent, registration)| look(layout, config, &agent, &registration, binary.as_deref()))
         .collect()
 }
 
 /// One look at one agent.
-fn look(layout: &Layout, agent: &str, registration: &Registration, binary: Option<&Path>) -> Ran {
+fn look(
+    layout: &Layout,
+    config: &Config,
+    agent: &str,
+    registration: &Registration,
+    binary: Option<&Path>,
+) -> Ran {
     let dir = Path::new(&registration.dir);
     if !dir.is_dir() {
         return Ran {
@@ -237,25 +337,43 @@ fn look(layout: &Layout, agent: &str, registration: &Registration, binary: Optio
             handed: 0,
             waiting: 0,
             failure: None,
+            skipped: Vec::new(),
             missing: true,
         };
     }
     let mut watch = read_watch(layout, agent);
-    let found = logs(dir);
+    let found = logs(dir, registration.preset);
     let fresh = agent_watch::changed(&watch.seen, &found);
     // Logs that are gone leave the list: it only ever holds what the directory holds.
     watch.seen.retain(|name, _| found.contains_key(name));
+    watch.skipped.retain(|name, _| found.contains_key(name));
     let mut handed = 0;
     let mut failure = None;
+    let mut skipped = Vec::new();
     for name in fresh.iter().take(LOGS_PER_TICK) {
-        match run_wrapper(registration, agent, name, binary) {
+        let delivered = match (registration.preset, &registration.run) {
+            (Some(preset), _) => read_log(layout, config, agent, preset, name),
+            (None, Some(run)) => run_wrapper(run, agent, name, binary).map_err(Missed::Agent),
+            (None, None) => Err(Missed::Agent(Failure {
+                at: now(),
+                log: name.clone(),
+                outcome: "the registration names neither a wrapper nor a preset".to_owned(),
+                lines: Vec::new(),
+            })),
+        };
+        let modified = found.get(name).copied().unwrap_or_default();
+        match delivered {
             Ok(()) => {
-                if let Some(modified) = found.get(name) {
-                    watch.seen.insert(name.clone(), *modified);
-                }
+                watch.seen.insert(name.clone(), modified);
+                watch.skipped.remove(name);
                 handed += 1;
             }
-            Err(failed) => {
+            Err(Missed::Log(missed)) => {
+                watch.seen.insert(name.clone(), modified);
+                watch.skipped.insert(name.clone(), missed.clone());
+                skipped.push(missed);
+            }
+            Err(Missed::Agent(failed)) => {
                 failure = Some(failed);
                 break;
             }
@@ -270,27 +388,83 @@ fn look(layout: &Layout, agent: &str, registration: &Registration, binary: Optio
     let _ = write_json(&state_path(layout, agent, "json"), &watch);
     Ran {
         agent: agent.to_owned(),
+        waiting: fresh.len() - handed - skipped.len(),
         handed,
-        waiting: fresh.len() - handed,
         failure,
+        skipped,
         missing: false,
     }
 }
 
-/// Runs the wrapper for one log, stopping it after [`WRAPPER_TIMEOUT`].
-fn run_wrapper(
-    registration: &Registration,
+/// Reads one log by its preset and places the session. A log with nothing in it yet is no failure:
+/// it is taken as seen, and its next write makes it new again.
+fn read_log(
+    layout: &Layout,
+    config: &Config,
     agent: &str,
+    preset: Preset,
     log: &str,
-    binary: Option<&Path>,
-) -> Result<(), Failure> {
+) -> Result<(), Missed> {
+    let failure = |outcome: String| Failure {
+        at: now(),
+        log: log.to_owned(),
+        outcome,
+        lines: Vec::new(),
+    };
+    let raw = std::fs::read(log)
+        .map_err(|error| Missed::Agent(failure(format!("could not be read: {error}"))))?;
+    let session = match preset {
+        Preset::Dsh => match vibememory_core::dsh::convert(&raw) {
+            Ok(session) => session,
+            Err(dsh::Problem::Empty) => return Ok(()),
+            Err(problem @ dsh::Problem::UnknownVersion(_)) => {
+                return Err(Missed::Agent(failure(describe_dsh(&problem))));
+            }
+            Err(problem) => return Err(Missed::Log(failure(describe_dsh(&problem)))),
+        },
+    };
+    crate::foreign_session::hand_over(
+        layout,
+        config,
+        &crate::foreign_session::Handed {
+            agent,
+            session: &session.id,
+            cwd: &session.cwd,
+            origin: log,
+            bytes: session.file.as_bytes(),
+            ended: false,
+        },
+    )
+    .map(|_| ())
+    .map_err(|error| Missed::Log(failure(error)))
+}
+
+/// Why a log of DSH gives no session, in words.
+fn describe_dsh(problem: &dsh::Problem) -> String {
+    match problem {
+        dsh::Problem::Empty => "holds nothing yet".to_owned(),
+        dsh::Problem::NotText => "is not UTF-8 text once decompressed".to_owned(),
+        dsh::Problem::NoHeader => {
+            "does not begin with a session header holding its id and directory".to_owned()
+        }
+        dsh::Problem::UnknownVersion(version) => format!(
+            "the DSH log format v{version} is unknown to this engine, which reads v{}: \
+             vibememory update",
+            dsh::LOG_VERSION
+        ),
+        dsh::Problem::Record { line } => format!("line {line} is not JSON: the log is damaged"),
+    }
+}
+
+/// Runs the wrapper for one log, stopping it after [`WRAPPER_TIMEOUT`].
+fn run_wrapper(run: &str, agent: &str, log: &str, binary: Option<&Path>) -> Result<(), Failure> {
     let failure = |outcome: String, lines: Vec<String>| Failure {
         at: now(),
         log: log.to_owned(),
         outcome,
         lines,
     };
-    let mut command = Command::new(&registration.run);
+    let mut command = Command::new(run);
     command
         .arg(log)
         .env(AGENT_VAR, agent)
@@ -400,6 +574,9 @@ pub struct Watched {
     pub last_look: Option<u64>,
     /// The wrapper's last failure, if its last run failed.
     pub failure: Option<Failure>,
+    /// Logs a preset set aside, each for a reason of its own: said, but no fault of the
+    /// integration — the others go on.
+    pub skipped: Vec<Failure>,
     /// When the newest log in its directory was written.
     pub newest_log: Option<u64>,
     /// Logs keep coming and sessions do not.
@@ -416,7 +593,7 @@ pub fn watched(layout: &Layout) -> Vec<Watched> {
         .map(|(agent, registration)| {
             let dir = Path::new(&registration.dir);
             let missing = !dir.is_dir();
-            let newest_log = logs(dir).into_values().max();
+            let newest_log = logs(dir, registration.preset).into_values().max();
             let last_put = last_put(layout, &agent);
             let watch = read_watch(layout, &agent);
             let silent = newest_log
@@ -426,6 +603,7 @@ pub fn watched(layout: &Layout) -> Vec<Watched> {
                 last_put,
                 last_look: watch.last_look,
                 failure: watch.failure,
+                skipped: watch.skipped.into_values().collect(),
                 newest_log,
                 silent,
                 missing,
@@ -435,15 +613,16 @@ pub fn watched(layout: &Layout) -> Vec<Watched> {
         .collect()
 }
 
-/// The files under a log directory and their modification times, by path. Links are not followed:
-/// a link out of the directory would make the walk someone else's tree.
-fn logs(dir: &Path) -> BTreeMap<String, u64> {
+/// The logs under a log directory and their modification times, by path: every file for an agent
+/// with a wrapper, only what its preset calls a log otherwise. Links are not followed: a link out
+/// of the directory would make the walk someone else's tree.
+fn logs(dir: &Path, preset: Option<Preset>) -> BTreeMap<String, u64> {
     let mut found = BTreeMap::new();
-    walk(dir, 0, &mut found);
+    walk(dir, 0, preset, &mut found);
     found
 }
 
-fn walk(dir: &Path, depth: usize, found: &mut BTreeMap<String, u64>) {
+fn walk(dir: &Path, depth: usize, preset: Option<Preset>, found: &mut BTreeMap<String, u64>) {
     if depth > MAX_DEPTH {
         return;
     }
@@ -456,8 +635,8 @@ fn walk(dir: &Path, depth: usize, found: &mut BTreeMap<String, u64>) {
         };
         let path = entry.path();
         if kind.is_dir() {
-            walk(&path, depth + 1, found);
-        } else if kind.is_file() {
+            walk(&path, depth + 1, preset, found);
+        } else if kind.is_file() && preset.is_none_or(|preset| preset.is_log(&path)) {
             let modified = entry
                 .metadata()
                 .and_then(|data| data.modified())

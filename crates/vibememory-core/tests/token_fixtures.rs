@@ -9,7 +9,7 @@
 )]
 
 use serde::Deserialize;
-use vibememory_core::token::{holds_token, token_ids};
+use vibememory_core::token::{holds_token, redact, token_ids};
 
 const CASES: &str = include_str!("../../../fixtures/export/settingsWithToken.json");
 
@@ -52,6 +52,16 @@ fn a_copy_holding_a_token_is_recognised_and_nothing_else_is() {
             failures.push(format!(
                 "{}: expected holdsToken {}",
                 case.id, case.expect.holds_token
+            ));
+        }
+        let redacted = redact(&case.text);
+        if holds_token(redacted.as_bytes()) {
+            failures.push(format!("{}: a token survives redaction", case.id));
+        }
+        if !case.expect.holds_token && redacted != case.text {
+            failures.push(format!(
+                "{}: redaction changed a text without a token",
+                case.id
             ));
         }
         let found: Vec<String> = token_ids(case.text.as_bytes()).into_iter().collect();
