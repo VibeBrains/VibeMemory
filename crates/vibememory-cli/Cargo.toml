@@ -29,3 +29,8 @@ workspace = true
 # Mode, and the standard library's own `junction_point` is still unstable (1.97.1).
 [target.'cfg(windows)'.dependencies]
 junction.workspace = true
+
+# A log of DSH for a project directory a test makes: the fixture's logs name a directory that is
+# not on this disk, and only an encoder writes one for a directory that is.
+[dev-dependencies]
+ruzstd.workspace = true

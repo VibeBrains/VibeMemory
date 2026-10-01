@@ -8,6 +8,7 @@
 pub mod agent_watch;
 pub mod claim;
 pub mod desktop;
+pub mod dsh;
 pub mod export;
 pub mod foreign;
 pub mod json_edit;
@@ -22,6 +23,7 @@ pub mod ssh_key;
 pub mod team_store;
 pub mod terminal;
 pub mod token;
+pub mod utc;
 
 /// Longest file name APFS and NTFS accept, in bytes of UTF-8. Every name the engine invents — a
 /// store directory, a quarantined version — has to fit, or the checkout breaks on the other

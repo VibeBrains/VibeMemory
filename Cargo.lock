@@ -177,6 +177,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "ruzstd"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a252f5e20f038fe7b4ea53e073e65398d652c864cc162fc77c56c2f13717b888"
+dependencies = [
+ "twox-hash",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -297,6 +306,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
+name = "twox-hash"
+version = "2.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5283634e518fe9e82c7b20520bb4bc209009fd16c82077c802f8111ecbb0117a"
+
+[[package]]
 name = "typed-path"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -319,9 +334,10 @@ dependencies = [
 
 [[package]]
 name = "vibememory-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "junction",
+ "ruzstd",
  "serde",
  "serde_json",
  "sysinfo",
@@ -331,9 +347,10 @@ dependencies = [
 
 [[package]]
 name = "vibememory-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "globset",
+ "ruzstd",
  "serde",
  "serde_json",
  "thiserror",
@@ -343,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "vibememory-mcp"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",

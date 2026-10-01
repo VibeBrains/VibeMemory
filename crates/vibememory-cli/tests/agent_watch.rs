@@ -19,15 +19,18 @@ use std::time::{Duration, SystemTime};
 
 use support::TempDir;
 use vibememory_cli::agents::{
-    record_put, register, registry, registry_problem, tick, unregister, watched,
+    Handler, Preset, record_put, register, registry, registry_problem, tick, unregister, watched,
 };
+use vibememory_cli::config::Config;
 use vibememory_cli::install::Layout;
+use vibememory_core::naming::PathSyntax;
 
 const AGENT: &str = "dsh-desktop";
 
 struct Machine {
     temp: TempDir,
     layout: Layout,
+    config: Config,
     logs: PathBuf,
 }
 
@@ -38,7 +41,13 @@ fn machine(label: &str) -> Machine {
         engine_dir: temp.dir("engine"),
     };
     let logs = temp.dir("logs");
-    Machine { temp, layout, logs }
+    let config = Config::parse(r#"{"machineId": "mac-main"}"#, PathSyntax::Posix).unwrap();
+    Machine {
+        temp,
+        layout,
+        config,
+        logs,
+    }
 }
 
 /// A log of the agent, written now, a few levels down as DSH keeps them. The wrapper gets it by
@@ -90,18 +99,25 @@ fn registration_checks_what_it_is_given() {
     let file = m.temp.path().join("wrapper");
     fs::write(&file, "").unwrap();
     assert!(
-        register(&m.layout, "Not A Slug", &m.logs, &file).is_err(),
+        register(&m.layout, "Not A Slug", &m.logs, Handler::Run(&file), false).is_err(),
         "the agent becomes a file name"
     );
     assert!(
-        register(&m.layout, AGENT, &m.temp.path().join("nowhere"), &file).is_err(),
+        register(
+            &m.layout,
+            AGENT,
+            &m.temp.path().join("nowhere"),
+            Handler::Run(&file),
+            false
+        )
+        .is_err(),
         "a log directory that is not there watches nothing"
     );
     assert!(
-        register(&m.layout, AGENT, &m.logs, &m.logs).is_err(),
+        register(&m.layout, AGENT, &m.logs, Handler::Run(&m.logs), false).is_err(),
         "the wrapper is a program, not a directory"
     );
-    let registration = register(&m.layout, AGENT, &m.logs, &file).unwrap();
+    let registration = register(&m.layout, AGENT, &m.logs, Handler::Run(&file), false).unwrap();
     assert_eq!(registry(&m.layout).get(AGENT), Some(&registration));
     assert!(unregister(&m.layout, AGENT).unwrap());
     assert!(
@@ -117,9 +133,9 @@ fn the_tick_hands_each_new_log_to_the_wrapper_once() {
     let m = machine("agent-tick");
     let before = write_log(&m.logs, "before");
     let (script, noted) = wrapper(&m.temp, "ok", false);
-    register(&m.layout, AGENT, &m.logs, &script).unwrap();
+    register(&m.layout, AGENT, &m.logs, Handler::Run(&script), false).unwrap();
 
-    let ran = tick(&m.layout);
+    let ran = tick(&m.layout, &m.config);
     assert_eq!(
         (ran[0].handed, ran[0].waiting),
         (0, 0),
@@ -128,7 +144,7 @@ fn the_tick_hands_each_new_log_to_the_wrapper_once() {
     assert!(!noted.exists());
 
     let fresh = write_log(&m.logs, "fresh");
-    let ran = tick(&m.layout);
+    let ran = tick(&m.layout, &m.config);
     assert_eq!(ran[0].handed, 1);
     assert_eq!(
         fs::read_to_string(&noted).unwrap(),
@@ -136,10 +152,14 @@ fn the_tick_hands_each_new_log_to_the_wrapper_once() {
         "the wrapper gets the log's path, and the agent's name in its environment"
     );
 
-    assert_eq!(tick(&m.layout)[0].handed, 0, "a log is handed over once");
+    assert_eq!(
+        tick(&m.layout, &m.config)[0].handed,
+        0,
+        "a log is handed over once"
+    );
     set_modified(&before, SystemTime::now() + Duration::from_secs(5));
     assert_eq!(
-        tick(&m.layout)[0].handed,
+        tick(&m.layout, &m.config)[0].handed,
         1,
         "and again once it is written to"
     );
@@ -150,10 +170,10 @@ fn the_tick_hands_each_new_log_to_the_wrapper_once() {
 fn a_failing_wrapper_is_written_down_and_tried_again() {
     let m = machine("agent-fail");
     let (script, _) = wrapper(&m.temp, "fails", true);
-    register(&m.layout, AGENT, &m.logs, &script).unwrap();
+    register(&m.layout, AGENT, &m.logs, Handler::Run(&script), false).unwrap();
     let log = write_log(&m.logs, "one");
 
-    let ran = tick(&m.layout);
+    let ran = tick(&m.layout, &m.config);
     let failure = ran[0].failure.clone().expect("the wrapper failed");
     assert_eq!(failure.outcome, "exit code 3");
     assert_eq!(
@@ -167,15 +187,15 @@ fn a_failing_wrapper_is_written_down_and_tried_again() {
     );
     assert_eq!(watched(&m.layout)[0].failure, Some(failure));
     assert_eq!(
-        tick(&m.layout)[0].handed,
+        tick(&m.layout, &m.config)[0].handed,
         0,
         "the log it failed on stays new and is tried again"
     );
-    assert!(tick(&m.layout)[0].failure.is_some());
+    assert!(tick(&m.layout, &m.config)[0].failure.is_some());
 
     // The log it failed on is gone: nothing is failing any more, and doctor must not stay red.
     fs::remove_file(&log).unwrap();
-    assert_eq!(tick(&m.layout)[0].failure, None);
+    assert_eq!(tick(&m.layout, &m.config)[0].failure, None);
     assert_eq!(watched(&m.layout)[0].failure, None);
 }
 
@@ -184,16 +204,16 @@ fn a_failing_wrapper_is_written_down_and_tried_again() {
 fn a_tick_hands_over_a_bounded_number_of_logs() {
     let m = machine("agent-bound");
     let (script, _) = wrapper(&m.temp, "ok", false);
-    register(&m.layout, AGENT, &m.logs, &script).unwrap();
+    register(&m.layout, AGENT, &m.logs, Handler::Run(&script), false).unwrap();
     for index in 0..=vibememory_cli::agents::LOGS_PER_TICK {
         write_log(&m.logs, &format!("log-{index}"));
     }
-    let ran = tick(&m.layout);
+    let ran = tick(&m.layout, &m.config);
     assert_eq!(
         (ran[0].handed, ran[0].waiting),
         (vibememory_cli::agents::LOGS_PER_TICK, 1)
     );
-    let ran = tick(&m.layout);
+    let ran = tick(&m.layout, &m.config);
     assert_eq!(
         (ran[0].handed, ran[0].waiting),
         (1, 0),
@@ -206,7 +226,7 @@ fn an_agent_whose_logs_outrun_its_sessions_is_silent() {
     let m = machine("agent-silent");
     let file = m.temp.path().join("wrapper");
     fs::write(&file, "").unwrap();
-    register(&m.layout, AGENT, &m.logs, &file).unwrap();
+    register(&m.layout, AGENT, &m.logs, Handler::Run(&file), false).unwrap();
     let log = write_log(&m.logs, "talking");
     assert!(
         !watched(&m.layout)[0].silent,
@@ -232,7 +252,7 @@ fn a_registry_that_cannot_be_read_is_said() {
     fs::write(m.layout.engine_dir.join("agents.json"), "{ not json").unwrap();
     assert!(registry_problem(&m.layout).is_some());
     assert!(
-        tick(&m.layout).is_empty(),
+        tick(&m.layout, &m.config).is_empty(),
         "the tick goes on without the agents"
     );
 }
@@ -242,8 +262,213 @@ fn a_missing_log_directory_is_said() {
     let m = machine("agent-missing");
     let file = m.temp.path().join("wrapper");
     fs::write(&file, "").unwrap();
-    register(&m.layout, AGENT, &m.logs, &file).unwrap();
+    register(&m.layout, AGENT, &m.logs, Handler::Run(&file), false).unwrap();
     fs::remove_dir_all(&m.logs).unwrap();
-    assert!(tick(&m.layout)[0].missing);
+    assert!(tick(&m.layout, &m.config)[0].missing);
     assert!(watched(&m.layout)[0].missing);
+}
+
+/// A log of DSH from `fixtures/foreign/dshLogs.json`: zstd frames as Node writes them.
+fn dsh_log(id: &str) -> Vec<u8> {
+    let file: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/foreign/dshLogs.json")).unwrap();
+    let text = file["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["id"] == id)
+        .unwrap()["log"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let value = |c: u8| match c {
+        b'A'..=b'Z' => u32::from(c - b'A'),
+        b'a'..=b'z' => u32::from(c - b'a' + 26),
+        b'0'..=b'9' => u32::from(c - b'0' + 52),
+        b'+' => 62,
+        _ => 63,
+    };
+    let mut out = Vec::new();
+    let (mut buffer, mut bits) = (0u32, 0);
+    for &c in text.trim_end_matches('=').as_bytes() {
+        buffer = (buffer << 6) | value(c);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(u8::try_from((buffer >> bits) & 0xff).unwrap());
+        }
+    }
+    out
+}
+
+/// A session directory as DSH keeps it: the log, and the lock beside it.
+fn write_dsh_session(logs: &Path, session: &str, log: &[u8]) -> PathBuf {
+    let dir = logs.join("-work-Promed").join(session);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("session.lock"), "").unwrap();
+    let path = dir.join("session.v4.jsonl.zstd");
+    fs::write(&path, log).unwrap();
+    path
+}
+
+/// A log of DSH for a session in `cwd`, compressed in two frames as DSH writes them.
+fn dsh_log_for(cwd: &str, session: &str) -> Vec<u8> {
+    let lines = |records: &[serde_json::Value]| {
+        let mut text = String::new();
+        for record in records {
+            text.push_str(&record.to_string());
+            text.push('\n');
+        }
+        text
+    };
+    let first = lines(&[
+        serde_json::json!({"type": "session", "version": 4, "id": session, "cwd": cwd}),
+        serde_json::json!({"type": "user/message", "seq": 1, "time": 1_790_000_001_000_u64,
+            "data": {"id": "u-1", "content": [{"type": "text", "text": "list the files"}]}}),
+    ]);
+    let second = lines(&[serde_json::json!({"type": "assistant/message", "seq": 2,
+        "time": 1_790_000_002_000_u64,
+        "data": {"message": {"id": "a-1", "content": [{"type": "text", "text": "here"}]}}})]);
+    let mut log = Vec::new();
+    for frame in [first, second] {
+        log.extend(ruzstd::encoding::compress_to_vec(
+            frame.as_bytes(),
+            ruzstd::encoding::CompressionLevel::Fastest,
+        ));
+    }
+    log
+}
+
+#[test]
+fn the_dsh_preset_reads_the_log_itself_and_takes_the_past_when_asked() {
+    let m = machine("agent-dsh");
+    fs::create_dir_all(m.layout.store()).unwrap();
+    support::git_repo_with_commit(&m.layout.store());
+    let work = fs::canonicalize(m.temp.dir("work/Promed")).unwrap();
+    let session = "session-22222222-2222-4222-8222-000000000009";
+    write_dsh_session(
+        &m.logs,
+        "past",
+        &dsh_log_for(&work.display().to_string(), session),
+    );
+    write_dsh_session(&m.logs, "just-begun", &dsh_log("emptyLog"));
+
+    register(
+        &m.layout,
+        AGENT,
+        &m.logs,
+        Handler::Preset(Preset::Dsh),
+        true,
+    )
+    .unwrap();
+    let ran = tick(&m.layout, &m.config);
+    assert_eq!(
+        (ran[0].failure.clone(), ran[0].skipped.clone()),
+        (None, vec![])
+    );
+    assert_eq!(
+        (ran[0].handed, ran[0].waiting),
+        (2, 0),
+        "with --backfill the past goes too; a lock is not a log, an empty log is nothing yet"
+    );
+    let placed = m
+        .layout
+        .store()
+        .join("projects/Promed/agents")
+        .join(AGENT)
+        .join(format!("{session}.jsonl"));
+    let text = fs::read_to_string(&placed).unwrap();
+    assert_eq!(text.lines().count(), 2, "both frames, both messages");
+    assert!(watched(&m.layout)[0].last_put.is_some());
+    assert_eq!(tick(&m.layout, &m.config)[0].handed, 0, "once");
+}
+
+#[test]
+fn a_dsh_session_whose_directory_is_gone_is_set_aside_and_the_rest_go_on() {
+    let m = machine("agent-dsh-gone");
+    fs::create_dir_all(m.layout.store()).unwrap();
+    support::git_repo_with_commit(&m.layout.store());
+    let work = fs::canonicalize(m.temp.dir("work/Promed")).unwrap();
+    // The fixture's session names a directory that is not on this disk.
+    let gone = write_dsh_session(&m.logs, "gone", &dsh_log("framesJoined"));
+    set_modified(&gone, SystemTime::now() - Duration::from_mins(1));
+    write_dsh_session(
+        &m.logs,
+        "here",
+        &dsh_log_for(
+            &work.display().to_string(),
+            "session-22222222-2222-4222-8222-000000000010",
+        ),
+    );
+    register(
+        &m.layout,
+        AGENT,
+        &m.logs,
+        Handler::Preset(Preset::Dsh),
+        true,
+    )
+    .unwrap();
+
+    let ran = tick(&m.layout, &m.config);
+    assert_eq!(
+        ran[0].failure, None,
+        "one session is no fault of the integration"
+    );
+    assert_eq!(
+        (ran[0].handed, ran[0].skipped.len()),
+        (1, 1),
+        "the other one went"
+    );
+    let seen = &watched(&m.layout)[0];
+    assert!(!seen.is_wrong());
+    assert_eq!(seen.skipped.len(), 1, "doctor names what did not go");
+    assert_eq!(
+        tick(&m.layout, &m.config)[0].skipped.len(),
+        0,
+        "not tried every run"
+    );
+    set_modified(&gone, SystemTime::now() + Duration::from_secs(5));
+    assert_eq!(
+        tick(&m.layout, &m.config)[0].skipped.len(),
+        1,
+        "tried again once it is written to"
+    );
+}
+
+#[test]
+fn the_dsh_preset_without_backfill_starts_from_now() {
+    let m = machine("agent-dsh-now");
+    write_dsh_session(&m.logs, "past", &dsh_log("framesJoined"));
+    register(
+        &m.layout,
+        AGENT,
+        &m.logs,
+        Handler::Preset(Preset::Dsh),
+        false,
+    )
+    .unwrap();
+    assert_eq!(tick(&m.layout, &m.config)[0].handed, 0);
+}
+
+#[test]
+fn a_dsh_log_of_an_unknown_version_fails_loudly() {
+    let m = machine("agent-dsh-v5");
+    fs::create_dir_all(m.layout.store()).unwrap();
+    support::git_repo_with_commit(&m.layout.store());
+    register(
+        &m.layout,
+        AGENT,
+        &m.logs,
+        Handler::Preset(Preset::Dsh),
+        false,
+    )
+    .unwrap();
+    write_dsh_session(&m.logs, "future", &dsh_log("unknownVersion"));
+    let failure = tick(&m.layout, &m.config)[0].failure.clone().unwrap();
+    assert!(
+        failure.outcome.contains("v5") && failure.outcome.contains("vibememory update"),
+        "{}",
+        failure.outcome
+    );
+    assert!(watched(&m.layout)[0].is_wrong(), "doctor goes red");
 }

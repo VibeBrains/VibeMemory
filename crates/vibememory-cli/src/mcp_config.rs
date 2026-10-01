@@ -336,8 +336,13 @@ fn dsh(machine: &Machine) -> Vec<String> {
         "The home directory as cwd holds no project: a write names its project, and one DSH serves every"
             .to_owned(),
         "project it opens. Then restart DSH: a new session does not read the profile again.".to_owned(),
-        "Its sessions go to history with `vibememory session put` (docs/manuals/foreignSessionSpec.md)."
+        "Its sessions go to history once the engine reads its logs, from now on or with the past too:"
             .to_owned(),
+        String::new(),
+        format!(
+            "  vibememory session agent add --agent {} --preset dsh [--backfill]",
+            Client::Dsh.agent()
+        ),
     ];
     if let Some(dir) = &machine.engine_dir {
         lines.push(format!(
@@ -369,7 +374,8 @@ fn vibeidea(machine: &Machine) -> Vec<String> {
             "with --agent {}, as soon as the server is installed — no restart. Nothing to register.",
             Client::VibeIdea.agent()
         ),
-        "Do not add vibememory to a project's .vibe/mcp.json: the agent would get it twice.".to_owned(),
+        "An entry of your own named vibememory in a project's .vibe/mcp.json replaces it from 0.9.0;".to_owned(),
+        "before 0.9.0 do not add one: the agent would get the server twice.".to_owned(),
         format!(
             "Switched off for ACP agents by \"use_custom_mcp\": false under default_mcp_settings in {}.",
             home_path(machine, &[".jetbrains", "acp.json"])

@@ -209,6 +209,24 @@ impl Config {
             routes,
         })
     }
+
+    /// The named roots of this machine, as the core wants them.
+    #[must_use]
+    pub fn roots(&self) -> vibememory_core::desktop::roots::Roots {
+        vibememory_core::desktop::roots::Roots::new(
+            self.roots.clone().into_iter().collect(),
+            PathSyntax::Posix,
+        )
+    }
+
+    /// The working directory in the form other machines can read, or the local one when no root
+    /// covers it — a path nobody can translate is still better in a log than nothing.
+    #[must_use]
+    pub fn portable_cwd(&self, cwd: &str) -> String {
+        self.roots()
+            .to_portable(cwd)
+            .unwrap_or_else(|_| cwd.to_owned())
+    }
 }
 
 /// Whether a canonical path names a place rather than a direction: `/a`, `D:/a`, `//server/share`.

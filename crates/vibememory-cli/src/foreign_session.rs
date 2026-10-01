@@ -27,8 +27,11 @@ pub struct Request<'a> {
     pub cwd: &'a str,
     /// The same directory as other machines read it, for the liveness mark.
     pub portable_cwd: &'a str,
-    /// The file the agent wrote.
-    pub source: &'a Path,
+    /// Where the session came from, for messages: the file the agent wrote, or the log it was read
+    /// from.
+    pub origin: &'a str,
+    /// The session, in the format of `vibememory_core::foreign`.
+    pub bytes: &'a [u8],
     /// The session is over: it leaves this machine's list of live sessions.
     pub ended: bool,
     /// Now, by this machine's clock.
@@ -68,18 +71,13 @@ pub fn put(layout: &Layout, config: &Config, request: &Request<'_>) -> Result<Pl
             ));
         }
     }
-    let bytes = std::fs::read(request.source)
-        .map_err(|error| format!("{}: {error}", request.source.display()))?;
-    let checked = foreign::check(&bytes).map_err(|refusal| {
+    let bytes = request.bytes;
+    let checked = foreign::check(bytes).map_err(|refusal| {
         let problem = describe(&refusal.problem);
         if refusal.line == 0 {
-            format!("{}: {problem}", request.source.display())
+            format!("{}: {problem}", request.origin)
         } else {
-            format!(
-                "{} line {}: {problem}",
-                request.source.display(),
-                refusal.line
-            )
+            format!("{} line {}: {problem}", request.origin, refusal.line)
         }
     })?;
 
@@ -104,7 +102,7 @@ pub fn put(layout: &Layout, config: &Config, request: &Request<'_>) -> Result<Pl
 
     let relative = foreign::session_path(&project, Some(request.agent), request.session);
     let target = store.clone.join(&relative);
-    place(&store.state_dir, &target, &bytes)?;
+    place(&store.state_dir, &target, bytes)?;
 
     let kept = crate::held::Kept::read(&store.state_dir);
     let stopped = stop::commit_snapshot(
@@ -150,6 +148,61 @@ pub fn put(layout: &Layout, config: &Config, request: &Request<'_>) -> Result<Pl
         held: stopped.held.into_iter().collect(),
         store,
     })
+}
+
+/// A session handed over by `session put` or read by the tick, before the engine has looked at it.
+pub struct Handed<'a> {
+    /// The agent the session is of.
+    pub agent: &'a str,
+    /// The session id.
+    pub session: &'a str,
+    /// The working directory as the agent wrote it.
+    pub cwd: &'a str,
+    /// Where the session came from, for messages.
+    pub origin: &'a str,
+    /// The session, in the format of `vibememory_core::foreign`.
+    pub bytes: &'a [u8],
+    /// The session is over.
+    pub ended: bool,
+}
+
+/// Places one session as `session put` and the tick do: the working directory as the agent wrote
+/// it is made canonical, the session is stamped by this machine's clock, and the store is pushed
+/// when the last push is long enough ago.
+///
+/// # Errors
+///
+/// As [`put`].
+pub fn hand_over(layout: &Layout, config: &Config, handed: &Handed<'_>) -> Result<Placed, String> {
+    let syntax = crate::hook::session_start::host_syntax();
+    let cwd = vibememory_core::naming::canonical_cwd(handed.cwd, syntax);
+    let stamp = crate::clock::now();
+    let placed = put(
+        layout,
+        config,
+        &Request {
+            agent: handed.agent,
+            session: handed.session,
+            cwd: &cwd,
+            portable_cwd: &config.portable_cwd(&cwd),
+            origin: handed.origin,
+            bytes: handed.bytes,
+            ended: handed.ended,
+            stamp: &stamp,
+        },
+    )?;
+    // A push that does not happen costs nothing: the commit is on this disk, and the tick pushes
+    // again in two minutes.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let _ = stop::push_if_due(
+        &placed.store.clone,
+        &placed.store.state_dir,
+        now,
+        stop::PUSH_DEBOUNCE,
+    );
+    Ok(placed)
 }
 
 /// Writes the file whole or not at all. The copy is made outside the clone and renamed in: the tick

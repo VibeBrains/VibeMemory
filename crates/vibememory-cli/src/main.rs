@@ -18,6 +18,7 @@ use vibememory_cli::hook::stop::{
     PUSH_DEBOUNCE, commit_snapshot, push_if_due, record_end, record_progress,
 };
 
+use vibememory_cli::agents::{Handler, Preset};
 use vibememory_cli::hook::stop::{Tail, Tails};
 use vibememory_cli::install::{Layout, State, apply, plan};
 use vibememory_cli::links_file;
@@ -1200,7 +1201,7 @@ fn project_command(args: &[String]) -> ExitCode {
     let real =
         std::fs::canonicalize(dir).map_or_else(|_| dir.clone(), |path| path.display().to_string());
     let cwd = canonical_cwd(&real, session_start::host_syntax());
-    let portable = portable_cwd(&config, &cwd);
+    let portable = config.portable_cwd(&cwd);
     let stamp = vibememory_cli::clock::now();
     // the route goes with the move: a project in a team's store its directory is not routed to
     // would send its next session back to the personal store
@@ -1396,7 +1397,9 @@ fn session_command(args: &[String]) -> ExitCode {
                          vibememory session put --agent <name> --id <session-id> --cwd <dir> \
                          --from <file.jsonl> [--end]\n       \
                          vibememory session agent add --agent <name> --dir <log-dir> --run \
-                         <wrapper>\n       \
+                         <wrapper> [--backfill]\n       \
+                         vibememory session agent add --agent <name> --preset dsh [--dir <log-dir>] \
+                         [--backfill]\n       \
                          vibememory session agent remove --agent <name>";
     if args.first().is_some_and(|verb| verb == "put") {
         return session_put(args.get(1..).unwrap_or_default(), USAGE);
@@ -1500,19 +1503,22 @@ fn session_put(args: &[String], usage: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let syntax = vibememory_cli::hook::session_start::host_syntax();
-    let cwd = canonical_cwd(&cwd, syntax);
-    let stamp = vibememory_cli::clock::now();
-    let request = vibememory_cli::foreign_session::Request {
+    let bytes = match std::fs::read(&source) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprintln!("session put: {source}: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let handed = vibememory_cli::foreign_session::Handed {
         agent: &agent,
         session: &session,
         cwd: &cwd,
-        portable_cwd: &portable_cwd(&config, &cwd),
-        source: std::path::Path::new(&source),
+        origin: &source,
+        bytes: &bytes,
         ended,
-        stamp: &stamp,
     };
-    let placed = match vibememory_cli::foreign_session::put(&layout, &config, &request) {
+    let placed = match vibememory_cli::foreign_session::hand_over(&layout, &config, &handed) {
         Ok(placed) => placed,
         Err(error) => {
             eprintln!("session put: {error}");
@@ -1538,19 +1544,12 @@ fn session_put(args: &[String], usage: &str) -> ExitCode {
         "put: {} record(s), {} searchable, into project {} of the {store} store ({}) — {outcome}",
         placed.checked.lines, placed.checked.spoken, placed.project, placed.relative
     );
-    // A push that does not happen costs nothing: the commit is on this disk, and the tick pushes
-    // again in two minutes.
-    let _ = push_if_due(
-        &placed.store.clone,
-        &placed.store.state_dir,
-        epoch_seconds(),
-        PUSH_DEBOUNCE,
-    );
     ExitCode::SUCCESS
 }
 
 /// `session agent add|remove`: an agent without hooks of its own, watched by the tick — each log
-/// written into its directory goes to its wrapper, which hands the session over with `session put`.
+/// written into its directory goes to its wrapper, which hands the session over with `session put`,
+/// or, for an agent the engine knows by a preset, is read by the engine itself.
 fn session_agent(args: &[String], usage: &str) -> ExitCode {
     let Some((verb, rest)) = args.split_first() else {
         eprintln!("{usage}");
@@ -1559,12 +1558,19 @@ fn session_agent(args: &[String], usage: &str) -> ExitCode {
     let mut agent = None;
     let mut dir = None;
     let mut run = None;
+    let mut preset = None;
+    let mut backfill = false;
     let mut flags = rest.iter();
     while let Some(flag) = flags.next() {
         let slot = match flag.as_str() {
+            "--backfill" => {
+                backfill = true;
+                continue;
+            }
             "--agent" => &mut agent,
             "--dir" => &mut dir,
             "--run" => &mut run,
+            "--preset" => &mut preset,
             _ => {
                 eprintln!("{usage}");
                 return ExitCode::from(2);
@@ -1577,50 +1583,140 @@ fn session_agent(args: &[String], usage: &str) -> ExitCode {
         *slot = Some(value.clone());
     }
     let layout = layout();
-    match (verb.as_str(), agent, dir, run) {
-        ("add", Some(agent), Some(dir), Some(run)) => {
-            match vibememory_cli::agents::register(
-                &layout,
-                &agent,
-                std::path::Path::new(&dir),
-                std::path::Path::new(&run),
-            ) {
-                Ok(registration) => {
-                    println!(
-                        "watching {agent}: each log written into {} from now on goes to {}; the \
-                         tick looks every two minutes, and doctor says when sessions stop coming",
-                        registration.dir, registration.run
-                    );
-                    ExitCode::SUCCESS
-                }
-                Err(error) => {
-                    eprintln!("session agent add: {error}");
-                    ExitCode::FAILURE
-                }
-            }
+    let flags = AgentFlags {
+        agent,
+        dir,
+        run,
+        preset,
+        backfill,
+    };
+    if verb == "add" {
+        return session_agent_add(&layout, &flags, usage);
+    }
+    let AgentFlags {
+        agent: Some(agent),
+        dir: None,
+        run: None,
+        preset: None,
+        backfill: false,
+    } = flags
+    else {
+        eprintln!("{usage}");
+        return ExitCode::from(2);
+    };
+    if verb != "remove" {
+        eprintln!("{usage}");
+        return ExitCode::from(2);
+    }
+    match vibememory_cli::agents::unregister(&layout, &agent) {
+        Ok(true) => {
+            println!("{agent} is no longer watched; its sessions in the store stay");
+            ExitCode::SUCCESS
         }
-        ("remove", Some(agent), None, None) => {
-            match vibememory_cli::agents::unregister(&layout, &agent) {
-                Ok(true) => {
-                    println!("{agent} is no longer watched; its sessions in the store stay");
-                    ExitCode::SUCCESS
-                }
-                Ok(false) => {
-                    eprintln!(
-                        "session agent remove: {} is not watched here",
-                        vibememory_core::terminal::printable(&agent)
-                    );
-                    ExitCode::FAILURE
-                }
-                Err(error) => {
-                    eprintln!("session agent remove: {error}");
-                    ExitCode::FAILURE
-                }
-            }
+        Ok(false) => {
+            eprintln!(
+                "session agent remove: {} is not watched here",
+                vibememory_core::terminal::printable(&agent)
+            );
+            ExitCode::FAILURE
         }
-        _ => {
+        Err(error) => {
+            eprintln!("session agent remove: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The flags of `session agent`, as typed.
+struct AgentFlags {
+    agent: Option<String>,
+    dir: Option<String>,
+    run: Option<String>,
+    preset: Option<String>,
+    backfill: bool,
+}
+
+/// `session agent add`: a wrapper or a preset, never both; a preset knows where its agent keeps
+/// its logs, so the directory may go unsaid.
+fn session_agent_add(layout: &Layout, flags: &AgentFlags, usage: &str) -> ExitCode {
+    let AgentFlags {
+        agent,
+        dir,
+        run,
+        preset,
+        backfill,
+    } = flags;
+    let backfill = *backfill;
+    let Some(agent) = agent else {
+        eprintln!("{usage}");
+        return ExitCode::from(2);
+    };
+    let preset = match preset.as_deref().map(|name| (name, Preset::of(name))) {
+        None => None,
+        Some((_, Some(preset))) => Some(preset),
+        Some((name, None)) => {
+            eprintln!(
+                "session agent add: no preset {}; the engine knows dsh",
+                vibememory_core::terminal::printable(name)
+            );
+            return ExitCode::from(2);
+        }
+    };
+    let dir = match (dir, preset) {
+        (Some(dir), _) => PathBuf::from(dir),
+        (None, Some(preset)) => {
+            let Some(home) = vibememory_cli::install::home_dir() else {
+                eprintln!("session agent add: no home directory to find the logs in; give --dir");
+                return ExitCode::FAILURE;
+            };
+            preset.default_dir(&home)
+        }
+        (None, None) => {
             eprintln!("{usage}");
-            ExitCode::from(2)
+            return ExitCode::from(2);
+        }
+    };
+    let handler = match (&run, preset) {
+        (Some(run), None) => Handler::Run(std::path::Path::new(run)),
+        (None, Some(preset)) => Handler::Preset(preset),
+        (Some(_), Some(_)) => {
+            eprintln!(
+                "session agent add: --run and --preset exclude each other: with a preset the \
+                 engine reads the log itself"
+            );
+            return ExitCode::from(2);
+        }
+        (None, None) => {
+            eprintln!("{usage}");
+            return ExitCode::from(2);
+        }
+    };
+    match vibememory_cli::agents::register(layout, agent, &dir, handler, backfill) {
+        Ok(registration) => {
+            let by = registration.preset.map_or_else(
+                || {
+                    format!(
+                        "goes to {}",
+                        registration.run.as_deref().unwrap_or_default()
+                    )
+                },
+                |preset| format!("is read by the engine ({} preset)", preset.name()),
+            );
+            let from = if backfill {
+                "every log there, the past ones too, a few per tick,"
+            } else {
+                "each log written from now on"
+            };
+            println!(
+                "watching {agent}: {from} in {} {by}; the tick looks every two minutes, and \
+                 doctor says when sessions stop coming",
+                registration.dir
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("session agent add: {error}");
+            ExitCode::FAILURE
         }
     }
 }
@@ -1729,7 +1825,7 @@ fn session_start_hook() -> ExitCode {
             &clone,
             &store.machine_id,
             &input.session_id,
-            &portable_cwd(&config, &cwd),
+            &config.portable_cwd(&cwd),
             &vibememory_cli::clock::now(),
             vibememory_cli::process::agent_process,
         );
@@ -1748,7 +1844,7 @@ fn session_start_hook() -> ExitCode {
             &links_file::Observation {
                 enc: enc.as_str(),
                 name,
-                cwd: &portable_cwd(&config, &cwd),
+                cwd: &config.portable_cwd(&cwd),
                 syntax,
                 source: vibememory_core::links::LinkSource::Observed,
                 confirmed_by: Some(&input.transcript_path),
@@ -1876,7 +1972,7 @@ fn session_progress_hook(ended: bool) -> ExitCode {
             "VibeMemory could not record what it keeps back: {error}"
         ));
     }
-    let cwd = portable_cwd(&config, &input.cwd);
+    let cwd = config.portable_cwd(&input.cwd);
     if let Err(error) = record_progress(
         &store,
         &owner.machine_id,
@@ -1992,22 +2088,6 @@ fn desktop_store_path(config: &Config) -> Option<PathBuf> {
         }
     };
     path.is_dir().then_some(path)
-}
-
-/// The named roots of this machine, as the core wants them.
-fn roots_of(config: &Config) -> vibememory_core::desktop::roots::Roots {
-    vibememory_core::desktop::roots::Roots::new(
-        config.roots.clone().into_iter().collect(),
-        PathSyntax::Posix,
-    )
-}
-
-/// The working directory in the form other machines can read, or the local one when no root
-/// covers it — a path nobody can translate is still better in a log than nothing.
-fn portable_cwd(config: &Config, cwd: &str) -> String {
-    roots_of(config)
-        .to_portable(cwd)
-        .unwrap_or_else(|_| cwd.to_owned())
 }
 
 /// Seconds since the epoch, for the push debounce.
@@ -2323,7 +2403,7 @@ fn tick_command(args: &[String]) -> ExitCode {
         epoch_seconds_signed()
             + i64::try_from(vibememory_cli::tick::PAUSE_RECHECK.as_secs()).unwrap_or(0),
     );
-    let roots = roots_of(&config);
+    let roots = config.roots();
     let desktop = desktop_store_path(&config);
     let machine = vibememory_cli::tick::Machine {
         store: &store,
@@ -2380,7 +2460,7 @@ fn tick_command(args: &[String]) -> ExitCode {
     // Agents without hooks of their own: each log written since the last run goes to its wrapper.
     // A wrapper that fails is the agent's fault, not the sync's: it is written down for `doctor`,
     // and the tick itself does not fail over it.
-    for ran in vibememory_cli::agents::tick(&layout) {
+    for ran in vibememory_cli::agents::tick(&layout, &config) {
         report_agent_run(&ran);
     }
     // Once a day, ask whether the backup still follows the host. Nobody runs `doctor` on a
@@ -2424,6 +2504,13 @@ fn report_agent_run(ran: &vibememory_cli::agents::Ran) {
             println!("  {line}");
         }
     }
+    for skipped in &ran.skipped {
+        println!(
+            "agent {agent}: set aside {} \u{2014} {}; tried again when it is written to",
+            vibememory_core::terminal::printable(&skipped.log),
+            skipped.outcome
+        );
+    }
     if ran.waiting > 0 {
         println!(
             "agent {agent}: {} log(s) wait for the next run",
@@ -2445,16 +2532,40 @@ fn print_watched_agents(layout: &Layout) -> usize {
     }
     let at =
         |seconds: u64| vibememory_cli::clock::iso8601(i64::try_from(seconds).unwrap_or(i64::MAX));
-    for watched in vibememory_cli::agents::watched(layout) {
+    let watched_agents = vibememory_cli::agents::watched(layout);
+    // DSH on this machine and its sessions going nowhere: not a fault — nobody asked for them yet —
+    // but the one command that sends them is worth a line.
+    if let Some(home) = vibememory_cli::install::home_dir()
+        && Preset::Dsh.default_dir(&home).is_dir()
+        && !watched_agents
+            .iter()
+            .any(|watched| watched.registration.preset == Some(Preset::Dsh))
+    {
+        println!(
+            "hint     DeepSeek Harness keeps sessions here and they do not go to history: \
+             vibememory session agent add --agent dsh-desktop --preset dsh --backfill"
+        );
+    }
+    for watched in watched_agents {
         let agent = vibememory_core::terminal::printable(&watched.agent);
         let put = watched.last_put.map_or_else(
             || "no session put yet".to_owned(),
             |put| format!("last put {}", at(put)),
         );
+        let by = watched.registration.preset.map_or_else(
+            || {
+                format!(
+                    "wrapper {}",
+                    vibememory_core::terminal::printable(
+                        watched.registration.run.as_deref().unwrap_or_default()
+                    )
+                )
+            },
+            |preset| format!("{} preset", preset.name()),
+        );
         println!(
-            "watch    {agent} \u{2014} logs in {}, wrapper {}; {put}",
-            vibememory_core::terminal::printable(&watched.registration.dir),
-            vibememory_core::terminal::printable(&watched.registration.run)
+            "watch    {agent} \u{2014} logs in {}, {by}; {put}",
+            vibememory_core::terminal::printable(&watched.registration.dir)
         );
         if watched.missing {
             wrong += 1;
@@ -2471,6 +2582,16 @@ fn print_watched_agents(layout: &Layout) -> usize {
             for line in &failure.lines {
                 println!("           {line}");
             }
+        }
+        // Set aside, not failing: the agent's other sessions go on, and a session whose project
+        // directory is gone is no fault of the integration — but it is a session that does not
+        // reach the history, and that is said.
+        for skipped in &watched.skipped {
+            println!(
+                "         not delivered: {} \u{2014} {}",
+                vibememory_core::terminal::printable(&skipped.log),
+                skipped.outcome
+            );
         }
         if watched.silent {
             wrong += 1;
@@ -2493,6 +2614,11 @@ fn watched_json(watched: &[vibememory_cli::agents::Watched]) -> Vec<serde_json::
                 "agent": watched.agent,
                 "dir": watched.registration.dir,
                 "run": watched.registration.run,
+                "preset": watched.registration.preset.map(Preset::name),
+                "skipped": watched.skipped.iter().map(|skipped| serde_json::json!({
+                    "log": skipped.log,
+                    "outcome": skipped.outcome,
+                })).collect::<Vec<_>>(),
                 "since": watched.registration.since,
                 "lastPut": watched.last_put,
                 "lastLook": watched.last_look,
@@ -2594,7 +2720,7 @@ fn relink_command(args: &[String], import: bool) -> ExitCode {
         eprintln!("the store is not there yet; run `vibememory install` first");
         return ExitCode::FAILURE;
     };
-    let portable = portable_cwd(&config, &canonical_cwd(cwd, PathSyntax::Posix));
+    let portable = config.portable_cwd(&canonical_cwd(cwd, PathSyntax::Posix));
 
     if import {
         match vibememory_cli::relink::import_real_directory(
