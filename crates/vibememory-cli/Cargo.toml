@@ -4,6 +4,8 @@ description = "VibeMemory engine: hooks, tick, install, doctor — the side that
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [lib]
 name = "vibememory_cli"

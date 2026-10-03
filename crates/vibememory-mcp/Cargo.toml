@@ -4,6 +4,8 @@ description = "VibeMemory MCP server: one memory for every agent, over the same 
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [lib]
 name = "vibememory_mcp"

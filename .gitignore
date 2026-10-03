@@ -5,3 +5,10 @@ target/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# The cabinet is the start0 pack, which is source-available, not open source: it lives in its own
+# private repository, VibeBrains/VibeMemoryCabinet, cloned into this directory
+/cabinet/
+
+# Local agent settings of this machine
+/.claude/

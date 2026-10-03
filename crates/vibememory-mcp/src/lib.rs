@@ -19,6 +19,8 @@
 )]
 
 pub mod access;
+pub mod admin;
+pub mod adminops;
 pub mod apply;
 pub mod disk;
 pub mod export;

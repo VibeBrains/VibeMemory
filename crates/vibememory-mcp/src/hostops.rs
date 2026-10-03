@@ -1442,7 +1442,7 @@ fn outside_scope(dir: &Path) -> BTreeMap<String, BTreeMap<String, String>> {
 }
 
 /// The host's ed25519 public keys from its `ssh_host_*_key.pub`, in wire form.
-fn host_keys() -> Vec<String> {
+pub fn host_keys() -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(layout::HOST_KEYS_DIR) else {
         return Vec::new();
     };
