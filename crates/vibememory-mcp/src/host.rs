@@ -18,7 +18,7 @@ use crate::access::{self, Snapshot, TokenRole};
 use crate::git_memories::GitMemories;
 use crate::http::{Admission, Door, Grant, Visit};
 use crate::layout;
-use crate::memories::{DirectoryProject, Memories, TranscriptRef};
+use crate::memories::{DirectoryProject, Handoffs, Memories, TranscriptRef};
 use crate::tools::{Limits, Writes};
 
 /// What versions written over HTTPS are signed with, before the token's id: the host wrote them,
@@ -402,6 +402,10 @@ impl Memories for TeamMemories {
 
     fn new_version(&self, id: &str) -> String {
         self.git.new_version(id)
+    }
+
+    fn handoffs(&self, project: &str) -> Result<Handoffs, String> {
+        self.git.handoffs(project)
     }
 
     fn now(&self) -> String {

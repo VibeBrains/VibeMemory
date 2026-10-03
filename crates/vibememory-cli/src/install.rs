@@ -95,6 +95,16 @@ pub struct Layout {
     pub engine_dir: PathBuf,
 }
 
+/// Whether the engine is set up on this machine at all: a machine that only connects agents has
+/// no `config.json`, and that is not a fault.
+#[must_use]
+pub fn engine_configured(layout: &Layout) -> bool {
+    layout.engine_dir.join(CONFIG_FILE).exists()
+}
+
+/// The config file whose presence makes this an engine machine.
+const CONFIG_FILE: &str = "config.json";
+
 impl Layout {
     /// The store clone: `<engine>/store`.
     #[must_use]

@@ -111,7 +111,7 @@ fn read_config(layout: &Layout) -> Result<Config, String> {
 /// Whether the engine is set up on this machine at all: a machine that only connects agents has
 /// no `config.json`, and that is not a fault.
 fn engine_configured(layout: &Layout) -> bool {
-    layout.engine_dir.join("config.json").exists()
+    vibememory_cli::install::engine_configured(layout)
 }
 
 /// `status` prints where the machine stands; `doctor` does the same and fails when something is
@@ -177,6 +177,9 @@ fn report(strict: bool, json: bool) -> ExitCode {
             _ => {}
         }
     }
+    // Which agents hand sessions over is read once: the answer is the same for the credentials
+    // section and for the clients no token names.
+    let readings = vibememory_cli::agents::Readings::of(&layout);
     print_kept_here(&layout);
     if let Some(mirror) = &mirror {
         println!("{}", mirror.describe());
@@ -194,8 +197,8 @@ fn report(strict: bool, json: bool) -> ExitCode {
         Some(Err(reason)) => println!("disk     host unknown \u{2014} {reason}"),
         None => {}
     }
-    wrong += print_tokens(&tokens);
-    print_clients(&layout, &tokens);
+    wrong += print_tokens(&tokens, &readings);
+    print_clients(&layout, &tokens, &readings);
     wrong += print_watched_agents(&layout);
     wrong += print_teams(&layout);
     print_advice(&layout, &config);
@@ -383,7 +386,11 @@ fn foreign_sessions(layout: &Layout) -> Vec<(String, String, usize, String)> {
 
 /// The agents a memory server started as here and that no kept token names: a client of the
 /// personal store needs no token, and this is the only place it shows.
-fn print_clients(layout: &Layout, tokens: &[vibememory_cli::credentials::KeptToken]) {
+fn print_clients(
+    layout: &Layout,
+    tokens: &[vibememory_cli::credentials::KeptToken],
+    readings: &vibememory_cli::agents::Readings,
+) {
     for (agent, start) in vibememory_cli::credentials::started_clients(&layout.engine_dir) {
         if tokens.iter().all(|token| token.agent != agent) {
             println!(
@@ -391,6 +398,9 @@ fn print_clients(layout: &Layout, tokens: &[vibememory_cli::credentials::KeptTok
                 vibememory_core::terminal::printable(&agent),
                 describe_start(&start)
             );
+            if let Some(note) = readings.note(&agent) {
+                println!("         {note}");
+            }
         }
     }
 }
@@ -416,7 +426,10 @@ fn describe_start(start: &vibememory_cli::credentials::ClientStart) -> String {
 
 /// The credentials section: each kept token, and what is wrong with its files. Answers how many
 /// tokens have something wrong.
-fn print_tokens(tokens: &[vibememory_cli::credentials::KeptToken]) -> usize {
+fn print_tokens(
+    tokens: &[vibememory_cli::credentials::KeptToken],
+    readings: &vibememory_cli::agents::Readings,
+) -> usize {
     let mut wrong = 0;
     for token in tokens {
         // the sidecar is a file on this machine anyone with its rights could have edited
@@ -436,11 +449,16 @@ fn print_tokens(tokens: &[vibememory_cli::credentials::KeptToken]) -> usize {
         // Not a failure: a token may be taken before its client is set up. It is said because a
         // token nobody uses looks exactly like a working one everywhere else.
         match &token.client_started {
-            Some(start) => println!(
-                "         client: a memory server started as --agent {} {}",
-                vibememory_core::terminal::printable(&token.agent),
-                describe_start(start)
-            ),
+            Some(start) => {
+                println!(
+                    "         client: a memory server started as --agent {} {}",
+                    vibememory_core::terminal::printable(&token.agent),
+                    describe_start(start)
+                );
+                if let Some(note) = readings.note(&token.agent) {
+                    println!("         {note}");
+                }
+            }
             None => println!(
                 "         client: no memory server has started as --agent {} on this machine; \
                  the client that uses this token must pass exactly this name",
@@ -496,7 +514,7 @@ fn report_without_engine(
                 _ => {}
             }
         }
-        print_tokens(tokens);
+        print_tokens(tokens, &vibememory_cli::agents::Readings::default());
     }
     if strict && wrong_steps + wrong_tokens > 0 {
         return ExitCode::FAILURE;
@@ -1247,6 +1265,7 @@ fn install(dry_run: bool) -> ExitCode {
     {
         println!("open a new terminal: vibememory answers there by name");
     }
+    print_waiting_agents(&layout);
     if applied.is_complete() {
         ExitCode::SUCCESS
     } else {
@@ -2463,7 +2482,7 @@ fn mcp_config_command(client: Option<&str>) -> ExitCode {
 fn update_command() -> ExitCode {
     let layout = layout();
     let base = vibememory_cli::update::releases_base(&layout);
-    match vibememory_cli::update::update(&layout, &base) {
+    let code = match vibememory_cli::update::update(&layout, &base) {
         Ok(vibememory_cli::update::Updated::Current(version)) => {
             println!("vibememory {version} is the newest release");
             ExitCode::SUCCESS
@@ -2479,6 +2498,22 @@ fn update_command() -> ExitCode {
             eprintln!("update: {error}");
             ExitCode::FAILURE
         }
+    };
+    // The moment after an update is a moment a person reads the output, and a new engine version
+    // is exactly when an agent nobody registered appears: `install` and `update` say it here, not
+    // only in a `doctor` somebody has to think of running.
+    print_waiting_agents(&layout);
+    code
+}
+
+/// One line per agent the engine knows how to read and nobody registered, in the words of `doctor`:
+/// the same state must be recognized wherever a person meets it.
+fn print_waiting_agents(layout: &Layout) {
+    if !engine_configured(layout) {
+        return;
+    }
+    for waiting in vibememory_cli::agents::waiting(layout) {
+        println!("{}", waiting.line());
     }
 }
 
@@ -2643,18 +2678,13 @@ fn print_watched_agents(layout: &Layout) -> usize {
     let at =
         |seconds: u64| vibememory_cli::clock::iso8601(i64::try_from(seconds).unwrap_or(i64::MAX));
     let watched_agents = vibememory_cli::agents::watched(layout);
-    // DSH on this machine and its sessions going nowhere: not a fault — nobody asked for them yet —
-    // but the one command that sends them is worth a line.
-    if let Some(home) = vibememory_cli::install::home_dir()
-        && Preset::Dsh.default_dir(&home).is_dir()
-        && !watched_agents
-            .iter()
-            .any(|watched| watched.registration.preset == Some(Preset::Dsh))
-    {
-        println!(
-            "hint     DeepSeek Harness keeps sessions here and they do not go to history: \
-             vibememory session agent add --agent dsh-desktop --preset dsh --backfill"
-        );
+    // An agent the engine knows how to read, whose logs are on this machine, and which nobody
+    // registered: not a fault — handing sessions over is a decision — but the decision is written
+    // in the registry, and until it is there the sessions lie in the logs and nowhere else. The
+    // count is what makes it visible: "no sessions" and "twenty-two sessions nobody will ever see"
+    // look the same from every other line of this report.
+    for waiting in vibememory_cli::agents::waiting(layout) {
+        println!("{}", waiting.line());
     }
     for watched in watched_agents {
         let agent = vibememory_core::terminal::printable(&watched.agent);
@@ -2713,6 +2743,24 @@ fn print_watched_agents(layout: &Layout) -> usize {
         }
     }
     wrong
+}
+
+/// The agents whose logs are here and which nobody registered, as `--json` gives them.
+fn waiting_json(layout: &Layout) -> Vec<serde_json::Value> {
+    vibememory_cli::agents::waiting(layout)
+        .into_iter()
+        .map(|waiting| {
+            serde_json::json!({
+                "agent": waiting.agent,
+                "preset": waiting.preset.name(),
+                "dir": waiting.dir,
+                "logs": waiting.logs,
+                "newest": waiting.newest.map(|seconds| {
+                    vibememory_cli::clock::iso8601(i64::try_from(seconds).unwrap_or(i64::MAX))
+                }),
+            })
+        })
+        .collect()
 }
 
 /// The watched agents as `--json` gives them.
@@ -3480,6 +3528,7 @@ fn report_json(
             }))
             .collect::<Vec<_>>(),
         "watched": watched_json(&watched),
+        "waiting": waiting_json(layout),
         "watchProblem": watch_problem,
         "agents": foreign_sessions(layout)
             .into_iter()

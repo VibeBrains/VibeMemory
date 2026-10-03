@@ -76,7 +76,8 @@ impl Client {
             Self::Codex | Self::ChatGpt => "codex",
             Self::Gemini => "gemini",
             Self::Cursor => "cursor",
-            Self::Dsh => "dsh-desktop",
+            // one name for one agent: the preset that reads its logs is where it is written down
+            Self::Dsh => crate::agents::Preset::Dsh.agent(),
             Self::VibeIde => "vibeide",
             Self::VibeIdea => "vibeidea",
         }
@@ -336,8 +337,9 @@ fn dsh(machine: &Machine) -> Vec<String> {
         "The home directory as cwd holds no project: a write names its project, and one DSH serves every"
             .to_owned(),
         "project it opens. Then restart DSH: a new session does not read the profile again.".to_owned(),
-        "Its sessions go to history once the engine reads its logs, from now on or with the past too:"
+        "Its sessions stay on this machine until the engine reads its logs — this line is the switch,"
             .to_owned(),
+        "from now on, or with the past as well:".to_owned(),
         String::new(),
         format!(
             "  vibememory session agent add --agent {} --preset dsh [--backfill]",

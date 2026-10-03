@@ -13,7 +13,7 @@
 //! Everything lives on this machine: the directory and the wrapper are this machine's, and a team
 //! store has no business knowing where an agent keeps its logs here.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -65,11 +65,31 @@ pub enum Preset {
 }
 
 impl Preset {
+    /// Every preset the engine knows, in the order `doctor` lists them.
+    pub const ALL: &[Self] = &[Self::Dsh];
+
     /// The name `--preset` takes.
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Dsh => "dsh",
+        }
+    }
+
+    /// The agent name this preset is registered under: what `session agent add` is told, what a
+    /// token for it is taken under, and what `mcp-config` prints as the name to sign with.
+    #[must_use]
+    pub const fn agent(self) -> &'static str {
+        match self {
+            Self::Dsh => "dsh-desktop",
+        }
+    }
+
+    /// What the agent is called in a sentence for a person.
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Dsh => "DeepSeek Harness",
         }
     }
 
@@ -611,6 +631,174 @@ pub fn watched(layout: &Layout) -> Vec<Watched> {
             }
         })
         .collect()
+}
+
+/// The preset that reads this agent's logs, if the engine knows how to read them at all.
+#[must_use]
+pub fn preset_for(agent: &str) -> Option<Preset> {
+    Preset::ALL
+        .iter()
+        .copied()
+        .find(|preset| preset.agent() == agent)
+}
+
+/// An agent whose logs the engine knows how to read and which nobody registered: until a person
+/// says so, its sessions go nowhere. Not a fault — handing sessions over is a decision, and the
+/// registry is where the decision is written down — but silence about it looks exactly like an
+/// agent that has nothing to hand over. That is how three days of sessions stayed out of history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Waiting {
+    /// The name it would be registered under.
+    pub agent: String,
+    /// The preset that would read its logs.
+    pub preset: Preset,
+    /// The directory its logs are in.
+    pub dir: String,
+    /// The logs lying there: what `--backfill` would hand over.
+    pub logs: usize,
+    /// When the newest of them was written, seconds since the epoch.
+    pub newest: Option<u64>,
+}
+
+impl Waiting {
+    /// The line `doctor`, `status`, `install` and `update` print for it, in one wording: the same
+    /// state must be recognized wherever a person meets it. Never a failure — handing sessions
+    /// over is the owner's decision — so the line carries the count and the command instead.
+    #[must_use]
+    pub fn line(&self) -> String {
+        let command = format!(
+            "vibememory session agent add --agent {} --preset {} --backfill",
+            vibememory_core::terminal::printable(&self.agent),
+            self.preset.name()
+        );
+        let dir = vibememory_core::terminal::printable(&self.dir);
+        if self.logs == 0 {
+            format!(
+                "waiting  {} keeps sessions in {dir} and they do not go to history \u{2014} nobody \
+                 watched this agent: {command}",
+                self.preset.title()
+            )
+        } else {
+            format!(
+                "waiting  {}: {} session(s) in {dir} are not in history \u{2014} nobody watched \
+                 this agent: {command}",
+                self.preset.title(),
+                self.logs
+            )
+        }
+    }
+}
+
+/// The known agents whose logs are on this machine and which no one registered. The registry is the
+/// switch, and this is the report of a switch nobody has thrown.
+#[must_use]
+pub fn waiting(layout: &Layout) -> Vec<Waiting> {
+    let Some(home) = crate::install::home_dir() else {
+        return Vec::new();
+    };
+    waiting_under(layout, &home)
+}
+
+/// The same with the home named: a preset finds its log directory from it, and a machine that is
+/// not this one — or a test — says which home it means.
+#[must_use]
+pub fn waiting_under(layout: &Layout, home: &Path) -> Vec<Waiting> {
+    let watched = registry(layout);
+    Preset::ALL
+        .iter()
+        .copied()
+        .filter(|preset| {
+            !watched
+                .values()
+                .any(|registration| registration.preset == Some(*preset))
+        })
+        .filter_map(|preset| {
+            let dir = preset.default_dir(home);
+            dir.is_dir().then(|| {
+                let logs = logs(&dir, Some(preset));
+                Waiting {
+                    agent: preset.agent().to_owned(),
+                    preset,
+                    dir: dir.display().to_string(),
+                    logs: logs.len(),
+                    newest: logs.values().copied().max(),
+                }
+            })
+        })
+        .collect()
+}
+
+/// The line for an agent whose sessions never reach a store and whose logs the engine cannot read:
+/// every other line of `doctor` looks the same whether its sessions are coming or not, and a person
+/// waiting for them would wait forever.
+const NO_SESSIONS_NOTE: &str = "sessions: none in any store \u{2014} only memory comes from this \
+                                client; the engine reads the logs of a watched agent or a known \
+                                preset";
+
+/// What this machine knows of which agents hand sessions over: whose sessions lie in the stores,
+/// which agents are watched here, and whether the engine runs here at all. The engine reads the
+/// logs of a watched agent and of a known preset, and of nobody else — every other client hands
+/// over memory alone.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Readings {
+    /// Agents whose sessions are in some store.
+    delivered: BTreeSet<String>,
+    /// Agents registered here: their logs the engine reads.
+    watched: BTreeSet<String>,
+    /// Whether the engine is installed here: without it the whole machine hands nothing over, and
+    /// saying so under every agent would drown the one line that matters.
+    engine: bool,
+}
+
+impl Readings {
+    /// The state of this machine.
+    #[must_use]
+    pub fn of(layout: &Layout) -> Self {
+        let mut delivered = BTreeSet::new();
+        for clone in std::iter::once(layout.store()).chain(
+            crate::team_connect::connected_teams(layout)
+                .into_iter()
+                .map(|team| layout.team_store(&team)),
+        ) {
+            for (agent, _) in crate::foreign_session::delivered(&clone) {
+                delivered.insert(agent);
+            }
+        }
+        Self {
+            delivered,
+            watched: registry(layout).into_keys().collect(),
+            engine: crate::install::engine_configured(layout),
+        }
+    }
+
+    /// The line for an agent whose sessions never reach a store, when it is one the engine cannot
+    /// read. Not a fault — an agent that only writes memory is the ordinary way to connect one —
+    /// but a state nobody names is a state nobody can fix.
+    #[must_use]
+    pub fn note(&self, agent: &str) -> Option<&'static str> {
+        if !self.engine
+            || self.delivered.contains(agent)
+            || self.watched.contains(agent)
+            // A known preset waits for its registration, and the `waiting` line says that with the
+            // count and the command; the hooks agent hands its sessions over as transcripts.
+            || preset_for(agent).is_some()
+            || hooks_agent(agent)
+        {
+            return None;
+        }
+        Some(NO_SESSIONS_NOTE)
+    }
+}
+
+/// Whether the agent's sessions reach the store without being handed over: Claude Code writes the
+/// transcripts the engine syncs, and Claude Desktop's sessions come through the outbox.
+fn hooks_agent(agent: &str) -> bool {
+    [
+        crate::mcp_config::Client::ClaudeCode,
+        crate::mcp_config::Client::ClaudeDesktop,
+    ]
+    .iter()
+    .any(|client| client.agent() == agent)
 }
 
 /// The logs under a log directory and their modification times, by path: every file for an agent

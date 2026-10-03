@@ -19,7 +19,8 @@ use std::time::{Duration, SystemTime};
 
 use support::TempDir;
 use vibememory_cli::agents::{
-    Handler, Preset, record_put, register, registry, registry_problem, tick, unregister, watched,
+    Handler, Preset, Readings, record_put, register, registry, registry_problem, tick, unregister,
+    waiting_under, watched,
 };
 use vibememory_cli::config::Config;
 use vibememory_cli::install::Layout;
@@ -91,6 +92,155 @@ fn wrapper(temp: &TempDir, name: &str, fails: bool) -> (PathBuf, PathBuf) {
     .unwrap();
     fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
     (script, noted)
+}
+
+/// A known agent whose logs lie on this machine and which nobody registered: the switch that was
+/// never thrown is named, with the count of what waits behind it, and it stops being named the
+/// moment it is thrown.
+#[test]
+fn an_unwatched_known_agent_is_reported_with_what_waits() {
+    let m = machine("agent-waiting");
+    let home = m.temp.path();
+    let sessions = home.join(".dsh").join("sessions");
+    let session = sessions.join("enc").join("one");
+    fs::create_dir_all(&session).unwrap();
+    fs::write(session.join("session.v4.jsonl.zstd"), b"log").unwrap();
+    // Beside a log lies its lock, and the lock is not a session: a directory of locks alone is an
+    // agent that has not started, and saying otherwise would invent history.
+    fs::write(session.join("session.lock"), b"").unwrap();
+
+    let waiting = waiting_under(&m.layout, home);
+    assert_eq!(waiting.len(), 1, "one known agent, one line");
+    let dsh = &waiting[0];
+    assert_eq!(dsh.agent, AGENT);
+    assert_eq!(dsh.preset, Preset::Dsh);
+    assert_eq!(dsh.logs, 1, "the lock beside the log is not a session");
+    assert!(dsh.newest.is_some(), "when the newest log was written");
+    let line = dsh.line();
+    assert!(
+        line.starts_with("waiting  DeepSeek Harness: 1 session(s)"),
+        "{line}"
+    );
+    assert!(
+        line.contains(AGENT) && line.contains("--backfill"),
+        "{line}"
+    );
+
+    // Registered: the decision is made, and the same directory stops waiting.
+    register(
+        &m.layout,
+        AGENT,
+        &sessions,
+        Handler::Preset(Preset::Dsh),
+        false,
+    )
+    .unwrap();
+    assert!(waiting_under(&m.layout, home).is_empty());
+
+    // A home the agent never wrote into has nothing to say.
+    assert!(waiting_under(&m.layout, &home.join("nohome")).is_empty());
+}
+
+/// An agent that is here with nothing written yet: still said, because the next session would go
+/// the same way — nowhere — and the only moment to say it is before there is something to lose.
+#[test]
+fn a_known_agent_with_an_empty_log_directory_still_waits() {
+    let m = machine("agent-waiting-empty");
+    let home = m.temp.path();
+    fs::create_dir_all(home.join(".dsh").join("sessions")).unwrap();
+
+    let waiting = waiting_under(&m.layout, home);
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0].logs, 0);
+    let line = waiting[0].line();
+    assert!(line.contains("keeps sessions in"), "{line}");
+    assert_eq!(line.matches("waiting  ").count(), 1, "{line}");
+}
+
+/// Which agents hand sessions over and which hand over memory alone: the engine reads the logs of
+/// a watched agent and of a known preset, and of nobody else. A client nobody can read is named,
+/// because a person waiting for its sessions would wait forever.
+#[test]
+fn a_client_whose_sessions_never_arrive_is_named() {
+    let m = machine("agent-readings");
+    // A machine that only connects agents hands nothing over at all, and says that once, about
+    // itself: a note under every agent would only repeat it.
+    assert!(Readings::of(&m.layout).note("cursor").is_none());
+
+    fs::create_dir_all(&m.layout.engine_dir).unwrap();
+    fs::write(m.layout.engine_dir.join("config.json"), "{}").unwrap();
+    let readings = Readings::of(&m.layout);
+    assert!(
+        readings.note("cursor").is_some(),
+        "a client the engine cannot read hands over memory alone"
+    );
+    // The hooks agent writes the transcripts the engine syncs, and a known preset waits for its
+    // registration — the `waiting` line says that one, with the count and the command.
+    assert!(readings.note("claude-code").is_none());
+    assert!(readings.note("claude-desktop").is_none());
+    assert!(readings.note(AGENT).is_none());
+
+    // A session of that client in the store settles it: its sessions do arrive.
+    let session = m
+        .layout
+        .store()
+        .join("projects")
+        .join("Probe")
+        .join("agents")
+        .join("cursor");
+    fs::create_dir_all(&session).unwrap();
+    fs::write(session.join("session-one.jsonl"), b"{}").unwrap();
+    assert!(Readings::of(&m.layout).note("cursor").is_none());
+
+    // Registered agents are the engine's own business, and their line is the `watch` one.
+    register(
+        &m.layout,
+        AGENT,
+        &m.logs,
+        Handler::Preset(Preset::Dsh),
+        false,
+    )
+    .unwrap();
+    assert!(Readings::of(&m.layout).note(AGENT).is_none());
+}
+
+/// The whole path a person walks: with an agent's logs on the machine and no registration, the
+/// engine says it itself — in `status` and in `install` — and not only inside the library.
+#[test]
+fn the_engine_says_out_loud_that_an_unwatched_agent_hands_nothing_over() {
+    let m = machine("agent-waiting-binary");
+    let home = m.temp.path();
+    fs::write(
+        m.layout.engine_dir.join("config.json"),
+        r#"{"machineId": "mac-main"}"#,
+    )
+    .unwrap();
+    let session = home.join(".dsh").join("sessions").join("enc").join("one");
+    fs::create_dir_all(&session).unwrap();
+    fs::write(session.join("session.v4.jsonl.zstd"), b"log").unwrap();
+
+    let run = |arg: &str| {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_vibememory"))
+            .arg(arg)
+            .arg("--dry-run")
+            .env("HOME", home)
+            .env("VIBEMEMORY_DIR", &m.layout.engine_dir)
+            .env("CLAUDE_CONFIG_DIR", &m.layout.config_dir)
+            .output()
+            .expect("the engine binary runs");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    // `--dry-run` belongs to `install`; `status` ignores it and only reads.
+    for text in [run("status"), run("install")] {
+        assert!(
+            text.contains("waiting  DeepSeek Harness: 1 session(s)"),
+            "the state of an unregistered agent is not said:\n{text}"
+        );
+        assert!(
+            text.contains("--agent dsh-desktop --preset dsh --backfill"),
+            "the line does not carry the command that changes it:\n{text}"
+        );
+    }
 }
 
 #[test]

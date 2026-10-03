@@ -1,19 +1,28 @@
-//! The seven things an agent can do to the memory, and nothing else.
+//! The eight things an agent can do to the memory, and nothing else.
 //!
 //! Every one of them is the journal's own vocabulary: read the folded state, or append one event.
 //! There is no update-in-place and no delete-the-line, because the journal has neither — that is
-//! what lets two machines merge it by union without losing a word. The one tool outside that
-//! vocabulary, `project_resolve`, only reads the engine's naming rules and writes nothing.
+//! what lets two machines merge it by union without losing a word. The two tools outside that
+//! vocabulary, `project_resolve` and `handoff_list`, only read: the engine's naming rules, and the
+//! hand-offs an agent left beside the journal.
 
 use serde_json::{Value, json};
 use vibememory_core::memory::journal::{self, Action, Event, Memory};
 use vibememory_core::memory::record::{Record, RecordId, RecordKind, RecordStatus};
 use vibememory_core::naming::StoreName;
 
-use crate::memories::{DirectoryProject, Memories};
+use crate::memories::{DirectoryProject, Handoffs, Memories};
 
 /// What the tools answer with: text for the agent, or an error it can act on.
 pub type ToolResult = Result<Value, String>;
+
+/// How the memory is kept, said in the descriptions of the tools an agent has to remember to use:
+/// a decision the next session would otherwise work out again belongs in a record, and a flow left
+/// in the middle leaves a hand-off for whoever continues it.
+const PROTOCOL: &str = "Kept by a discipline, not only by tools: a decision the next session \
+                        would otherwise work out again belongs in a record, and a flow left in \
+                        the middle leaves a hand-off for whoever continues it — handoff_list \
+                        reads the open ones.";
 
 /// The tool list, as `tools/list` reports it.
 #[must_use]
@@ -21,10 +30,10 @@ pub fn catalogue() -> Value {
     json!([
         {
             "name": "memory_search",
-            "description": "Search remembered facts by words in their title, description or body. \
+            "description": format!("Search remembered facts by words in their title, description or body. \
                             Returns identifiers and one-line hooks, not whole records — read one \
                             with memory_get. A result marked stale was true once and is not to be \
-                            relied on without checking.",
+                            relied on without checking. {PROTOCOL}"),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -51,9 +60,9 @@ pub fn catalogue() -> Value {
         },
         {
             "name": "memory_save",
-            "description": "Remember a new fact. Fails if the identifier is taken — change the \
+            "description": format!("Remember a new fact. Fails if the identifier is taken — change the \
                             existing one with memory_update instead of writing a second version \
-                            of the same thing.",
+                            of the same thing. {PROTOCOL}"),
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -105,6 +114,7 @@ pub fn catalogue() -> Value {
     .map(|tools| {
         tools.push(history_search_entry());
         tools.push(project_resolve_entry());
+        tools.push(handoff_list_entry());
         Value::Array(std::mem::take(tools))
     })
     .unwrap_or_default()
@@ -153,6 +163,26 @@ fn project_resolve_entry() -> Value {
     })
 }
 
+/// The notes an agent left for whoever continues a flow: the engine marks a session by them, and
+/// this hands them over whole — a name says what is in progress, the text says where it stopped.
+fn handoff_list_entry() -> Value {
+    json!({
+        "name": "handoff_list",
+        "description": format!("Read the hand-offs left for whoever continues a flow: the notes in \
+                        the project's memory whose frontmatter still says `status: open`. Answers \
+                        the project, and each open hand-off with its name, description, when it \
+                        was updated, its size and its text. A hand-off whose status is not open is \
+                        finished work and is not returned. {PROTOCOL}"),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": { "type": "string", "description": "Project of the store. Omit to use the one this server was started in; a server started outside any project reads every project it may use." }
+            },
+            "required": []
+        }
+    })
+}
+
 /// Runs one tool by name.
 ///
 /// # Errors
@@ -172,6 +202,7 @@ pub fn call(
         "memory_delete" => delete(arguments, caller, memories),
         "history_search" => history_search(arguments, caller, memories),
         "project_resolve" => project_resolve(arguments, caller, memories),
+        "handoff_list" => handoff_list(arguments, caller, memories),
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -433,6 +464,68 @@ fn project_resolve(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memori
                     `projects` as `project`"
         }),
     })
+}
+
+/// The hand-offs of a project: what an agent left for whoever continues its flow.
+fn handoff_list(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolResult {
+    let projects = handoff_projects(arguments, caller, memories)?;
+    let mut found = Vec::new();
+    for project in &projects {
+        match memories.handoffs(project)? {
+            Handoffs::Read(list) => {
+                for handoff in list {
+                    found.push(json!({
+                        "project": project,
+                        "name": handoff.name,
+                        "description": handoff.description,
+                        "status": handoff.status,
+                        "updated": handoff.updated,
+                        "size": handoff.size,
+                        "body": handoff.body,
+                    }));
+                }
+            }
+            // Not an error and not an empty list: the host keeps the store as a bare repository,
+            // and a hand-off is a file in a clone. The answer says why there is nothing to read,
+            // as `project_resolve` says why it cannot name the client's folder.
+            Handoffs::NotVisible => {
+                return Ok(json!({
+                    "project": null,
+                    "handoffs": null,
+                    "why": "the store here keeps no working copy: hand-offs are files in a clone, \
+                            and this server reads a bare repository",
+                }));
+            }
+        }
+    }
+    // The project is named when the answer is about one of them: an agent in a folder asked about
+    // that folder, and a server that read every project must not pretend the answer was one.
+    let one = match projects.as_slice() {
+        [only] => Some(only.clone()),
+        _ => None,
+    };
+    Ok(json!({ "project": one, "handoffs": found }))
+}
+
+/// Which projects a hand-off read looks at: the one it named, else the one this server was started
+/// in — an agent in a folder asks about that folder — else every project the caller may see.
+fn handoff_projects(
+    arguments: &Value,
+    caller: &Caller<'_>,
+    memories: &dyn Memories,
+) -> Result<Vec<String>, String> {
+    if let Some(one) = optional(arguments, "project") {
+        in_scope(&one, caller)?;
+        if !memories.projects()?.contains(&one) {
+            return Err(format!("the store holds no project {one}"));
+        }
+        return Ok(vec![one]);
+    }
+    if let Some(own) = caller.project {
+        in_scope(own, caller)?;
+        return Ok(vec![own.to_owned()]);
+    }
+    visible(caller, memories)
 }
 
 fn search(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolResult {
