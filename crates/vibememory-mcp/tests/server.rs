@@ -120,6 +120,62 @@ fn the_tools_that_keep_the_memory_say_how_it_is_kept() {
 }
 
 #[test]
+fn every_tool_says_what_a_client_may_do_with_it() {
+    let fake = memories();
+    let request =
+        protocol::parse(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#).expect("parse");
+    let answer = protocol::handle(&request, &CALLER, &fake).expect("answer");
+    let value = serde_json::to_value(answer).expect("encode");
+    let tools = value["result"]["tools"].as_array().expect("array");
+    let field = |name: &str, field: &str| {
+        tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("no tool {name}"))[field]
+            .clone()
+    };
+    // A tool without a title or without annotations is a tool a client has to guess about, and a
+    // tool that appears without a row in the table is exactly the one nobody checked.
+    for tool in tools {
+        let name = tool["name"].as_str().expect("name");
+        assert!(
+            !tool["title"].as_str().unwrap_or_default().is_empty(),
+            "{name} has no title"
+        );
+        assert!(
+            tool["annotations"]["readOnlyHint"].is_boolean(),
+            "{name} says nothing about what it does"
+        );
+    }
+    for name in [
+        "memory_search",
+        "memory_get",
+        "history_search",
+        "project_resolve",
+        "handoff_list",
+    ] {
+        assert_eq!(
+            field(name, "annotations")["readOnlyHint"],
+            true,
+            "{name} only reads and must say so"
+        );
+    }
+    // What takes a record away asks a person twice; what adds or changes does not.
+    assert_eq!(
+        field("memory_delete", "annotations")["destructiveHint"],
+        true
+    );
+    for name in ["memory_save", "memory_update"] {
+        assert_eq!(
+            field(name, "annotations")["destructiveHint"],
+            false,
+            "{name}"
+        );
+        assert_eq!(field(name, "annotations")["readOnlyHint"], false, "{name}");
+    }
+}
+
+#[test]
 fn a_store_without_hand_offs_answers_an_empty_list() {
     let fake = memories();
     let here = Caller::owner(AGENT, Some("VibeMemory"));

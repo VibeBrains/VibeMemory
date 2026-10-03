@@ -19,7 +19,8 @@ use std::time::{Duration, SystemTime};
 
 use support::TempDir;
 use vibememory_cli::agents::{
-    Handler, Preset, Readings, record_put, register, registry, registry_problem, tick, unregister,
+    Handler, NOTICE_AFTER, Preset, Readings, decline, declined_under, last_put,
+    notice_waiting_under, record_put, register, registry, registry_problem, tick, unregister,
     waiting_under, watched,
 };
 use vibememory_cli::config::Config;
@@ -241,6 +242,179 @@ fn the_engine_says_out_loud_that_an_unwatched_agent_hands_nothing_over() {
             "the line does not carry the command that changes it:\n{text}"
         );
     }
+}
+
+/// A question a person answered is not asked again: the refusal is written down, `doctor` names it
+/// instead of the offer, and a removal is an answer too — otherwise the engine would argue with the
+/// person after every `remove`.
+#[test]
+fn a_person_can_answer_the_question_and_the_engine_stops_asking() {
+    let m = machine("agent-decline");
+    let home = m.temp.path();
+    let session = home.join(".dsh").join("sessions").join("enc").join("one");
+    fs::create_dir_all(&session).unwrap();
+    fs::write(session.join("session.v4.jsonl.zstd"), b"log").unwrap();
+    fs::write(
+        m.layout.engine_dir.join("config.json"),
+        r#"{"machineId": "mac-main"}"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        waiting_under(&m.layout, home).len(),
+        1,
+        "the offer is there"
+    );
+
+    decline(&m.layout, AGENT).unwrap();
+    assert!(
+        waiting_under(&m.layout, home).is_empty(),
+        "an answered question is not repeated"
+    );
+    let answers = declined_under(&m.layout, home);
+    assert_eq!(answers.len(), 1);
+    assert_eq!(
+        answers[0].logs, 1,
+        "what waits behind the decision is counted"
+    );
+    let line = answers[0].line();
+    assert!(
+        line.starts_with("unwatched DeepSeek Harness: 1 session(s)"),
+        "{line}"
+    );
+    assert!(line.contains("--agent dsh-desktop --preset dsh"), "{line}");
+
+    // Registering over a refusal is the later word, and the removal writes the refusal back.
+    register(
+        &m.layout,
+        AGENT,
+        &session,
+        Handler::Preset(Preset::Dsh),
+        false,
+    )
+    .unwrap();
+    assert!(
+        declined_under(&m.layout, home).is_empty(),
+        "the decision is taken back"
+    );
+    assert!(watched(&m.layout).iter().any(|one| one.agent == AGENT));
+    record_put(&m.layout, AGENT).unwrap();
+    assert_eq!(
+        last_put(&m.layout, AGENT),
+        Some(last_put(&m.layout, AGENT).unwrap())
+    );
+
+    assert!(unregister(&m.layout, AGENT).unwrap());
+    assert_eq!(
+        declined_under(&m.layout, home).len(),
+        1,
+        "a removal is an answer too"
+    );
+    assert!(
+        waiting_under(&m.layout, home).is_empty(),
+        "and it is not asked again"
+    );
+    assert_eq!(
+        last_put(&m.layout, AGENT),
+        None,
+        "the note about a wrapper nobody runs would outlive the registration"
+    );
+}
+
+/// The sentence a session gets: once a day, again when the logs grow, and never for an agent whose
+/// fate is decided. The person is in the session; the machine's report is not what they read.
+#[test]
+fn a_session_is_told_once_a_day_and_again_when_the_logs_grow() {
+    let m = machine("agent-notice");
+    let home = m.temp.path();
+    let session = home.join(".dsh").join("sessions").join("enc").join("one");
+    fs::create_dir_all(&session).unwrap();
+    fs::write(session.join("session.v4.jsonl.zstd"), b"log").unwrap();
+    let at = 1_800_000_000_u64;
+
+    let first = notice_waiting_under(&m.layout, home, at).expect("the session is told");
+    assert!(first.contains("not going to history"), "{first}");
+    assert!(
+        first.contains("session agent decline --agent dsh-desktop"),
+        "{first}"
+    );
+    assert!(
+        notice_waiting_under(&m.layout, home, at + 60).is_none(),
+        "the same sentence at every session start is noise"
+    );
+    assert!(
+        notice_waiting_under(&m.layout, home, at + NOTICE_AFTER + 1).is_some(),
+        "tomorrow it is worth saying again"
+    );
+
+    // A count that changed is news: another log means another session that would be lost.
+    fs::write(session.join("session.v5.jsonl.zstd"), b"log").unwrap();
+    assert!(notice_waiting_under(&m.layout, home, at + NOTICE_AFTER + 2).is_some());
+
+    // Nothing to lose yet: the directory is there and no session has been written.
+    let empty = machine("agent-notice-empty");
+    fs::create_dir_all(empty.temp.path().join(".dsh").join("sessions")).unwrap();
+    assert!(notice_waiting_under(&empty.layout, empty.temp.path(), at).is_none());
+
+    // Decided: the offer is gone, and a sentence about it would be about nothing.
+    decline(&m.layout, AGENT).unwrap();
+    assert!(notice_waiting_under(&m.layout, home, at + 10 * NOTICE_AFTER).is_none());
+}
+
+/// The strongest channel of the three: the session itself is told, because the person reads the
+/// session and not the machine's report. And told once: the note that throttles the sentence is
+/// written by the same run.
+#[test]
+fn the_session_start_hook_tells_the_session_about_a_waiting_agent() {
+    use std::io::Write as _;
+
+    let m = machine("agent-notice-hook");
+    let home = m.temp.path();
+    fs::write(
+        m.layout.engine_dir.join("config.json"),
+        r#"{"machineId": "mac-main"}"#,
+    )
+    .unwrap();
+    let session = home.join(".dsh").join("sessions").join("enc").join("one");
+    fs::create_dir_all(&session).unwrap();
+    fs::write(session.join("session.v4.jsonl.zstd"), b"log").unwrap();
+    let work = m.temp.dir("work");
+    let input = format!(
+        r#"{{"session_id":"11111111-1111-4111-8111-111111111111","transcript_path":"{}/projects/-tmp-work/11111111-1111-4111-8111-111111111111.jsonl","cwd":"{}","source":"startup"}}"#,
+        m.layout.config_dir.display(),
+        work.display()
+    );
+
+    let run = || {
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_vibememory"))
+            .args(["hook", "session-start"])
+            .env("HOME", home)
+            .env("VIBEMEMORY_DIR", &m.layout.engine_dir)
+            .env("CLAUDE_CONFIG_DIR", &m.layout.config_dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("the engine binary runs");
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(input.as_bytes())
+            .expect("the hook reads its input");
+        let out = child.wait_with_output().expect("the hook answers");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let first = run();
+    assert!(first.contains("not going to history"), "{first}");
+    assert!(
+        first.contains("session agent decline --agent dsh-desktop"),
+        "the sentence carries the way to say no: {first}"
+    );
+    let second = run();
+    assert!(
+        second.is_empty(),
+        "the same sentence at every session start is noise: {second}"
+    );
 }
 
 #[test]

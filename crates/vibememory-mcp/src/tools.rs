@@ -16,6 +16,68 @@ use crate::memories::{DirectoryProject, Handoffs, Memories};
 /// What the tools answer with: text for the agent, or an error it can act on.
 pub type ToolResult = Result<Value, String>;
 
+/// What a client may do with a tool before it asks a person: the spec's annotations say which
+/// tools only read, which write, and which take something away. A client that knows a tool only
+/// reads can run it without a prompt, and one that knows a tool destroys can ask twice — so every
+/// tool in the catalogue carries them, and a test fails for a tool that arrives without a row here.
+const ANNOTATIONS: &[(&str, &str, Kind)] = &[
+    ("memory_search", "Search memory", Kind::Read),
+    ("memory_get", "Read a memory", Kind::Read),
+    ("memory_save", "Remember a fact", Kind::Write),
+    ("memory_update", "Change a memory", Kind::Write),
+    ("memory_delete", "Forget a memory", Kind::Destructive),
+    ("history_search", "Search past sessions", Kind::Read),
+    ("project_resolve", "Resolve a project", Kind::Read),
+    ("handoff_list", "Read open hand-offs", Kind::Read),
+];
+
+/// What a tool does to what it touches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    /// Looks and answers.
+    Read,
+    /// Adds or changes, never takes away.
+    Write,
+    /// Takes something away: a person is worth asking twice.
+    Destructive,
+}
+
+/// Writes the title and the annotations into every tool of the catalogue, by name.
+fn annotate(tools: &mut Value) {
+    let Some(list) = tools.as_array_mut() else {
+        return;
+    };
+    for tool in list {
+        let Some(name) = tool.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some((_, title, kind)) = ANNOTATIONS.iter().find(|(known, _, _)| *known == name) else {
+            continue;
+        };
+        tool["title"] = json!(title);
+        tool["annotations"] = match kind {
+            Kind::Read => json!({
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true,
+                "openWorldHint": false,
+            }),
+            Kind::Write => json!({
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": false,
+                "openWorldHint": false,
+            }),
+            Kind::Destructive => json!({
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": false,
+                "openWorldHint": false,
+            }),
+        };
+    }
+}
+
 /// How the memory is kept, said in the descriptions of the tools an agent has to remember to use:
 /// a decision the next session would otherwise work out again belongs in a record, and a flow left
 /// in the middle leaves a hand-off for whoever continues it.
@@ -115,7 +177,9 @@ pub fn catalogue() -> Value {
         tools.push(history_search_entry());
         tools.push(project_resolve_entry());
         tools.push(handoff_list_entry());
-        Value::Array(std::mem::take(tools))
+        let mut all = Value::Array(std::mem::take(tools));
+        annotate(&mut all);
+        all
     })
     .unwrap_or_default()
 }

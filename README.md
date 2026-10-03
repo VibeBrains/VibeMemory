@@ -55,8 +55,8 @@ VibeMemory это чинит:
 Здесь — главное. Полный каталог — [docs/functional.md](docs/functional.md).
 
 - **Синхронизация сессий Claude Code** между macOS, Windows и Linux: хуки, фоновый тик раз в две минуты, детерминированное слияние транскриптов, список сессий в Claude Desktop совпадает на всех машинах.
-- **Сервер памяти по MCP** — `memory_search`, `memory_get`, `memory_save`, `memory_update` и `history_search` для любого MCP-агента; `vibememory mcp-config <агент>` печатает готовое подключение.
-- **Сессии любого агента в общей истории** — `vibememory session put` принимает сессию в простом формате JSONL; агента без своих хуков регистрирует `session agent add`, и его логи отдаёт тик.
+- **Сервер памяти по MCP** — `memory_search`, `memory_get`, `memory_save`, `memory_update`, `history_search` и `handoff_list` для любого MCP-агента; `vibememory mcp-config <агент>` печатает готовое подключение.
+- **Сессии любого агента в общей истории** — `vibememory session put` принимает сессию в простом формате JSONL; агента без своих хуков регистрирует `session agent add`, и его логи отдаёт тик. Пока регистрации нет, об этом говорят `doctor`, `install`, `update` и сама сессия Claude, а `session agent decline` — второй ответ: «оставить на этой машине». `session agent list` показывает, у кого сессии доезжают.
 - **DeepSeek Harness одной командой** — `vibememory session agent add --agent dsh-desktop --preset dsh --backfill`.
 - **Команды** — общий стор команды на сервере, права участников и агентов, сессии по переключателю.
 - **Память без потерь** — записи памяти не перезаписываются «кто новее», конфликт сохраняет обе версии.

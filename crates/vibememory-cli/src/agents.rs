@@ -230,6 +230,9 @@ pub fn register(
     let mut registry = registry(layout);
     registry.insert(agent.to_owned(), registration.clone());
     write_json(&layout.engine_dir.join(REGISTRY_FILE), &registry)?;
+    // Registering over a refusal is the later word, and the note about a decision taken back
+    // would outlive it.
+    allow(layout, agent);
     // The directory as it is now is the baseline: what was written before registration is history,
     // and handing all of it to the wrapper in the first tick would hold the tick for as long as the
     // history is long. Asked for the history, the baseline is empty, and the tick takes it in
@@ -250,6 +253,10 @@ pub fn register(
 
 /// Forgets an agent. Answers whether it was registered.
 ///
+/// The removal is a decision, and it is written down as one: the logs stay where they are, so
+/// without the note `doctor` would offer the registration again the moment it is removed — the
+/// person would be argued with after every answer. `add` takes the note back.
+///
 /// # Errors
 ///
 /// The registry cannot be written.
@@ -259,8 +266,183 @@ pub fn unregister(layout: &Layout, agent: &str) -> Result<bool, String> {
         return Ok(false);
     }
     write_json(&layout.engine_dir.join(REGISTRY_FILE), &registry)?;
+    // The watch state of an agent nobody watches is a note about nothing: it would outlive the
+    // registration and be read as if it were current.
     let _ = std::fs::remove_file(state_path(layout, agent, "json"));
+    let _ = std::fs::remove_file(state_path(layout, agent, "put"));
+    let _ = decline(layout, agent);
     Ok(true)
+}
+
+/// An agent a person decided not to watch: its sessions stay on this machine, and the engine stops
+/// offering the registration. Not the same state as "nobody has decided yet" — one is an answer,
+/// the other is a question, and only one of them is worth repeating.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Declined {
+    /// The name it would have been registered under.
+    pub agent: String,
+    /// The preset that would have read its logs.
+    pub preset: Preset,
+    /// The directory its logs are in.
+    pub dir: String,
+    /// The logs lying there now: the sessions the decision keeps on this machine.
+    pub logs: usize,
+    /// When the decision was made, seconds since the epoch.
+    pub at: u64,
+}
+
+/// Writes down that this agent's sessions are to stay on this machine.
+///
+/// # Errors
+///
+/// The note cannot be written.
+pub fn decline(layout: &Layout, agent: &str) -> Result<(), String> {
+    let path = state_path(layout, agent, "declined");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("{}: {error}", parent.display()))?;
+    }
+    std::fs::write(&path, format!("{}\n", now()))
+        .map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// Takes the decision back: what `add` does, because registering over a refusal is the later word.
+fn allow(layout: &Layout, agent: &str) {
+    let _ = std::fs::remove_file(state_path(layout, agent, "declined"));
+}
+
+/// The agents a person decided not to watch, with what waits behind the decision. Empty for an
+/// agent that was never offered: a question nobody answered is not a decision.
+#[must_use]
+pub fn declined(layout: &Layout) -> Vec<Declined> {
+    let Some(home) = crate::install::home_dir() else {
+        return Vec::new();
+    };
+    declined_under(layout, &home)
+}
+
+/// The same with the home named, as [`waiting_under`] is to [`waiting`].
+#[must_use]
+pub fn declined_under(layout: &Layout, home: &Path) -> Vec<Declined> {
+    Preset::ALL
+        .iter()
+        .copied()
+        .filter_map(|preset| {
+            let agent = preset.agent();
+            let at = decision_at(layout, agent)?;
+            let dir = preset.default_dir(home);
+            let logs = logs(&dir, Some(preset));
+            Some(Declined {
+                agent: agent.to_owned(),
+                preset,
+                dir: dir.display().to_string(),
+                logs: logs.len(),
+                at,
+            })
+        })
+        .collect()
+}
+
+impl Declined {
+    /// The line `doctor` prints for a decision already made: the state is named, so that a person
+    /// who forgot the answer is not left guessing why the sessions of an agent stay here.
+    #[must_use]
+    pub fn line(&self) -> String {
+        let command = format!(
+            "vibememory session agent add --agent {} --preset {} --backfill",
+            vibememory_core::terminal::printable(&self.agent),
+            self.preset.name()
+        );
+        let dir = vibememory_core::terminal::printable(&self.dir);
+        let since = crate::clock::iso8601(i64::try_from(self.at).unwrap_or(i64::MAX));
+        if self.logs == 0 {
+            format!(
+                "unwatched {}: sessions in {dir} stay on this machine by your decision of {since} \
+                 \u{2014} {command} changes it",
+                self.preset.title()
+            )
+        } else {
+            format!(
+                "unwatched {}: {} session(s) in {dir} stay on this machine by your decision of \
+                 {since} \u{2014} {command} changes it",
+                self.preset.title(),
+                self.logs
+            )
+        }
+    }
+}
+
+/// When the decision about this agent was written, seconds since the epoch.
+fn decision_at(layout: &Layout, agent: &str) -> Option<u64> {
+    let text = std::fs::read_to_string(state_path(layout, agent, "declined")).ok()?;
+    text.trim().parse().ok()
+}
+
+/// How long a session may go without being told about a waiting agent: the sentence is worth
+/// saying, and worth saying again tomorrow — but not at the start of every session of the day.
+pub const NOTICE_AFTER: u64 = 24 * 60 * 60;
+
+/// What to tell a session about an agent nobody watched, or `None` when there is nothing new to
+/// say. The person is in the session and does not read the machine's report; the session is where
+/// they can be told, once a day and again when the logs grow — a count that changed is news.
+#[must_use]
+pub fn notice_waiting(layout: &Layout, at: u64) -> Option<String> {
+    let home = crate::install::home_dir()?;
+    notice_waiting_under(layout, &home, at)
+}
+
+/// The same with the home named, as [`waiting_under`] is to [`waiting`].
+#[must_use]
+pub fn notice_waiting_under(layout: &Layout, home: &Path, at: u64) -> Option<String> {
+    let waiting: Vec<Waiting> = waiting_under(layout, home)
+        .into_iter()
+        .filter(|waiting| waiting.logs > 0)
+        .collect();
+    let mut notices = Vec::new();
+    for agent in &waiting {
+        let said = notice_at(layout, &agent.agent);
+        if said.is_some_and(|(when, logs)| {
+            at.saturating_sub(when) < NOTICE_AFTER && logs == agent.logs
+        }) {
+            continue;
+        }
+        // A note that cannot be written would make the sentence repeat at every session start:
+        // worse than silence until the disk is fixed.
+        if remember_notice(layout, &agent.agent, at, agent.logs).is_err() {
+            continue;
+        }
+        notices.push(format!(
+            "VibeMemory: {title} keeps {logs} session(s) in {dir} that are not going to history, \
+             because nobody watches this agent here \u{2014} `vibememory session agent add --agent \
+             {agent} --preset {preset} --backfill` sends them, `vibememory session agent decline \
+             --agent {agent}` leaves them on this machine for good.",
+            title = agent.preset.title(),
+            logs = agent.logs,
+            dir = vibememory_core::terminal::printable(&agent.dir),
+            agent = vibememory_core::terminal::printable(&agent.agent),
+            preset = agent.preset.name(),
+        ));
+    }
+    (!notices.is_empty()).then(|| notices.join(" "))
+}
+
+/// When the session was last told about this agent, and how many logs waited then.
+fn notice_at(layout: &Layout, agent: &str) -> Option<(u64, usize)> {
+    let text = std::fs::read_to_string(state_path(layout, agent, "noticed")).ok()?;
+    let mut parts = text.split_whitespace();
+    let when = parts.next()?.parse().ok()?;
+    let logs = parts.next()?.parse().ok()?;
+    Some((when, logs))
+}
+
+fn remember_notice(layout: &Layout, agent: &str, at: u64, logs: usize) -> Result<(), String> {
+    let path = state_path(layout, agent, "noticed");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("{}: {error}", parent.display()))?;
+    }
+    std::fs::write(&path, format!("{at} {logs}\n"))
+        .map_err(|error| format!("{}: {error}", path.display()))
 }
 
 /// Every registered agent, by name. A registry that cannot be read is an empty one: the tick goes on
@@ -704,6 +886,7 @@ pub fn waiting(layout: &Layout) -> Vec<Waiting> {
 #[must_use]
 pub fn waiting_under(layout: &Layout, home: &Path) -> Vec<Waiting> {
     let watched = registry(layout);
+    let declined: BTreeSet<String> = declined(layout).into_iter().map(|one| one.agent).collect();
     Preset::ALL
         .iter()
         .copied()
@@ -711,6 +894,9 @@ pub fn waiting_under(layout: &Layout, home: &Path) -> Vec<Waiting> {
             !watched
                 .values()
                 .any(|registration| registration.preset == Some(*preset))
+                // A question already answered is not asked again: `decline` and `remove` write
+                // the answer down, and `add` takes it back.
+                && !declined.contains(preset.agent())
         })
         .filter_map(|preset| {
             let dir = preset.default_dir(home);
@@ -754,16 +940,13 @@ impl Readings {
     /// The state of this machine.
     #[must_use]
     pub fn of(layout: &Layout) -> Self {
-        let mut delivered = BTreeSet::new();
-        for clone in std::iter::once(layout.store()).chain(
-            crate::team_connect::connected_teams(layout)
-                .into_iter()
-                .map(|team| layout.team_store(&team)),
-        ) {
-            for (agent, _) in crate::foreign_session::delivered(&clone) {
-                delivered.insert(agent);
-            }
-        }
+        Self::with_delivered(layout, delivered_agents(layout))
+    }
+
+    /// The same when the caller already knows whose sessions are in the stores: `doctor` prints
+    /// that list, and walking every store twice to say one thing is work for nothing.
+    #[must_use]
+    pub fn with_delivered(layout: &Layout, delivered: BTreeSet<String>) -> Self {
         Self {
             delivered,
             watched: registry(layout).into_keys().collect(),
@@ -788,6 +971,23 @@ impl Readings {
         }
         Some(NO_SESSIONS_NOTE)
     }
+}
+
+/// The agents whose sessions are in some store of this machine — the personal one and every
+/// connected team's. What `doctor` prints and what [`Readings`] decides the notes by.
+#[must_use]
+pub fn delivered_agents(layout: &Layout) -> BTreeSet<String> {
+    let mut delivered = BTreeSet::new();
+    for clone in std::iter::once(layout.store()).chain(
+        crate::team_connect::connected_teams(layout)
+            .into_iter()
+            .map(|team| layout.team_store(&team)),
+    ) {
+        for (agent, _) in crate::foreign_session::delivered(&clone) {
+            delivered.insert(agent);
+        }
+    }
+    delivered
 }
 
 /// Whether the agent's sessions reach the store without being handed over: Claude Code writes the
@@ -866,8 +1066,10 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     })
 }
 
-/// Now, seconds since the epoch.
-fn now() -> u64 {
+/// Now, seconds since the epoch: the clock every note of the tick is stamped with, and the one the
+/// rules take as an argument so that they can be tested without a clock.
+#[must_use]
+pub fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())
