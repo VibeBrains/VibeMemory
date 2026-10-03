@@ -380,6 +380,7 @@ fn keep_ownership(like: &Path, target: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)] // the twin on unix fails; here the file's rights come from its directory
 fn keep_ownership(_like: &Path, _target: &Path) -> Result<(), String> {
     Ok(())
 }
