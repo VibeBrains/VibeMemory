@@ -4,6 +4,8 @@ description = "VibeMemory core: store naming, transcript merge, memory records â
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 globset.workspace = true

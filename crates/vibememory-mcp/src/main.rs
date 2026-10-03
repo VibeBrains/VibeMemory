@@ -6,7 +6,8 @@
 //! `access check` and `access teams`, which scripts and the cabinet read, and the key's `status`.
 //!
 //! On the host: `shell <key>` is the forced command of every machine key, `pre-receive` the hook
-//! of every team store, `access-apply` applies the access snapshot, `status` writes the report.
+//! of every team store, `access-apply` applies the access snapshot, `status` writes the report,
+//! and `admin` is the console of a host without the cabinet.
 
 #![allow(
     clippy::disallowed_methods,
@@ -61,6 +62,9 @@ fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     match arguments.first().map(String::as_str) {
         Some("access") => return access_command(arguments.get(1..).unwrap_or_default()),
+        Some("admin") => {
+            return vibememory_mcp::adminops::run(arguments.get(1..).unwrap_or_default());
+        }
         Some("shell") => {
             // The key comes from the key line's forced command, never from the client: what the
             // client asked for is only ever read from the variable sshd sets.

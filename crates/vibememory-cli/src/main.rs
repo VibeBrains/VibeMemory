@@ -548,6 +548,14 @@ fn connect_command(args: &[String]) -> ExitCode {
     {
         return refresh_command(team);
     }
+    if let [flag] = args
+        && flag == "--key-request"
+    {
+        return key_request_command();
+    }
+    if args.first().is_some_and(|flag| flag == "--grant") {
+        return grant_command(args.get(1..).unwrap_or_default());
+    }
     let ConnectArguments {
         cabinet: asked,
         agent,
@@ -559,7 +567,9 @@ fn connect_command(args: &[String]) -> ExitCode {
             eprintln!(
                 "usage: vibememory connect --cabinet <address> [--agent <name>] [--machine-id <name>], and the code at \
                  the prompt; \
-                 vibememory connect --refresh <team> after the host changed its key"
+                 vibememory connect --refresh <team> after the host changed its key; \
+                 on a host without the cabinet: vibememory connect --key-request, then \
+                 vibememory connect --grant [--agent <name>] [--machine-id <name>] with the grant on stdin"
             );
             return ExitCode::from(2);
         }
@@ -632,6 +642,104 @@ fn connect_command(args: &[String]) -> ExitCode {
         }
     };
     keep_granted_token(&layout, &grant, agent.as_deref())
+}
+
+/// `connect --key-request`: the key of this machine for a host without the cabinet. Its public half
+/// is printed for the host's owner, who registers it with `vibememory-mcp admin key add`; the grant
+/// that answers comes back through `connect --grant`. Asked again, it shows the same key.
+fn key_request_command() -> ExitCode {
+    let layout = layout();
+    match vibememory_cli::team_connect::PendingKey::for_grant(&layout) {
+        Ok(key) => {
+            eprintln!(
+                "This machine's key for the host. Give the line below to the host's owner: it goes to \
+                 `vibememory-mcp admin key add <member> <machine> <team>` on its stdin. It is the public half, \
+                 safe to send"
+            );
+            println!("{}", key.public);
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("connect: the key could not be made: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `connect --grant [--agent <name>] [--machine-id <name>]`: what the console of a host without the
+/// cabinet issued — one line of JSON on stdin, never an argument, since a token grant holds the
+/// token — taken exactly as the cabinet's answer to a claim code would be.
+fn grant_command(args: &[String]) -> ExitCode {
+    let mut agent = None;
+    let mut machine_id = None;
+    let mut rest = args.iter();
+    while let Some(flag) = rest.next() {
+        let slot = match flag.as_str() {
+            "--agent" => &mut agent,
+            "--machine-id" => &mut machine_id,
+            other => {
+                eprintln!(
+                    "connect: unknown {other:?}; usage: vibememory connect --grant [--agent <name>] [--machine-id <name>], and the grant on stdin"
+                );
+                return ExitCode::from(2);
+            }
+        };
+        let Some(value) = rest.next() else {
+            eprintln!("connect: {flag} takes a value");
+            return ExitCode::from(2);
+        };
+        *slot = Some(value.clone());
+    }
+    eprintln!("Paste the grant the host's owner gave you, then Enter:");
+    let mut line = String::new();
+    if let Err(error) = std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line) {
+        eprintln!("connect: the grant could not be read: {error}");
+        return ExitCode::FAILURE;
+    }
+    let line = line.trim();
+    // the grant names the host it came from; the checks hold every other address to it
+    let named = serde_json::from_str::<serde_json::Value>(line)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("cabinet")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        });
+    let Some(host) = named.and_then(|named| vibememory_core::claim::cabinet_address(&named).ok())
+    else {
+        eprintln!(
+            "connect: this is not a grant: one line of JSON, as `vibememory-mcp admin` printed it"
+        );
+        return ExitCode::FAILURE;
+    };
+    let layout = layout();
+    let answer = vibememory_core::claim::read_answer(0, 200, line, &host);
+    match answer {
+        Ok(vibememory_core::claim::Claim::Token(grant)) => {
+            keep_granted_token(&layout, &grant, agent.as_deref())
+        }
+        Ok(vibememory_core::claim::Claim::Key(grant)) => {
+            let Some(pending) =
+                vibememory_cli::team_connect::PendingKey::waiting_for_grant(&layout)
+            else {
+                eprintln!(
+                    "connect: this grant is for a machine key, and this machine has none waiting: run \
+                     `vibememory connect --key-request`, have key {} revoked and the new key added",
+                    grant.key_id
+                );
+                return ExitCode::FAILURE;
+            };
+            if grant.mode == vibememory_core::team_store::PERSONAL_MODE {
+                return connect_personal(&layout, &grant, pending, machine_id.as_deref());
+            }
+            connect_key(&layout, &grant, pending)
+        }
+        Err(failure) => {
+            eprintln!("connect: the grant is refused: {failure}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// The end of a `connect` that brought a token: it is kept, and the line that registers the client
@@ -797,7 +905,8 @@ fn connect_personal(
         Err(refusal) => {
             eprintln!("connect: {refusal}");
             eprintln!(
-                "connect: key {} is registered for this machine in the cabinet: revoke it there",
+                "connect: key {} is registered for this machine on the host: revoke it in the cabinet, or with \
+                 `vibememory-mcp admin key revoke` on a host without one",
                 grant.key_id
             );
             return ExitCode::FAILURE;
@@ -894,7 +1003,8 @@ fn connect_key(
         Err(refusal) => {
             eprintln!("connect: {refusal}");
             eprintln!(
-                "connect: key {} is registered for this machine in the cabinet: revoke it there",
+                "connect: key {} is registered for this machine on the host: revoke it in the cabinet, or with \
+                 `vibememory-mcp admin key revoke` on a host without one",
                 grant.key_id
             );
             ExitCode::FAILURE

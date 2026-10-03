@@ -25,6 +25,9 @@ pub const KNOWN_HOSTS_FILE: &str = "known_hosts";
 /// What the machine knows about the team, in its state directory.
 pub const RECORD_FILE: &str = "store.json";
 
+/// Where the key of a host without the cabinet waits for its grant, under `<engine>/stores/`.
+const GRANT_PENDING_DIR: &str = ".pending-grant";
+
 /// The comment of every key the engine makes: what it is for, and nothing that names the person.
 const KEY_COMMENT: &str = "vibememory";
 
@@ -55,6 +58,39 @@ impl PendingKey {
             .engine_dir
             .join("stores")
             .join(format!(".pending-{}", std::process::id()));
+        Self::generate(dir)
+    }
+
+    /// The key of a host without the cabinet, which `connect --key-request` makes and
+    /// `connect --grant` takes: it waits in `<engine>/stores/.pending-grant` while the host's owner
+    /// registers its public half, so asking again shows the same key instead of a new one.
+    ///
+    /// # Errors
+    ///
+    /// As [`PendingKey::make`].
+    pub fn for_grant(layout: &Layout) -> Result<Self, String> {
+        let dir = layout.engine_dir.join("stores").join(GRANT_PENDING_DIR);
+        if let Some(public) = std::fs::read_to_string(dir.join(format!("{KEY_FILE}.pub")))
+            .ok()
+            .and_then(|file| vibememory_core::ssh_key::wire_line(&file))
+            && dir.join(KEY_FILE).is_file()
+        {
+            return Ok(Self { dir, public });
+        }
+        Self::generate(dir)
+    }
+
+    /// The key that `connect --key-request` left, if there is one.
+    #[must_use]
+    pub fn waiting_for_grant(layout: &Layout) -> Option<Self> {
+        let dir = layout.engine_dir.join("stores").join(GRANT_PENDING_DIR);
+        let public = std::fs::read_to_string(dir.join(format!("{KEY_FILE}.pub")))
+            .ok()
+            .and_then(|file| vibememory_core::ssh_key::wire_line(&file))?;
+        dir.join(KEY_FILE).is_file().then_some(Self { dir, public })
+    }
+
+    fn generate(dir: PathBuf) -> Result<Self, String> {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
         crate::connect::restrict_directory(&dir)?;
@@ -121,10 +157,10 @@ impl std::fmt::Display for KeyRefusal {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::SessionsOff => formatter.write_str(
-                "the team's sessions are off: turn them on on the team's page, then connect again with a new code",
+                "the team's sessions are off: turn them on on the team's page, then connect again with a new code or grant",
             ),
             Self::EngineMissing => formatter.write_str(
-                "sessions travel with the engine, which is not installed here: run `vibememory install`, then connect again with a new code",
+                "sessions travel with the engine, which is not installed here: run `vibememory install`, then connect again with a new code or grant",
             ),
             Self::NoHostKeys => formatter.write_str(
                 "the cabinet named no key of its host, so the host could not be checked: try again in a few minutes with a new code",

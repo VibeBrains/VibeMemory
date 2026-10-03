@@ -10,10 +10,12 @@ readonly TEMPLATE="$(dirname "$0")/Caddyfile.tmpl"
 readonly DEFAULT_ALIAS=vibememory
 readonly DEFAULT_DOMAIN=vibememory.ru
 readonly DEFAULT_APP_DOMAIN=app.vibememory.ru
+readonly DEFAULT_DEMO_DOMAIN=demo.vibememory.ru
 readonly DEFAULT_MCP_PORT=8787
 readonly DEFAULT_CABINET_PORT=3000
 readonly RELEASES=/srv/vibememory/releases
 readonly SITE=/srv/vibememory/site
+readonly DEMO=/srv/vibememory/demo
 # A lost SYN is retried instead of failing the run: the path to the host drops a connection now and
 # then, and every step here is safe to repeat.
 readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=4)
@@ -21,6 +23,7 @@ readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempt
 sshAlias="${VIBEMEMORY_SSH_ALIAS:-$DEFAULT_ALIAS}"
 domain="${VIBEMEMORY_DOMAIN:-$DEFAULT_DOMAIN}"
 appDomain="${VIBEMEMORY_APP_DOMAIN:-$DEFAULT_APP_DOMAIN}"
+demoDomain="${VIBEMEMORY_DEMO_DOMAIN:-$DEFAULT_DEMO_DOMAIN}"
 mcpPort="${VIBEMEMORY_MCP_PORT:-$DEFAULT_MCP_PORT}"
 cabinetPort="${VIBEMEMORY_CABINET_PORT:-$DEFAULT_CABINET_PORT}"
 
@@ -31,17 +34,18 @@ while [ "$#" -gt 0 ]; do
     --alias) sshAlias="${2:-}"; shift 2 ;;
     --domain) domain="${2:-}"; shift 2 ;;
     --app-domain) appDomain="${2:-}"; shift 2 ;;
+    --demo-domain) demoDomain="${2:-}"; shift 2 ;;
     --mcp-port) mcpPort="${2:-}"; shift 2 ;;
     --cabinet-port) cabinetPort="${2:-}"; shift 2 ;;
     -h | --help)
-      printf 'Поставить Caddyfile хоста из infra/Caddyfile.tmpl.\n\n  ./infra/caddyApply.sh [--alias vibememory] [--domain %s] [--app-domain %s]\n' \
-        "$DEFAULT_DOMAIN" "$DEFAULT_APP_DOMAIN"
+      printf 'Поставить Caddyfile хоста из infra/Caddyfile.tmpl.\n\n  ./infra/caddyApply.sh [--alias vibememory] [--domain %s] [--app-domain %s] [--demo-domain %s]\n' \
+        "$DEFAULT_DOMAIN" "$DEFAULT_APP_DOMAIN" "$DEFAULT_DEMO_DOMAIN"
       exit 0 ;;
     *) fail "неизвестный аргумент $1" ;;
   esac
 done
 
-for name in "$domain" "$appDomain"; do
+for name in "$domain" "$appDomain" "$demoDomain"; do
   case "$name" in *[!a-zA-Z0-9.-]*|"") fail "домен $name выглядит не как домен" ;; esac
 done
 for port in "$mcpPort" "$cabinetPort"; do
@@ -50,6 +54,7 @@ done
 [ -f "$TEMPLATE" ] || fail "нет шаблона $TEMPLATE"
 
 rendered=$(sed -e "s|{{DOMAIN}}|$domain|g" -e "s|{{APP_DOMAIN}}|$appDomain|g" \
+  -e "s|{{DEMO_DOMAIN}}|$demoDomain|g" -e "s|{{DEMO}}|$DEMO|g" \
   -e "s|{{MCP_PORT}}|$mcpPort|g" -e "s|{{CABINET_PORT}}|$cabinetPort|g" \
   -e "s|{{RELEASES}}|$RELEASES|g" -e "s|{{SITE}}|$SITE|g" "$TEMPLATE")
 case "$rendered" in *'{{'*) fail "в шаблоне осталась неподставленная переменная" ;; esac
@@ -63,6 +68,7 @@ command -v caddy >/dev/null || sudo DEBIAN_FRONTEND=noninteractive apt-get insta
 # the releases directory exists before Caddy serves it, even if empty
 sudo test -d /srv/vibememory/releases || sudo install -d -o root -g root -m 755 /srv/vibememory/releases
 sudo test -d /srv/vibememory/site || sudo install -d -o root -g root -m 755 /srv/vibememory/site
+sudo test -d /srv/vibememory/demo || sudo install -d -o root -g root -m 755 /srv/vibememory/demo
 caddyfile=/etc/caddy/Caddyfile
 if sudo cmp -s "$candidate" "$caddyfile"; then
   echo "Caddy: без изменений ($(systemctl is-active caddy))"

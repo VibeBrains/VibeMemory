@@ -1,9 +1,11 @@
-# The host's two sites, one file: rendered by infra/caddyApply.sh, which hostMcp.sh and
+# The host's three sites, one file: rendered by infra/caddyApply.sh, which hostMcp.sh and
 # hostCabinet.sh both call — two scripts writing one Caddyfile would undo each other.
 #
 # {{DOMAIN}} is the landing for people and the memory server at /mcp for agents. The landing is a static
 # build from the VibeMemory.ru repository, put by its deploy.sh under {{SITE}}/current.
 # {{APP_DOMAIN}} is for people: the cabinet, and the releases under /dl/ beside its download page.
+# {{DEMO_DOMAIN}} is static pages shown to people outside the product — a pitch, a demo — put by
+# infra/demoDeploy.sh under {{DEMO}}/current.
 {{DOMAIN}} {
 	handle /mcp {
 		reverse_proxy 127.0.0.1:{{MCP_PORT}}
@@ -34,4 +36,9 @@
 	handle {
 		reverse_proxy 127.0.0.1:{{CABINET_PORT}}
 	}
+}
+
+{{DEMO_DOMAIN}} {
+	root * {{DEMO}}/current
+	file_server
 }

@@ -30,10 +30,13 @@ Rust workspace: `crates/vibememory-core` (стор, имена, слияние �
 `crates/vibememory-cli` (бинарь: хуки, тик, install, doctor, migrate), `crates/vibememory-mcp`
 (MCP-сервер памяти). Ноль рантайм-зависимостей на целевой машине. SaaS-слой — start0.
 
-## Два репозитория — не путать
+## Три репозитория — не путать
 
-- **Код продукта** — этот репозиторий, приватный `VibeBrains/VibeMemory` на GitHub
-  (ветки `main` и `next`).
+- **Код продукта** — этот репозиторий, открытый `VibeBrains/VibeMemory` на GitHub под AGPL-3.0
+  (ветки `main` и `next`). Полная прежняя история с кабинетом — приватный `VibeBrains/VibeMemory-archive`.
+- **Кабинет** — приватный `VibeBrains/VibeMemoryCabinet`, клон лежит в `cabinet/` этого каталога и
+  исключён из него `.gitignore`. Пак start0 source-available: в открытый репозиторий кабинет не попадает
+  никогда — ни файлом, ни ссылкой на его файлы из документов.
 - **Стор данных владельца** — отдельный приватный git на своём хосте
   (`vm@vibememory.ru:~/vibememory/store.git`, клон в `~/.vibememory/store`): транскрипты,
   память проектов, общая часть конфига, heartbeat машин. В GitHub не уезжает; зеркало в
@@ -72,8 +75,9 @@ Windows: `cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc
 
 ## Кабинет (`cabinet/`)
 
-Пак start0 v0.1.29 в подкаталоге, вендорен руками: что вырезано и изменено против пака и как применять
-его обновления — [cabinet/docs/vendoring.md](cabinet/docs/vendoring.md). Прежде чем править кабинет —
+Пак start0 v0.1.29, свой репозиторий в подкаталоге (коммиты — в нём, не здесь), вендорен руками: что
+вырезано и изменено против пака и как применять его обновления — `docs/vendoring.md` репозитория кабинета.
+Прежде чем править кабинет —
 навык `start0`: порядок поднятия, ловушки синтаксиса, дырявые гейты пака.
 
 Проверка перед завершением задачи в `cabinet/`: `bun run check && bun run test`. Тесты идут против
