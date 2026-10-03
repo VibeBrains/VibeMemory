@@ -92,9 +92,9 @@ for team in teams:
     else:
         label = f"платная {mb(int(top['quota']))} до {day(top['until'])}, {top['price']} ₽/мес"; counts["paid"] += 1
     host = facts.get(team["slug"], {})
-    print(f"■ {team['slug']} «{team['name']}» — {label}; сессии {'вкл' if team['mode'] == 'sync' else 'выкл'}; "
+    print(f"■ {team['slug']} «{team['name']}» — {label}; {'сессии всегда' if team['adopted'] else 'сессии ' + ('вкл' if team['mode'] == 'sync' else 'выкл')}; "
           f"владелец {team['owner']}, участников {team['members']}; создана {day(team['createdAt'])}")
-    print(f"  Занято по квоте: {mb(host.get('treeBytes'))}, репозиторий на диске {mb(host.get('sizeBytes'))}, последняя запись {day(host.get('lastCommitAt'))}")
+    print(f"  {'Объём файлов' if team['adopted'] else 'Занято по квоте'}: {mb(host.get('treeBytes'))}, репозиторий на диске {mb(host.get('sizeBytes'))}, последняя запись {day(host.get('lastCommitAt'))}")
     for name, p in sorted((host.get("projectFacts") or {}).items()):
         size, memory = p.get("sizeBytes") or 0, p.get("memoryBytes") or 0
         print(f"    {name}: память {mb(memory)}, сессии {mb(max(size - memory, 0))}")
