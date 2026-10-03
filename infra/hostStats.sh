@@ -94,7 +94,7 @@ for team in teams:
     host = facts.get(team["slug"], {})
     print(f"■ {team['slug']} «{team['name']}» — {label}; сессии {'вкл' if team['mode'] == 'sync' else 'выкл'}; "
           f"владелец {team['owner']}, участников {team['members']}; создана {day(team['createdAt'])}")
-    print(f"  Занято: {mb(host.get('treeBytes'))} (стор с историей {mb(host.get('sizeBytes'))}), последняя запись {day(host.get('lastCommitAt'))}")
+    print(f"  Занято по квоте: {mb(host.get('treeBytes'))}, репозиторий на диске {mb(host.get('sizeBytes'))}, последняя запись {day(host.get('lastCommitAt'))}")
     for name, p in sorted((host.get("projectFacts") or {}).items()):
         size, memory = p.get("sizeBytes") or 0, p.get("memoryBytes") or 0
         print(f"    {name}: память {mb(memory)}, сессии {mb(max(size - memory, 0))}")
