@@ -121,8 +121,13 @@ cargo build --release
 Если VibeMemory оказался полезным — буду рад благодарности 🙏
 
 <a href="media/QR-Code.jpg" target="_blank" rel="noopener noreferrer">
-  <img src="media/QR-Code.jpg" width="120" alt="QR-код для поддержки проекта" />
+  <img src="media/QR-Code.jpg" width="120" alt="QR-код для перевода по СБП" />
 </a>
+<a href="https://boosty.to/borodatych/donate" target="_blank" rel="noopener noreferrer">
+  <img src="media/QR-Boosty.png" width="120" alt="QR-код Boosty" />
+</a>
+
+Перевод по СБП — левый QR, Boosty — правый и по ссылке: <https://boosty.to/borodatych/donate>.
 
 ---
 
