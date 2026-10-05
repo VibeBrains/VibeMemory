@@ -5,20 +5,35 @@
 
 ## Состав блока
 
-Блок одинаков в `README.md` и в заметках к релизу — меняется в нём только подпись:
+Блок одинаков в `README.md` и в заметках к релизу — меняется в нём только подпись.
 
-1. **Вступительная строка** — постоянная, не меняется:
-   > Если VibeMemory оказался полезным — буду рад благодарности.
+```markdown
+### Поддержать проект
+
+Если VibeMemory оказался полезным — буду рад благодарности.
+<!-- сюда вставляется одна активная фраза -->
+
+Поддержать можно на [Boosty](https://boosty.to/borodatych/donate) — подписка или разовый донат, — либо переводом по СБП.
+
+| Boosty | Перевод |
+|:---:|:---:|
+| <a href="https://boosty.to/borodatych/donate" target="_blank"><img src="https://raw.githubusercontent.com/VibeBrains/VibeMemory/main/media/QR-Boosty.png" width="120" alt="QR-код Boosty — поддержать проект"></a> | <a href="https://raw.githubusercontent.com/VibeBrains/VibeMemory/main/media/QR-Code.jpg" target="_blank"><img src="https://raw.githubusercontent.com/VibeBrains/VibeMemory/main/media/QR-Code.jpg" width="120" alt="QR-код для поддержки проекта"></a> |
+```
+
+1. **Вступительная строка** — постоянная, не меняется.
 2. **Шуточная подпись** — **одна**, из «Активных»; в релизе — выбранная к этому выпуску. Пишется **без пустой строки**
    после вступительной: пустая строка разбила бы блок на два абзаца, и подпись читалась бы как отдельное объявление.
-3. **Два QR-кода рядом, без пустой строки между ними**, и ссылка на Boosty строкой ниже:
-   - перевод по СБП — `media/QR-Code.jpg` (в заметках к релизу — raw-адрес того же файла);
-   - Boosty — [media/QR-Boosty.png](../media/QR-Boosty.png), картинка ведёт на `https://boosty.to/borodatych/donate`;
-   - та же ссылка текстом: <https://boosty.to/borodatych/donate> — QR читают не все и не всегда с телефона.
+3. **Строка про Boosty** — ссылка обязательна: QR читают не все и не всегда с телефона.
+4. **Таблица с двумя QR** — Boosty слева, перевод по СБП справа; картинки ведут туда же, что и подписи под ними.
+   В `README.md` — относительные пути (`media/QR-Boosty.png`), в заметках к релизу — raw-адреса `main`, как в шаблоне
+   выше: заметки живут вне репозитория.
+
+**Оба QR и ссылка на Boosty обязательны** — их наличие проверяет гейт
+`cargo test -p vibememory-core --test docs_integrity` (`the_donation_block_keeps_its_two_qr_codes`).
 
 Оба QR-кода лежат в `media/` и не перегенерируются: это изображения владельца, и подменять их своей генерацией нельзя.
-QR Boosty кодирует `https://boosty.to/borodatych/donate?qr=true` — так его выдал Boosty, и метка `qr` в ссылке остаётся
-его.
+Один и тот же файл `QR-Boosty.png` лежит у VibeMemory, VibeIDE и VibeIDEA — байт в байт. QR Boosty кодирует
+`https://boosty.to/borodatych/donate?qr=true` — так его выдал Boosty, и метка `qr` в ссылке остаётся его.
 
 ## Порядок перед каждым релизом
 

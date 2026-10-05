@@ -188,3 +188,56 @@ fn documentation_holds_its_own_rules() {
 
     assert!(failures.is_empty(), "\n{}\n", failures.join("\n"));
 }
+
+/// The donation block is the same in README and in release notes, and the way to give is not the
+/// place to be creative: the link and both QR codes are checked here, as `VibeIDE`'s release lint
+/// checks them in its notes. A product whose block lost a QR silently offers one way to give.
+#[test]
+fn the_donation_block_keeps_its_two_qr_codes() {
+    let root = repo_root();
+    let readme = fs::read_to_string(root.join("README.md")).expect("README.md");
+    let mut failures: Vec<String> = Vec::new();
+
+    for needle in [
+        "Если VibeMemory оказался полезным",
+        "https://boosty.to/borodatych/donate",
+    ] {
+        if !readme.contains(needle) {
+            failures.push(format!(
+                "README.md: the donation block does not carry {needle}"
+            ));
+        }
+    }
+    // The images themselves, not only their names: a deleted file leaves the block broken on
+    // GitHub while the markdown still looks right.
+    for asset in ["media/QR-Boosty.png", "media/QR-Code.jpg"] {
+        if !readme.contains(asset) {
+            failures.push(format!(
+                "README.md: the donation block does not show {asset}"
+            ));
+        }
+        let path = root.join(asset);
+        match fs::metadata(&path) {
+            Ok(data) if data.len() > 0 => {}
+            Ok(_) => failures.push(format!("{asset} is empty")),
+            Err(error) => failures.push(format!("{asset}: {error}")),
+        }
+    }
+
+    // The rule names the same three things, so the block and its rule cannot drift apart.
+    let rule = fs::read_to_string(root.join("docs/releaseDonationPhrases.md"))
+        .expect("releaseDonationPhrases.md");
+    for needle in [
+        "https://boosty.to/borodatych/donate",
+        "media/QR-Boosty.png",
+        "media/QR-Code.jpg",
+    ] {
+        if !rule.contains(needle) {
+            failures.push(format!(
+                "releaseDonationPhrases.md: the rule does not name {needle}"
+            ));
+        }
+    }
+
+    assert!(failures.is_empty(), "\n{}\n", failures.join("\n"));
+}
