@@ -99,11 +99,31 @@ impl Preset {
         (name == Self::Dsh.name()).then_some(Self::Dsh)
     }
 
+    /// The agent's own directory under the home directory: its presence says the agent lives on
+    /// this machine.
+    #[must_use]
+    pub fn home(self, home: &Path) -> PathBuf {
+        match self {
+            Self::Dsh => home.join(".dsh"),
+        }
+    }
+
+    /// The file of instructions the agent reads in every project, named inside [`Preset::home`].
+    ///
+    /// The engine keeps it the same as the shared `CLAUDE.md`, so an agent other than Claude works
+    /// by the same rules. DSH reads `$DSH_HOME/AGENTS.md` (read off its bundle on 2026-10-07).
+    #[must_use]
+    pub const fn instructions_name(self) -> &'static str {
+        match self {
+            Self::Dsh => "AGENTS.md",
+        }
+    }
+
     /// Where the agent keeps its logs when nothing else is said, under the home directory.
     #[must_use]
     pub fn default_dir(self, home: &Path) -> PathBuf {
         match self {
-            Self::Dsh => home.join(".dsh").join("sessions"),
+            Self::Dsh => self.home(home).join("sessions"),
         }
     }
 

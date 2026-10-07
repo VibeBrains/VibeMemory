@@ -140,6 +140,9 @@ pub struct Machine<'a> {
     pub store: &'a Path,
     /// `~/.claude`.
     pub config_dir: &'a Path,
+    /// The home directory other agents keep their directories under, for their copies of the
+    /// shared instructions; `None` gives no agent a copy.
+    pub home: Option<&'a Path>,
     /// This machine's name in the store.
     pub machine_id: &'a str,
     /// Named roots, for translating working directories.
@@ -185,6 +188,7 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
     let &Machine {
         store,
         config_dir,
+        home,
         machine_id,
         roots,
         // `naming` is read through `machine` by `take_real_directories`, which needs the whole
@@ -254,6 +258,7 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
             &crate::install::Layout {
                 config_dir: config_dir.to_path_buf(),
                 engine_dir: engine_dir_of(store),
+                home: home.map(Path::to_path_buf),
             },
             store,
             stamp,

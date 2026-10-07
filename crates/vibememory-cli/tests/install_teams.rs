@@ -52,6 +52,7 @@ fn a_teams_clone_gets_the_merge_drivers_and_the_machines_directory() {
     let layout = Layout {
         config_dir: temp.dir("claude"),
         engine_dir: temp.dir("engine"),
+        home: None,
     };
     let record = record();
     let clone = layout.team_store(&record.team);

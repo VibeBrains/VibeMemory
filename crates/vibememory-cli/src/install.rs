@@ -93,6 +93,9 @@ pub struct Layout {
     pub config_dir: PathBuf,
     /// `~/.vibememory` — the engine's own directory.
     pub engine_dir: PathBuf,
+    /// The home directory other agents keep their own directories under (`~/.dsh`); `None` when
+    /// there is none, and then no agent is given the shared instructions.
+    pub home: Option<PathBuf>,
 }
 
 /// Whether the engine is set up on this machine at all: a machine that only connects agents has
@@ -154,6 +157,7 @@ impl Layout {
                 CONFIG_DIR_VAR,
             )?,
             engine_dir: engine_dir_from_environment()?,
+            home,
         })
     }
 
@@ -171,6 +175,7 @@ impl Layout {
         Ok(Self {
             config_dir: resolve_dir(config_dir, home, ".claude", CONFIG_DIR_VAR)?,
             engine_dir: resolve_dir(engine_dir, home, ".vibememory", ENGINE_DIR_VAR)?,
+            home: home.map(Path::to_path_buf),
         })
     }
 }
@@ -250,6 +255,12 @@ pub enum Step {
         /// File name, e.g. `CLAUDE.md`.
         name: &'static str,
     },
+    /// The instructions of an agent living on this machine, kept the same as the shared
+    /// `CLAUDE.md`.
+    AgentInstructions {
+        /// The agent.
+        preset: crate::agents::Preset,
+    },
     /// `~/.claude/skills` → `<store>/config/skills`.
     SkillsLink,
     /// The scheduled tick: a `LaunchAgent` on macOS, a Task Scheduler task on Windows.
@@ -320,6 +331,15 @@ impl Step {
                 Some(team) => format!("directory {relative} in team {team}'s store"),
             },
             Self::ManagedCopy { name } => format!("managed copy of {name}"),
+            Self::AgentInstructions { preset } => format!(
+                "{} instructions {} from {}",
+                preset.title(),
+                preset
+                    .home(Path::new("~"))
+                    .join(preset.instructions_name())
+                    .display(),
+                crate::managed::RULES_FILE
+            ),
             Self::SkillsLink => "skills link".to_owned(),
             Self::Schedule => "scheduled tick".to_owned(),
             Self::Hooks => "hooks in settings.json".to_owned(),
@@ -410,12 +430,7 @@ pub fn plan(layout: &Layout, config: &Config, links: &[(String, String)]) -> Vec
         });
     }
     push_team_stores(layout, &mut actions);
-    for name in MANAGED_FILES {
-        actions.push(Action {
-            step: Step::ManagedCopy { name },
-            state: managed_copy_state(layout, &store, name),
-        });
-    }
+    push_managed_copies(layout, &store, &mut actions);
     actions.push(Action {
         step: Step::SkillsLink,
         state: link_state(
@@ -570,22 +585,21 @@ fn link_state(link: &Path, target: &Path) -> State {
     }
 }
 
-/// A file the store keeps a copy of. Only its presence is planned here; reconciling two edited
-/// copies is the tick's business, not the installer's.
-/// Where a managed file stands: agreed, about to be brought into agreement, or in conflict.
+/// Where a managed copy stands: agreed, about to be brought into agreement, or in conflict.
 ///
 /// The same three-way decision the tick makes (`managed::verdict`), asked without acting: a side
 /// that still matches the last-synced base has not moved, so the other side's change is simply
 /// owed (`Missing` — `install` performs it, the tick would too). Both sides moved, or no sync was
 /// ever recorded while the copies differ, is a conflict a person has to settle.
-fn managed_copy_state(layout: &Layout, store: &Path, name: &str) -> State {
+fn managed_copy_state(layout: &Layout, store: &Path, copy: &crate::managed::Copy) -> State {
     use crate::managed::{ManagedState, Verdict, verdict, withheld_reason};
 
-    let local_path = layout.config_dir.join(name);
-    let store_path = store.join("config").join(name);
-    let local = match std::fs::read(&local_path) {
-        Ok(bytes) if nothing_to_share(&local_path, &bytes) => None,
-        Ok(bytes) => Some(for_the_store(&local_path, &bytes)),
+    let name = copy.key.as_str();
+    let local_path = &copy.local;
+    let store_path = store.join("config").join(copy.shared);
+    let local = match std::fs::read(local_path) {
+        Ok(bytes) if nothing_to_share(local_path, &bytes) => None,
+        Ok(bytes) => Some(for_the_store(local_path, &bytes)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => {
             return State::Unknown {
@@ -758,7 +772,12 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
             // removes empty directories under the config root.
             write_new(&path.join(".keep"), b"")
         }
-        Step::ManagedCopy { name } => reconcile_managed(layout, &store, name),
+        Step::ManagedCopy { name } => {
+            reconcile_managed(layout, &store, &crate::managed::Copy::config(layout, name))
+        }
+        // Planned only for an agent found here; gone since the plan, it has nothing to receive.
+        Step::AgentInstructions { preset } => crate::managed::Copy::instructions(layout, *preset)
+            .map_or(Ok(()), |copy| reconcile_managed(layout, &store, &copy)),
         // Nothing to apply: a flag that switches the cache off is the owner's to remove, and the
         // plan never reports this step as missing — only satisfied or in conflict. The same goes
         // for a held deletion: releasing it is a decision, not a repair. And Git for Windows is
@@ -818,11 +837,14 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
     }
 }
 
-/// Copies a managed file into the store, or back out when only the store has it.
-/// Brings one managed file into agreement, the same way the tick does.
-fn reconcile_managed(layout: &Layout, store: &Path, name: &str) -> Result<(), String> {
+/// Brings one managed copy into agreement, the same way the tick does.
+fn reconcile_managed(
+    layout: &Layout,
+    store: &Path,
+    copy: &crate::managed::Copy,
+) -> Result<(), String> {
     let mut state = crate::managed::ManagedState::read(&layout.engine_dir);
-    crate::managed::reconcile_one(layout, store, name, &mut state, &crate::clock::now())?;
+    crate::managed::reconcile_one(layout, store, copy, &mut state, &crate::clock::now())?;
     state.write(&layout.engine_dir)
 }
 
@@ -1243,6 +1265,25 @@ pub fn plan_team(layout: &Layout, team: &str) -> Vec<Action> {
         state,
     });
     actions
+}
+
+/// The managed copies of the personal store: the config directory's files, then the instructions
+/// of each agent that lives on this machine.
+fn push_managed_copies(layout: &Layout, store: &Path, actions: &mut Vec<Action>) {
+    for name in MANAGED_FILES {
+        actions.push(Action {
+            step: Step::ManagedCopy { name },
+            state: managed_copy_state(layout, store, &crate::managed::Copy::config(layout, name)),
+        });
+    }
+    for preset in crate::agents::Preset::ALL {
+        if let Some(copy) = crate::managed::Copy::instructions(layout, *preset) {
+            actions.push(Action {
+                step: Step::AgentInstructions { preset: *preset },
+                state: managed_copy_state(layout, store, &copy),
+            });
+        }
+    }
 }
 
 /// Every connected team's plan, for `install` and `doctor`.

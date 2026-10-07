@@ -2779,6 +2779,7 @@ fn tick_command(args: &[String]) -> ExitCode {
     let machine = vibememory_cli::tick::Machine {
         store: &store,
         config_dir: &layout.config_dir,
+        home: layout.home.as_deref(),
         machine_id: &config.machine_id,
         roots: &roots,
         naming: &config.naming,
@@ -3083,6 +3084,7 @@ fn tick_team(
     let machine = vibememory_cli::tick::Machine {
         store: &store,
         config_dir: &layout.config_dir,
+        home: layout.home.as_deref(),
         machine_id: &record.store_name,
         roots,
         naming: &config.naming,

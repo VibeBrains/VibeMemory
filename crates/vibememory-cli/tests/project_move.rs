@@ -70,6 +70,7 @@ fn setup(temp: &TempDir) -> Setup {
     let layout = Layout {
         config_dir: temp.dir("claude"),
         engine_dir: temp.dir("engine"),
+        home: None,
     };
     fs::create_dir_all(layout.store()).unwrap();
     git_repo_with_commit(&layout.store());

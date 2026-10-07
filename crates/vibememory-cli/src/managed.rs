@@ -12,13 +12,73 @@
 //! taken out: they name this machine's binary and engine directory and must never reach another
 //! machine, so what the store holds is the shared part, and what comes back gets the hooks put on
 //! top again.
+//!
+//! `CLAUDE.md` also reaches every other agent living on this machine, as the file of instructions
+//! that agent reads in every project (`~/.dsh/AGENTS.md`): the rules belong to the person, not to
+//! one agent. Each such file is one more copy of the same store file, reconciled the same way, so
+//! an edit made in any of them reaches all the others and two edits made apart are a conflict.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::agents::Preset;
 use crate::install::{Layout, MANAGED_FILES, for_the_store, nothing_to_share, write_hooks};
+
+/// The store file every agent's instructions are kept the same as.
+pub const RULES_FILE: &str = "CLAUDE.md";
+
+/// One managed copy: a file on this machine and the file of `<store>/config/` it is kept equal to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Copy {
+    /// What the copy is known by: the key of its last-synced hash, the name of its quarantined
+    /// versions and the word in a report.
+    pub key: String,
+    /// The file on this machine.
+    pub local: PathBuf,
+    /// Its counterpart under `<store>/config/`.
+    pub shared: &'static str,
+}
+
+impl Copy {
+    /// A file of the config directory, kept under the same name in the store.
+    #[must_use]
+    pub fn config(layout: &Layout, name: &'static str) -> Self {
+        Self {
+            key: name.to_owned(),
+            local: layout.config_dir.join(name),
+            shared: name,
+        }
+    }
+
+    /// The instructions of an agent, when the agent lives on this machine: its directory is
+    /// there. An agent that is not installed is not given a directory of its own by the engine.
+    #[must_use]
+    pub fn instructions(layout: &Layout, preset: Preset) -> Option<Self> {
+        let agent_home = preset.home(layout.home.as_deref()?);
+        agent_home.is_dir().then(|| Self {
+            key: format!("{}-{}", preset.name(), preset.instructions_name()),
+            local: agent_home.join(preset.instructions_name()),
+            shared: RULES_FILE,
+        })
+    }
+}
+
+/// Every managed copy of this machine: the config directory's files first, then the instructions
+/// of each agent that lives here.
+#[must_use]
+pub fn copies(layout: &Layout) -> Vec<Copy> {
+    MANAGED_FILES
+        .iter()
+        .map(|name| Copy::config(layout, name))
+        .chain(
+            Preset::ALL
+                .iter()
+                .filter_map(|preset| Copy::instructions(layout, *preset)),
+        )
+        .collect()
+}
 
 /// Where the last-synced hashes live, beside the engine's other small states.
 pub const STATE_FILE: &str = "managed-state.json";
@@ -131,12 +191,12 @@ pub struct Reconciled {
 pub fn reconcile(layout: &Layout, store: &Path, stamp: &str) -> Result<Reconciled, String> {
     let mut state = ManagedState::read(&layout.engine_dir);
     let mut done = Reconciled::default();
-    for name in MANAGED_FILES {
-        match reconcile_one(layout, store, name, &mut state, stamp)? {
-            Verdict::Push => done.pushed.push((*name).to_owned()),
-            Verdict::Pull => done.pulled.push((*name).to_owned()),
-            Verdict::Conflict => done.conflicting.push((*name).to_owned()),
-            Verdict::Withheld => done.withheld.push((*name).to_owned()),
+    for copy in copies(layout) {
+        match reconcile_one(layout, store, &copy, &mut state, stamp)? {
+            Verdict::Push => done.pushed.push(copy.key),
+            Verdict::Pull => done.pulled.push(copy.key),
+            Verdict::Conflict => done.conflicting.push(copy.key),
+            Verdict::Withheld => done.withheld.push(copy.key),
             Verdict::Same | Verdict::Nothing => {}
         }
     }
@@ -144,7 +204,7 @@ pub fn reconcile(layout: &Layout, store: &Path, stamp: &str) -> Result<Reconcile
     Ok(done)
 }
 
-/// Reconciles one managed file and updates `state` for it; the caller writes the state.
+/// Reconciles one managed copy and updates `state` for it; the caller writes the state.
 ///
 /// # Errors
 ///
@@ -152,20 +212,21 @@ pub fn reconcile(layout: &Layout, store: &Path, stamp: &str) -> Result<Reconcile
 pub fn reconcile_one(
     layout: &Layout,
     store: &Path,
-    name: &str,
+    copy: &Copy,
     state: &mut ManagedState,
     stamp: &str,
 ) -> Result<Verdict, String> {
-    let local_path = layout.config_dir.join(name);
-    let store_path = store.join("config").join(name);
+    let name = copy.key.as_str();
+    let local_path = &copy.local;
+    let store_path = store.join("config").join(copy.shared);
 
-    let local = read_optional(&local_path)?;
+    let local = read_optional(local_path)?;
     // A settings file holding nothing but this machine's own hooks has nothing to share; treating
     // it as content would push an empty object to every machine.
-    let local = local.filter(|bytes| !nothing_to_share(&local_path, bytes));
+    let local = local.filter(|bytes| !nothing_to_share(local_path, bytes));
     let local_shared = local
         .as_deref()
-        .map(|bytes| for_the_store(&local_path, bytes));
+        .map(|bytes| for_the_store(local_path, bytes));
     // Before any hash: nothing is written anywhere and the base stays where it was, so the file
     // is reconciled as usual the moment the token is taken out.
     if local_shared
@@ -198,10 +259,10 @@ pub fn reconcile_one(
             let Some(bytes) = store_shared else {
                 return Ok(Verdict::Nothing);
             };
-            write_whole(&local_path, &bytes)?;
+            write_whole(local_path, &bytes)?;
             // The shared form has no hook commands; this machine's go back on top, or the very
             // next session would run without the engine.
-            if name == "settings.json" {
+            if copy.shared == "settings.json" {
                 write_hooks(layout)?;
             }
             if let Some(hash) = store_hash {

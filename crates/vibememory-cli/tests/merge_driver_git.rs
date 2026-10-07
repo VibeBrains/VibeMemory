@@ -34,6 +34,7 @@ fn register_drivers_with_engine(store: &Path, engine: &Path) {
     let layout = Layout {
         config_dir: engine.join("claude"),
         engine_dir: engine.to_path_buf(),
+        home: None,
     };
     let binary = installed_binary(&layout);
     fs::create_dir_all(binary.parent().expect("bin directory")).expect("create bin");

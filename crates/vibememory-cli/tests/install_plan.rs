@@ -30,6 +30,7 @@ fn layout(temp: &TempDir) -> Layout {
     Layout {
         config_dir: temp.dir("claude"),
         engine_dir: temp.dir("engine"),
+        home: None,
     }
 }
 
@@ -845,6 +846,7 @@ fn hook_and_driver_lines_reach_the_binary_with_every_argument_intact() {
     let layout = Layout {
         config_dir: temp.dir("claude"),
         engine_dir: engine.clone(),
+        home: None,
     };
     install_script(
         &layout,
@@ -1043,6 +1045,7 @@ fn the_scheduled_task_runs_the_tick_every_two_minutes_on_a_clock_trigger_alone()
     let layout = Layout {
         config_dir: temp.dir("claude"),
         engine_dir: temp.dir("R&D engine"),
+        home: None,
     };
     let task = scheduled_task(&layout);
     for part in [
@@ -1115,6 +1118,7 @@ fn linux_runs_the_tick_from_a_user_timer_every_two_minutes_or_from_cron() {
     let layout = Layout {
         config_dir: temp.dir("claude"),
         engine_dir: temp.dir("an engine"),
+        home: None,
     };
     let service = vibememory_cli::install::systemd_service(&layout);
     assert!(service.contains("Type=oneshot"), "{service}");

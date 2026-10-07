@@ -41,6 +41,7 @@ fn machine(label: &str) -> Machine {
     let layout = Layout {
         config_dir: temp.dir("claude"),
         engine_dir: temp.dir("engine"),
+        home: None,
     };
     let logs = temp.dir("logs");
     let config = Config::parse(r#"{"machineId": "mac-main"}"#, PathSyntax::Posix).unwrap();

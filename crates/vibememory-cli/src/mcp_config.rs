@@ -106,6 +106,14 @@ pub struct Machine {
 /// The server's name in every client: one name, so an agent never chooses between two memories.
 const SERVER: &str = crate::registrations::LOCAL_SERVER;
 
+/// The byte budget DSH is given for all instruction files of a request together
+///
+/// Its own default of 65,536 bytes drops the broadest file whole once the chain outgrows it
+/// The broadest is the shared instructions the engine writes to `~/.dsh/AGENTS.md`: about 50 KB,
+/// And a large project's own files add as much again
+/// A quarter of a megabyte holds both with room to spare and is a small part of a million-token context
+pub const DSH_INSTRUCTIONS_BUDGET: usize = 262_144;
+
 impl Machine {
     /// This machine: the server `install` placed, and the engine directory when it is not the
     /// default one.
@@ -324,6 +332,10 @@ fn dsh(machine: &Machine) -> Vec<String> {
             home_path(machine, &[".dsh", "profiles", "<profile>", "cordis.patch.yml"])
         ),
         String::new(),
+        "- id: agent-instructions".to_owned(),
+        "  name: \"@deepseek-ai/dsh-agent-instructions\"".to_owned(),
+        "  config:".to_owned(),
+        format!("    maxBytes: {DSH_INSTRUCTIONS_BUDGET}"),
         "- insert:".to_owned(),
         "    - id: mcp-vibememory".to_owned(),
         "      name: \"@deepseek-ai/dsh-mcp-client\"".to_owned(),
@@ -336,7 +348,13 @@ fn dsh(machine: &Machine) -> Vec<String> {
         String::new(),
         "The home directory as cwd holds no project: a write names its project, and one DSH serves every"
             .to_owned(),
-        "project it opens. Then restart DSH: a new session does not read the profile again.".to_owned(),
+        "project it opens. The first row lets DSH read the shared instructions the engine keeps in"
+            .to_owned(),
+        format!(
+            "{} beside a project's own: by default it fits 65,536 bytes and drops the broader file whole.",
+            home_path(machine, &[".dsh", "AGENTS.md"])
+        ),
+        "Then restart DSH: a new session does not read the profile again.".to_owned(),
         "Its sessions stay on this machine until the engine reads its logs — this line is the switch,"
             .to_owned(),
         "from now on, or with the past as well:".to_owned(),

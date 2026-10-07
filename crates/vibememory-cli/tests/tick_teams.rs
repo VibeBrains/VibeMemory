@@ -131,6 +131,7 @@ fn tick_at(setup: &Setup, team: Option<&str>, stamp: &str) -> Ticked {
         team,
         routes: &setup.routes,
         recheck_at: RECHECK,
+        home: None,
     };
     run(&machine, stamp, CUTOFF)
 }
