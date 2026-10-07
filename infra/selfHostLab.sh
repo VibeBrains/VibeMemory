@@ -303,8 +303,49 @@ check() {
   if hostHasSession "$before"; then flunk "сессия до route add уехала в команду"; else pass "сессия до route add осталась на машине"; fi
 
   say ""
+  say "Правила и навыки"
+  local doctor
+  # an agent that reads ~/.dsh lives here: the person's rules are assembled for it too
+  onClient "mkdir -p ~/.dsh"
+  onClient "printf 'Гонять тесты перед коммитом.\\n' | $engine rule add --level project --id lab-tests --title 'Lab tests' ~/work/project" >/dev/null
+  onClient "printf 'Отвечать коротко.\\n' | $engine rule add --level personal --id lab-tone --title 'Lab tone' ~/work/project" >/dev/null
+  onClient "$engine tick" >/dev/null 2>&1 || true
+  if onHost "sudo git --git-dir=/srv/vibememory/teams/$TEAM.git ls-tree -r --name-only HEAD" | grep -q "^projects/project/rules/lab-tests.md$"; then
+    pass "проектное правило уезжает на хост команды"
+  else
+    flunk "проектного правила нет на хосте"
+  fi
+  if onClient "grep -q 'Гонять тесты перед коммитом' ~/work/project/.claude/rules/vm-lab-tests.md && grep -q 'Гонять тесты перед коммитом' ~/work/project/AGENTS.local.md"; then
+    pass "проектное правило разложено в рабочий каталог для Claude Code и DSH"
+  else
+    flunk "проектного правила нет в .claude/rules или AGENTS.local.md рабочего каталога"
+  fi
+  if onClient "grep -q 'Отвечать коротко' ~/.claude/rules/vm-lab-tone.md && grep -q 'Отвечать коротко' ~/.dsh/AGENTS.md"; then
+    pass "личное правило у Claude Code и в собранном ~/.dsh/AGENTS.md"
+  else
+    flunk "личного правила нет у агентов машины"
+  fi
+  onClient "printf 'Как у команды.\\n' | $engine rule add --level team --id lab-style --title 'Lab style' ~/work/project" >/dev/null
+  for _ in $(seq "$FAILING_TICKS"); do onClient "$engine tick" >/dev/null 2>&1 || true; done
+  # doctor exits non-zero when something needs a person: its words are read, not its status
+  doctor=$(onClient "$engine doctor 2>&1" || true)
+  if printf '%s' "$doctor" | grep -q "(rulesDenied)"; then
+    pass "хост не принимает командное правило от рядового участника: rulesDenied"
+  else
+    flunk "командное правило участника не отвергнуто хостом: $(printf '%s' "$doctor" | grep "^team" | head -n 1)"
+  fi
+  onClient "$engine store reclone $TEAM" >/dev/null 2>&1 || true
+  onClient "$engine tick" >/dev/null 2>&1 || true
+  doctor=$(onClient "$engine doctor 2>&1" || true)
+  if printf '%s' "$doctor" | grep -q "^team     $TEAM — in step"; then
+    pass "store reclone возвращает стор в работу"
+  else
+    flunk "после store reclone стор не в строю: $(printf '%s' "$doctor" | grep "^team" | head -n 1)"
+  fi
+
+  say ""
   say "Отзыв ключа"
-  local key doctor
+  local key
   # Nothing left to send: the next ticks only fetch, and only a refused fetch can say the host turned the machine away
   onClient "$engine tick" >/dev/null 2>&1 || true
   key=$(memberKeys | tail -n 1)
