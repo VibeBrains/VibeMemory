@@ -383,7 +383,8 @@ fn engine_files(dir: &Path) -> Vec<PathBuf> {
         .filter(|path| {
             path.file_name()
                 .is_some_and(|name| name.to_string_lossy().starts_with(FILE_PREFIX))
-                && std::fs::read_to_string(path).is_ok_and(|text| text.contains(assembly::HEADER))
+                && std::fs::read_to_string(path)
+                    .is_ok_and(|text| assembly::written_by_engine(&text))
         })
         .collect();
     files.sort();
@@ -702,7 +703,7 @@ fn write_project(
             Err(error) => report.problems.push(error),
         }
     } else if std::fs::read_to_string(&agents_file)
-        .is_ok_and(|text| text.starts_with(assembly::HEADER))
+        .is_ok_and(|text| assembly::written_by_engine(&text))
     {
         // the engine's own file, and nothing to say in it any more
         let _ = std::fs::remove_file(&agents_file);

@@ -356,6 +356,30 @@
         ]
       ],
       "error": "not closed"
+    },
+    {
+      "id": "a-header-of-another-version-is-still-the-engines",
+      "base": null,
+      "rules": [
+        [
+          "---\nid: tone\ntitle: Тон\nlevel: personal\n---\nПрямо.\n",
+          []
+        ]
+      ],
+      "edits": [
+        [
+          "Edit a rule between its markers",
+          "An older wording of the header"
+        ]
+      ],
+      "expect": [
+        {
+          "piece": "rule",
+          "id": "tone",
+          "edited": false,
+          "body": "Прямо.\n"
+        }
+      ]
     }
   ],
   "judge": [
