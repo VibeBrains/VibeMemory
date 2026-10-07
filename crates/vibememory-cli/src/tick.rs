@@ -305,6 +305,7 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         deletions_held: result.deletions_held,
         ignored: seen_before,
         pause: result.pause.clone(),
+        last_failure: last_failure(&state, &result, allowed),
         ..next
     };
     if let Err(problem) = next.write(&engine_dir) {
@@ -312,6 +313,19 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
     }
 
     result
+}
+
+/// Why this run failed, in one line for `doctor`; `None` when it worked
+/// A skipped run did not try, so it neither names a failure nor clears the last one
+fn last_failure(state: &crate::guard::TickState, result: &Ticked, allowed: bool) -> Option<String> {
+    if allowed {
+        result
+            .problems
+            .first()
+            .map(|problem| crate::guard::failure_line(problem))
+    } else {
+        state.last_failure.clone()
+    }
 }
 
 /// Pushes unless the host paused this store and its recheck is not due; a push that goes through
@@ -557,6 +571,15 @@ fn fetch_and_merge(store: &Path, machine_id: &str, team: bool, result: &mut Tick
     if team && sessions_switched_off(store, &fetched) {
         result.store_cycle = StoreCycle::SessionsOff;
         return;
+    }
+    // A refused fetch is a failed run, as a refused push is
+    // A machine with nothing to send only fetches, and a revoked key or a host gone would otherwise
+    // Stay silent while the machine stops receiving everybody else's sessions
+    if let Err(said) = &fetched {
+        result.problems.push(format!(
+            "fetch from the store's host failed: {}",
+            said.trim()
+        ));
     }
     match merge_if_safe(store, machine_id) {
         Ok(Merge::Merged) => result.merged = true,
@@ -1239,20 +1262,7 @@ fn import_real_directories(
             continue;
         }
         let portable = roots.to_portable(&cwd).unwrap_or_else(|_| cwd.clone());
-        let syntax = vibememory_core::naming::PathSyntax::Posix;
-        let canonical = vibememory_core::naming::canonical_cwd(&cwd, syntax);
-        let input = vibememory_core::naming::NamingInput {
-            cwd: &canonical,
-            syntax,
-            project_dir_name: None,
-        };
-        let resolved = vibememory_core::naming::resolve_store_name(
-            &input,
-            || crate::git::probe(Path::new(&canonical), Duration::from_secs(10)),
-            naming,
-            &existing,
-        );
-        let name = match resolved {
+        let name = match store_name_of(&cwd, naming, &existing) {
             Ok(vibememory_core::naming::Resolution::Named { name, .. }) => name,
             // Ignored is not a failure and not the tick's to overturn — `ignoreCwd` is the
             // owner's own rule. It is only reported, so that "these transcripts stay on this
@@ -1278,22 +1288,8 @@ fn import_real_directories(
             engine_dir,
             stamp,
         ) {
-            // What a team's store takes in from a directory that was already here is the
-            // sessions from before the project went to the team: they stay on this machine
-            if machine.team.is_some() {
-                let local: Vec<String> = outcome
-                    .copied
-                    .iter()
-                    .map(|file| format!("projects/{}/{file}", name.as_str()))
-                    .collect();
-                if let Err(problem) = crate::local_only::keep(store, &local) {
-                    ignored.push(IgnoredDirectory {
-                        reason: format!("its old sessions could not be kept local: {problem}"),
-                        transcripts: outcome.copied.len(),
-                        enc: enc.clone(),
-                    });
-                }
-            }
+            // The sessions from before the project went to the team were set aside by `route add`
+            // (`sessions_before_route`): what else the directory holds was started after the route, and is the team's
             imported.push(format!(
                 "{enc} -> projects/{} ({} file(s))",
                 name.as_str(),
@@ -1302,6 +1298,99 @@ fn import_real_directories(
         }
     }
     (imported, ignored)
+}
+
+/// The name a working directory's sessions take in a store, by the owner's naming rules and the names the store
+/// already has: one rule for the tick's import and for `route add`, so both name a project the same.
+fn store_name_of(
+    cwd: &str,
+    naming: &vibememory_core::naming::NamingConfig,
+    existing: &[vibememory_core::naming::StoreName],
+) -> Result<vibememory_core::naming::Resolution, vibememory_core::naming::NamingError> {
+    let syntax = vibememory_core::naming::PathSyntax::Posix;
+    let canonical = vibememory_core::naming::canonical_cwd(cwd, syntax);
+    let input = vibememory_core::naming::NamingInput {
+        cwd: &canonical,
+        syntax,
+        project_dir_name: None,
+    };
+    vibememory_core::naming::resolve_store_name(
+        &input,
+        || crate::git::probe(Path::new(&canonical), Duration::from_secs(10)),
+        naming,
+        existing,
+    )
+}
+
+/// The sessions a project already has on this machine at the moment it is routed to a team, as paths of the
+/// team's clone: every file of each real `projects/<enc>` directory whose working directory `routes` send to `team`
+///
+/// Taken at `route add`, not at the import: the tick imports a directory only once no session runs in it,
+/// And a session started after the route but before that import is the team's, not one from before
+/// A directory already linked into a store is not here: its sessions are in that store, and `project move`
+/// Is what takes them elsewhere
+#[must_use]
+pub fn sessions_before_route(
+    config_dir: &Path,
+    clone: &Path,
+    naming: &vibememory_core::naming::NamingConfig,
+    routes: &vibememory_core::naming::StoreRoutes,
+    team: &str,
+) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(config_dir.join("projects")) else {
+        return Vec::new();
+    };
+    let syntax = crate::hook::session_start::host_syntax();
+    let existing = crate::store::existing(clone, TIMEOUT).names;
+    let mut paths = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let is_real = std::fs::symlink_metadata(&path)
+            .is_ok_and(|metadata| metadata.is_dir() && !metadata.is_symlink());
+        if !is_real {
+            continue;
+        }
+        let Some(cwd) = working_directory_of(&path) else {
+            continue;
+        };
+        let canonical = vibememory_core::naming::canonical_cwd(&cwd, syntax);
+        if routes.route(&canonical, syntax).ok().flatten() != Some(team) {
+            continue;
+        }
+        let Ok(vibememory_core::naming::Resolution::Named { name, .. }) =
+            store_name_of(&cwd, naming, &existing)
+        else {
+            continue;
+        };
+        let mut files = Vec::new();
+        files_under(&path, "", &mut files);
+        paths.extend(
+            files
+                .into_iter()
+                .map(|file| format!("projects/{}/{file}", name.as_str())),
+        );
+    }
+    paths
+}
+
+/// Every file under a directory, relative to it, as the import copies them.
+fn files_under(dir: &Path, prefix: &str, files: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let relative = if prefix.is_empty() {
+            name
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if entry.path().is_dir() {
+            files_under(&entry.path(), &relative, files);
+        } else {
+            files.push(relative);
+        }
+    }
 }
 
 /// The rule's own words for why a directory is left alone.

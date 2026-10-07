@@ -365,3 +365,76 @@ fn a_clone_that_stopped_at_its_checkout_is_laid_out_on_a_machine_the_engine_neve
         "the history's files are laid out"
     );
 }
+
+/// Runs the engine's binary with every directory inside the test: the engine directory is not
+/// `$HOME/.vibememory`, so `install` hands nothing to the system's scheduler.
+fn engine(temp: &TempDir, args: &[&str], stdin: &str) -> std::process::Output {
+    use std::io::Write as _;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vibememory"))
+        .args(args)
+        .env("HOME", temp.dir("home"))
+        .env("VIBEMEMORY_DIR", temp.path().join("engine"))
+        .env("CLAUDE_CONFIG_DIR", temp.path().join("claude"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the engine binary runs");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(stdin.as_bytes())
+        .expect("stdin is read");
+    child.wait_with_output().expect("the engine answers")
+}
+
+#[test]
+fn a_member_machine_without_an_engine_is_set_up_by_the_grant() {
+    // A member of a team on a self-hosted server has no personal store to have configured the engine:
+    // `install` only places the programs, and `connect --grant` used to send the person back to `install`
+    let temp = TempDir::new("connect-key-unconfigured");
+    let layout = layout(&temp);
+    assert!(!layout.engine_dir.join("config.json").exists());
+    let clone = layout.team_store(&grant().team);
+    fs::create_dir_all(&clone).unwrap();
+    git(&clone, &["init", "--quiet"]);
+    git(
+        &clone,
+        &["remote", "add", "origin", "vmgit@host:teams/syncteam.git"],
+    );
+
+    let request = engine(&temp, &["connect", "--key-request"], "");
+    assert!(request.status.success(), "{request:?}");
+    let file: serde_json::Value = serde_json::from_str(ANSWERS).unwrap();
+    let body = file["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["id"] == "key")
+        .unwrap()["body"]
+        .to_string();
+    let connected = engine(
+        &temp,
+        &["connect", "--grant", "--machine-id", "lab-box"],
+        &format!("{body}\n"),
+    );
+    let said = String::from_utf8_lossy(&connected.stdout);
+    assert!(
+        connected.status.success(),
+        "{said}{}",
+        String::from_utf8_lossy(&connected.stderr)
+    );
+    assert!(said.contains("connected: team syncteam"), "{said}");
+    let config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(layout.engine_dir.join("config.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        config["machineId"], "lab-box",
+        "the machine is named as asked"
+    );
+    assert!(
+        layout.team_state_dir("syncteam").join(KEY_FILE).is_file(),
+        "the key is kept"
+    );
+}

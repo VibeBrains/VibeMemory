@@ -146,6 +146,9 @@ fn the_state_survives_a_round_trip_and_a_machine_that_never_ticked_is_clean() {
             since: "2026-09-05T10:00:00Z".to_owned(),
             recheck_at: "2026-09-05T11:00:00Z".to_owned(),
         }),
+        last_failure: Some(
+            "fetch from the store's host failed: Permission denied (publickey).".to_owned(),
+        ),
     };
     state.write(&engine).expect("write");
     assert_eq!(TickState::read(&engine), state);

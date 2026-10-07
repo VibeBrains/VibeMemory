@@ -99,6 +99,20 @@ fn setup(temp: &TempDir) -> Setup {
     }
 }
 
+/// What `route add --to acme` does to the sessions the project already has: sets them aside in the team's clone.
+fn route_added(setup: &Setup) -> Vec<String> {
+    let clone = fs::canonicalize(setup.engine.join("stores/acme/store")).unwrap();
+    let before = vibememory_cli::tick::sessions_before_route(
+        &setup.config_dir,
+        &clone,
+        &vibememory_core::naming::NamingConfig::default(),
+        &setup.routes,
+        "acme",
+    );
+    vibememory_cli::local_only::keep(&clone, &before).unwrap();
+    before
+}
+
 fn tick(setup: &Setup, team: Option<&str>) -> Ticked {
     tick_at(setup, team, STAMP)
 }
@@ -175,6 +189,7 @@ fn each_store_takes_in_only_its_own_projects() {
         "the team's project waits for its run"
     );
 
+    route_added(&setup);
     let team = tick(&setup, Some("acme"));
     assert_eq!(team.imported_directories.len(), 1, "{team:?}");
     assert_eq!(
@@ -548,4 +563,44 @@ fn a_host_refusing_as_a_memory_team_means_sessions_off_not_a_pause() {
     );
     assert_eq!(ticked.pause, None);
     assert!(ticked.problems.is_empty());
+}
+
+#[test]
+fn a_session_started_after_the_route_is_the_teams_even_if_the_tick_imports_it() {
+    // The hook cannot link a directory that already holds transcripts, so a session started right after
+    // `route add` is written into the real directory and reaches the clone only with the tick's import
+    let temp = TempDir::new("tick-teams-after-route");
+    let setup = setup(&temp);
+    let before = route_added(&setup);
+    assert_eq!(
+        before.len(),
+        1,
+        "only the project the route sends to the team, and only what it holds now: {before:?}"
+    );
+    assert!(
+        before[0].ends_with(&format!("/{TEAM_SESSION}.jsonl")),
+        "{before:?}"
+    );
+
+    let later = "33333333-3333-4333-8333-333333333333";
+    session_dir(&setup.config_dir, &setup.team_cwd, later);
+    let team = tick(&setup, Some("acme"));
+    assert_eq!(team.imported_directories.len(), 1, "{team:?}");
+    assert!(team.problems.is_empty(), "{team:?}");
+
+    let clone = fs::canonicalize(setup.engine.join("stores/acme/store")).unwrap();
+    let project = link_of(&setup, &setup.team_cwd).expect("linked");
+    let name = project.file_name().unwrap().to_string_lossy().into_owned();
+    let old = format!("projects/{name}/{TEAM_SESSION}.jsonl");
+    let new = format!("projects/{name}/{later}.jsonl");
+    assert!(
+        tracked(&clone).contains(&new),
+        "started after the route, it goes to the team: {:?}",
+        tracked(&clone)
+    );
+    assert!(
+        !tracked(&clone).contains(&old),
+        "from before the route, it stays on this machine: {:?}",
+        tracked(&clone)
+    );
 }

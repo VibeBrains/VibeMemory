@@ -15,6 +15,7 @@
 ```sh
 ./infra/seedKey.sh                 # vm@vibememory.ru, ключ ~/.ssh/id_ed25519_vibememory
 ./infra/seedKey.sh --user vm --host vibememory.ru --port 22
+./infra/seedKey.sh --host <новый адрес> --alias vibememoryNew   # второй хост — под своим алиасом
 ```
 
 Создаёт ключ (если нет), копирует публичную половину, добавляет алиас `vibememory` в
@@ -49,7 +50,7 @@ ssh-add --apple-use-keychain ~/.ssh/id_ed25519_vibememory
    `/home/vmgit/.ssh` (700) — ключи машин в нём пишет только применение снимка прав.
 2. **`infra/storeInit.sh` и `infra/storeRepack.sh` едут на хост** в `/srv/vibememory/bin/`.
    Первый — единственное место настроек голого репозитория: и личного стора, и репозиториев
-   команд. Второй — ночная упаковка: личного стора из cron владельца и сторов команд по таймеру.
+   команд. Второй — ночная упаковка: личного стора и сторов команд, обе — таймерами systemd.
 3. **Личный стор** — `storeInit.sh <путь> --adopted`: `core.autocrlf=false` (байты остаются
    байтами), `core.filemode=false`, `gc.auto=0` (сборка мусора не на приёме push), `transfer.unpackLimit=1`
    (push остаётся пакетом с дельтами), без `core.bigFileThreshold`, `pack.threads=1`,
@@ -61,10 +62,11 @@ ssh-add --apple-use-keychain ~/.ssh/id_ed25519_vibememory
    кода от владельца. Путь к стору — `/home/vm` и `~/vibememory` — 710 с группой `vibememory`.
    `safe.directory` в системном конфиге git — для ручных команд `git -C` из-под `vmgit`; код ходит
    `--git-dir` и в нём не нуждается.
-5. **Ночная упаковка** `/srv/vibememory/bin/storeRepack.sh` в 04:17 из cron владельца:
-   `repack -d -n --geometric=2`, отказ без места на худший случай, строка в
-   `journalctl -t vibememory-repack`. Копия, которую ставили прежние версии в `~/vibememory/bin/`,
-   остаётся на месте, а строка cron переезжает на общую. С `--mirror` — хук `post-receive` с
+5. **Ночная упаковка** `/srv/vibememory/bin/storeRepack.sh` в 04:17 таймером
+   `vibememory-repack.timer` от имени владельца: `repack -d -n --geometric=2`, отказ без места на
+   худший случай, строка в `journalctl -t vibememory-repack`. Таймер, а не cron: в облачных образах
+   Debian 13 cron нет. Строку упаковки, которую прежние версии ставили в crontab владельца, скрипт
+   убирает сам, когда таймер на месте. С `--mirror` — хук `post-receive` с
    `git push --mirror`; недоступное зеркало push **не** отклоняет.
 6. **sshd** — два drop-in под страховочным таймером: `10-vibememory-hardening.conf` (вход только по
    ключу, root без пароля, три попытки) и `20-vibememory-vmgit.conf` (`Match User vmgit`: ключи
@@ -151,8 +153,8 @@ key с `can_push=true`, Gitea — снять «Read only», свой серве�
    потом поднять новый сервер целиком, и только затем сменить адрес. Если DNS переключён раньше,
    машины сразу идут на пустой сервер и получают смену ключа хоста: тик копит провалы, но **данные
    не теряются** — всё лежит в сторе машины.
-2. **Ключ:** `./infra/seedKey.sh --host <новый адрес>`. Существующий алиас `vibememory` скрипт не
-   трогает — он продолжает указывать на старый сервер. Отпечаток нового сверить с панелью
+2. **Ключ:** `./infra/seedKey.sh --host <новый адрес> --alias vibememoryNew`. Существующий алиас
+   `vibememory` скрипт не трогает — он продолжает указывать на старый сервер, а новый получает свой. Отпечаток нового сверить с панелью
    провайдера до ввода пароля.
 3. **Два алиаса на время переезда.** Старый ключ хоста переписать в `known_hosts` под IP старого
    сервера и завести `Host vibememoryOld`; для имени домена ключ заменить на новый, сверив отпечаток.

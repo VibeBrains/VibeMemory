@@ -138,10 +138,33 @@ if sudo test -e "$access"; then
   echo "2/7 Снимок прав на месте и проходит проверку"
 else
   [ -n "$owner" ] || { echo "Ошибка: снимка ещё нет — нужен --owner <handle владельца>" >&2; exit 1; }
-  [ -s "$token" ] || { echo "Ошибка: нет ни снимка $access, ни файла токена $token" >&2; exit 1; }
-  # The digest of the whole token as a client sends it: the file holds it without whitespace, and
-  # the old server trimmed whatever it read.
-  digest=$(tr -d '[:space:]' < "$token" | sha256sum | cut -d ' ' -f 1)
+  # A host moving from the single-token server keeps that token: its digest becomes the snapshot's legacy line
+  # A new host has no token yet: its agents get theirs from the console
+  tokens='[]'
+  made="без токенов — их выдаёт консоль"
+  if [ -s "$token" ]; then
+    # The digest of the whole token as a client sends it: the file holds it without whitespace, and
+    # The old server trimmed whatever it read
+    digest=$(tr -d '[:space:]' < "$token" | sha256sum | cut -d ' ' -f 1)
+    tokens=$(cat <<JSON
+[
+    {
+      "id": "tk_legacy",
+      "legacy": true,
+      "sha256": "$digest",
+      "team": "personal",
+      "member": "$owner",
+      "agent": "claude-code",
+      "role": "writer",
+      "history": true,
+      "projects": null,
+      "expiresAt": null
+    }
+  ]
+JSON
+)
+    made="строка tk_legacy с отпечатком токена"
+  fi
   candidate=$(mktemp)
   cat > "$candidate" <<JSON
 {
@@ -156,20 +179,7 @@ else
       "members": { "$owner": "owner" }
     }
   },
-  "tokens": [
-    {
-      "id": "tk_legacy",
-      "legacy": true,
-      "sha256": "$digest",
-      "team": "personal",
-      "member": "$owner",
-      "agent": "claude-code",
-      "role": "writer",
-      "history": true,
-      "projects": null,
-      "expiresAt": null
-    }
-  ],
+  "tokens": $tokens,
   "keys": []
 }
 JSON
@@ -181,7 +191,7 @@ JSON
   sudo install -o vmcab -g vmaccess -m 0640 "$candidate" "$access.new"
   sudo mv -f "$access.new" "$access"
   rm -f "$candidate"
-  echo "2/7 Снимок прав собран: личный стор, член $owner, строка tk_legacy с отпечатком токена"
+  echo "2/7 Снимок прав собран: личный стор, член $owner, $made"
 fi
 
 # When each team was last reached: the server touches a file a team, the report reads its time.
@@ -394,7 +404,7 @@ echo "5/7 Команды хоста под vmgit: снимок применён 
 # The address in the line is an IP literal (http.rs::client_address), and usedns = no besides: a
 # name is never resolved into somebody's address to ban.
 if ! command -v fail2ban-client >/dev/null && [ ! -x /usr/bin/fail2ban-client ]; then
-  echo "6/7 fail2ban не установлен — джейл для /mcp пропущен"
+  echo "6/7 fail2ban не установлен — джейл для /mcp пропущен: поставьте его по шагу 3 docs/manuals/serverHardeningPrompt.md и повторите"
   exit 0
 fi
 filter=/etc/fail2ban/filter.d/vibememory-mcp.conf
