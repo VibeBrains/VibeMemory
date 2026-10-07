@@ -790,8 +790,11 @@
   advise / merge / override; строка в `doctor`, заметка сессии раз в сутки. Механизм 0.8.0 «копия `CLAUDE.md` в
   `~/.dsh/AGENTS.md`» заменён. [спека](spec/rulesAndSkills.md), [формат](manuals/rulesSpec.md),
   [knowledge](knowledge/design/rulesAndSkills.md).
-- [ ] **Разрезать глобальный `CLAUDE.md` на правила** — `vibememory rules split`, после просмотра плана владельцем;
-  затем `rules sync` по проектам с ручными копиями (VibeSnipe `.vibe/rules/`).
+- [x] **Глобальный `CLAUDE.md` разрезан на правила** — ✅ (2026-10-08, next) после просмотра плана владельцем:
+  16 личных правил, атрибуция — `absolute`; «Плотный набор в заголовках» и «Локализация» — навыки с правилом-указателем;
+  `CLAUDE.md` — вступление 2,5 КБ, прежний — в `/Volumes/Storage/Caches/VibeMemory/claude-md-before-split/`. Тик
+  разложил 16 файлов в `~/.claude/rules/` и правила в `~/.dsh/AGENTS.md`, `~/.codex/AGENTS.md`. VibeSnipe: `.vibe/rules/`
+  — пересказ своими словами, совпадений движок не видит; разбор по смыслу — хендофф в их памяти.
 - [x] **Общие правила для всех агентов** — ✅ (2026-10-07, next) повод — хендофф DSH из VibeSnipe: правила видел
   только Claude. Канон — `config/CLAUDE.md`; файл инструкций каждого агента, живущего на машине, — ещё одна
   управляемая копия того же файла (`managed::Copy`), у DSH это `~/.dsh/AGENTS.md`, путь прочитан из его бандла.
