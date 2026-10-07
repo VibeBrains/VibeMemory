@@ -36,6 +36,7 @@ pub mod proxy;
 pub mod purge;
 pub mod push_scan;
 pub mod receive;
+pub mod rule_tools;
 pub mod shell;
 pub mod status;
 pub mod tools;

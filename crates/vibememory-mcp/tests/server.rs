@@ -82,7 +82,11 @@ fn the_handshake_and_the_catalogue_are_what_a_client_expects() {
             "memory_delete",
             "history_search",
             "project_resolve",
-            "handoff_list"
+            "handoff_list",
+            "rules_get",
+            "rule_save",
+            "skill_get",
+            "skill_save"
         ]
     );
 }
@@ -732,9 +736,14 @@ fn the_handshake_tells_the_agent_which_project_it_is_in() {
             .is_some_and(|text| text.contains("VibeIDE")),
         "{told}"
     );
-    let silent = serde_json::to_value(protocol::handle(&request, &CALLER, &fake).expect("answer"))
+    // outside a project the agent is told no project, but still where a rule goes when a person asks for one
+    let outside = serde_json::to_value(protocol::handle(&request, &CALLER, &fake).expect("answer"))
         .expect("json");
-    assert!(silent["result"].get("instructions").is_none(), "{silent}");
+    let text = outside["result"]["instructions"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(!text.contains("Started in the store project"), "{outside}");
+    assert!(text.contains("ask the person which"), "{outside}");
 }
 
 #[test]
