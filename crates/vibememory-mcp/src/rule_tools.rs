@@ -23,8 +23,7 @@ use vibememory_core::rules::{Level, Rule, RuleId};
 use crate::memories::Memories;
 use crate::tools::{Caller, ToolResult};
 
-/// Where proposals to a team wait for its owner or admins, in the team's store.
-pub const PROPOSALS: &str = "proposals";
+use vibememory_cli::rules::PROPOSALS;
 
 /// What every rule tool says about levels: the protocol an agent follows when a person asks for a rule.
 pub const LEVELS: &str = "Levels are the person's word: «в общие правила», «в глобальные» — personal (every project of \

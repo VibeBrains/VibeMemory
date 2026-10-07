@@ -273,6 +273,7 @@ fn projects(m: &Machine, team: Option<&str>) -> Projected {
         machine_id: "mac-test",
         roots: &roots,
         personal: &personal,
+        personal_store: &m.store,
         team,
         agents: &agents,
         stamp: STAMP,

@@ -350,6 +350,7 @@ fn project_rules(machine: &Machine<'_>, stamp: &str) -> crate::rules::Projected 
         machine_id: machine.machine_id,
         roots: machine.roots,
         personal: &personal,
+        personal_store: &personal_store,
         team: machine.team,
         agents: &agents,
         stamp,

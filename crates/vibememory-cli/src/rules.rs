@@ -39,6 +39,9 @@ pub const FILE_PREFIX: &str = "vm-";
 /// What Claude Code writes into the skills directory on its own, from claude.ai: not the person's, not for other
 /// agents.
 pub const CLAUDE_SYNCED: &str = "synced";
+/// Where proposals to a team wait for its owner or admins, in the team's store: `rules/<id>.<who>.md` and
+/// `skills/<name>.<who>/`.
+pub const PROPOSALS: &str = "proposals";
 /// The single file DSH reads in a project beside its own instructions.
 pub const PROJECT_AGENTS_FILE: &str = "AGENTS.local.md";
 
@@ -528,6 +531,9 @@ pub struct ProjectsRun<'a> {
     pub roots: &'a Roots,
     /// The person's rules: not written into a project, but what a project's rule replaces is told by them.
     pub personal: &'a [Rule],
+    /// The personal store, whose git holds the person's rules' history: a project in `merge` or `override` mode is
+    /// measured by it.
+    pub personal_store: &'a Path,
     /// The team, when the store is a team's: its rules and skills join every project of it.
     pub team: Option<&'a str>,
     /// The agents of this machine.
@@ -545,6 +551,7 @@ pub fn project_projects(run: &ProjectsRun<'_>) -> Projected {
         machine_id,
         roots,
         personal,
+        personal_store: _,
         team,
         agents,
         stamp,
@@ -634,8 +641,43 @@ pub fn project_projects(run: &ProjectsRun<'_>) -> Projected {
         for cwd in &dirs {
             write_project(cwd, &in_force, &skills, store, agents, &mut report);
         }
+        apply_mode(run, &project, &dirs, &mut quarantine, &mut report);
     }
     report
+}
+
+/// A project's own rule files in the mode the person chose for it; `advise` leaves them to `rules sync`.
+fn apply_mode(
+    run: &ProjectsRun<'_>,
+    project: &str,
+    dirs: &[PathBuf],
+    quarantine: &mut dyn FnMut(&str, &str) -> Result<(), String>,
+    report: &mut Projected,
+) {
+    let project_dir = run.store.join("projects").join(project);
+    // the project's own rule files, in the mode the person chose for it; `advise` leaves them to `rules sync`
+    let mode = crate::rules_sync::mode_of(&project_dir);
+    if mode != crate::rules_sync::Mode::Advise {
+        let histories = crate::rules_sync::histories(
+            run.personal_store,
+            run.store,
+            run.team.is_some(),
+            project,
+        );
+        for cwd in dirs {
+            for judged in crate::rules_sync::judge_project(cwd, &histories) {
+                match crate::rules_sync::apply(&judged, mode, &histories, quarantine) {
+                    Ok(done) if done.dropped + done.updated + done.set_aside > 0 => {
+                        report.written.push(judged.file.path.display().to_string());
+                    }
+                    Ok(_) => {}
+                    Err(error) => report
+                        .problems
+                        .push(format!("{}: {error}", judged.file.path.display())),
+                }
+            }
+        }
+    }
 }
 
 /// One working directory: the rule files, `AGENTS.local.md` when DSH lives here, the skill links, and git told to

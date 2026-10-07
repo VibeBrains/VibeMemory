@@ -6,6 +6,8 @@
     clippy::disallowed_macros
 )]
 
+mod rules_command;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -55,6 +57,9 @@ fn main() -> ExitCode {
         Some("session") => session_command(&args.collect::<Vec<String>>()),
         Some("project") => project_command(&args.collect::<Vec<String>>()),
         Some("route") => route_command(&args.collect::<Vec<String>>()),
+        Some("rule") => rules_command::rule(&layout(), &args.collect::<Vec<String>>()),
+        Some("skill") => rules_command::skill(&layout(), &args.collect::<Vec<String>>()),
+        Some("rules") => rules_command::rules(&layout(), &args.collect::<Vec<String>>()),
         Some("store") => store_command(&args.collect::<Vec<String>>()),
         Some("merge-driver") => merge_driver_command(&args.collect::<Vec<String>>()),
         Some("hook") => match args.next().as_deref() {
