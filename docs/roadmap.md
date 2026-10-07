@@ -1368,6 +1368,9 @@
   без `config.json`, отказ fetch — неудача прогона с причиной `last:` в `doctor`, сессии до команды откладывает
   `route add`, `SessionEnd` снимает живую сессию вне клона, `seedKey.sh --alias`. Обходы из стенда убраны, `up` с нуля
   чистый, `check` — 12 PASS. [knowledge](knowledge/design/selfHostLab.md).
+- [x] **Выпуск 0.8.1: свой сервер с первого раза** — ✅ (2026-10-07, main) девять находок стенда своего сервера:
+  скрипты хоста на чистом Debian, движок машины участника из `connect`, отказ fetch в `doctor`, сессии после
+  `route add` — команде, `SessionEnd` вне клона; стенд `infra/selfHostLab.sh`.
 - [x] **Выпуск 0.8.0: общие правила для всех агентов** — ✅ (2026-10-07, main) `CLAUDE.md` доезжает до
   `~/.dsh/AGENTS.md`, бюджет инструкций DSH в `mcp-config dsh`; подключение агентов больше не молчит (`waiting`,
   `decline`, `list`), `handoff_list` и аннотации инструментов у сервера памяти.
