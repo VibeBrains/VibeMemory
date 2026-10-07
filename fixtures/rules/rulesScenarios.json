@@ -1,0 +1,569 @@
+{
+  "about": "Rules and skills: the formats, the levels stacked, an agent's file assembled and read back, a project's rule files judged. Format of this file: docs/manuals/rulesSpec.md, section «Фикстуры».",
+  "rules": [
+    {
+      "id": "plain",
+      "file": "---\nid: commit-language\ntitle: Коммиты — по-русски\nlevel: personal\n---\nSubject и body — по-русски.\nПрефикс `тип(scope):` можно машинным.\n",
+      "expect": {
+        "id": "commit-language",
+        "title": "Коммиты — по-русски",
+        "level": "personal",
+        "absolute": false,
+        "enforced": false,
+        "paths": [],
+        "body": "Subject и body — по-русски.\nПрефикс `тип(scope):` можно машинным.\n"
+      }
+    },
+    {
+      "id": "flags-paths-comments-and-unknown-keys",
+      "file": "---\nid: no-attribution   # permanent\ntitle: \"Атрибуция: абсолютный запрет\"\nlevel: personal\nabsolute: true\npaths:\n  - \"**/*.rs\"\n  - docs/**\nreviewed-by: owner\n---\n\nНикаких Co-Authored-By.\n\n",
+      "expect": {
+        "id": "no-attribution",
+        "title": "Атрибуция: абсолютный запрет",
+        "level": "personal",
+        "absolute": true,
+        "enforced": false,
+        "paths": [
+          "**/*.rs",
+          "docs/**"
+        ],
+        "body": "Никаких Co-Authored-By.\n",
+        "extra": [
+          "reviewed-by"
+        ]
+      }
+    },
+    {
+      "id": "flow-list-paths",
+      "file": "---\nid: team-style\ntitle: Стиль команды\nlevel: team\nenforced: true\npaths: [src/**, tests/**]\n---\nТабы — нет.\n",
+      "expect": {
+        "id": "team-style",
+        "title": "Стиль команды",
+        "level": "team",
+        "absolute": false,
+        "enforced": true,
+        "paths": [
+          "src/**",
+          "tests/**"
+        ],
+        "body": "Табы — нет.\n"
+      }
+    },
+    {
+      "id": "no-frontmatter",
+      "file": "# Просто текст\n",
+      "error": "no frontmatter"
+    },
+    {
+      "id": "bad-id",
+      "file": "---\nid: Commit_Language\ntitle: X\nlevel: personal\n---\ntext\n",
+      "error": "is not kebab-case"
+    },
+    {
+      "id": "bad-level",
+      "file": "---\nid: a\ntitle: X\nlevel: global\n---\ntext\n",
+      "error": "is not personal, team or project"
+    },
+    {
+      "id": "absolute-only-personal",
+      "file": "---\nid: a\ntitle: X\nlevel: team\nabsolute: true\n---\ntext\n",
+      "error": "absolute is a personal rule's flag"
+    },
+    {
+      "id": "enforced-only-team",
+      "file": "---\nid: a\ntitle: X\nlevel: project\nenforced: true\n---\ntext\n",
+      "error": "enforced is a team rule's flag"
+    },
+    {
+      "id": "empty-text",
+      "file": "---\nid: a\ntitle: X\nlevel: project\n---\n\n\n",
+      "error": "has no text"
+    },
+    {
+      "id": "flag-not-boolean",
+      "file": "---\nid: a\ntitle: X\nlevel: personal\nabsolute: yes\n---\ntext\n",
+      "error": "absolute is true or false"
+    },
+    {
+      "id": "token-in-text",
+      "file": "---\nid: a\ntitle: X\nlevel: personal\n---\nТокен: vmt_7q2m9x4a_1111111111111111111111111111111111111111\n",
+      "error": "holds a vibememory token"
+    },
+    {
+      "id": "unclosed-frontmatter",
+      "file": "---\nid: a\ntitle: X\n",
+      "error": "no frontmatter"
+    }
+  ],
+  "skills": [
+    {
+      "id": "folded-description-and-claude-keys",
+      "directory": "save-session",
+      "file": "---\nname: save-session\ndescription: >\n  Сохранить состояние сессии\n  как хендофф.\nallowed-tools: Read, Write\n---\n# save-session\n",
+      "expect": {
+        "name": "save-session",
+        "description": "Сохранить состояние сессии как хендофф.",
+        "claudeOnly": [
+          "allowed-tools"
+        ]
+      }
+    },
+    {
+      "id": "literal-description",
+      "directory": "watch",
+      "file": "---\nname: watch\ndescription: |\n  Смотрит видео.\n  Слушает аудио.\n---\nbody\n",
+      "expect": {
+        "name": "watch",
+        "description": "Смотрит видео.\nСлушает аудио.",
+        "claudeOnly": []
+      }
+    },
+    {
+      "id": "name-not-kebab",
+      "directory": "Save_Session",
+      "file": "---\nname: Save_Session\ndescription: x\n---\n",
+      "error": "is not kebab-case"
+    },
+    {
+      "id": "name-differs-from-directory",
+      "directory": "watch",
+      "file": "---\nname: watcher\ndescription: x\n---\n",
+      "error": "differs from its directory"
+    },
+    {
+      "id": "no-description",
+      "directory": "x",
+      "file": "---\nname: x\n---\nbody\n",
+      "error": "description is missing"
+    },
+    {
+      "id": "invocation-not-boolean",
+      "directory": "x",
+      "file": "---\nname: x\ndescription: d\nuser-invocable: maybe\n---\n",
+      "error": "user-invocable is true or false"
+    }
+  ],
+  "layers": [
+    {
+      "id": "project-replaces-personal-and-team",
+      "personal": [
+        "---\nid: tests\ntitle: Тесты\nlevel: personal\n---\nГонять cargo test.\n",
+        "---\nid: tone\ntitle: Тон\nlevel: personal\n---\nПрямо.\n"
+      ],
+      "team": [
+        "---\nid: tests\ntitle: Тесты команды\nlevel: team\n---\nГонять make test.\n"
+      ],
+      "project": [
+        "---\nid: tests\ntitle: Тесты проекта\nlevel: project\n---\nГонять bun test.\n"
+      ],
+      "expect": {
+        "inForce": [
+          [
+            "tone",
+            "personal",
+            []
+          ],
+          [
+            "tests",
+            "project",
+            [
+              "personal",
+              "team"
+            ]
+          ]
+        ],
+        "kept": [],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "absolute-and-enforced-hold",
+      "personal": [
+        "---\nid: attribution\ntitle: Атрибуция\nlevel: personal\nabsolute: true\n---\nЗапрещена.\n"
+      ],
+      "team": [
+        "---\nid: attribution\ntitle: Атрибуция\nlevel: team\n---\nОбязательна.\n",
+        "---\nid: style\ntitle: Стиль\nlevel: team\nenforced: true\n---\nКак у команды.\n"
+      ],
+      "project": [
+        "---\nid: style\ntitle: Стиль\nlevel: project\n---\nКак в проекте.\n"
+      ],
+      "expect": {
+        "inForce": [
+          [
+            "attribution",
+            "personal",
+            []
+          ],
+          [
+            "style",
+            "team",
+            []
+          ]
+        ],
+        "kept": [
+          [
+            "attribution",
+            "team"
+          ],
+          [
+            "style",
+            "project"
+          ]
+        ],
+        "conflicts": []
+      }
+    },
+    {
+      "id": "enforced-against-absolute-is-a-conflict-not-a-choice",
+      "personal": [
+        "---\nid: attribution\ntitle: Атрибуция\nlevel: personal\nabsolute: true\n---\nЗапрещена.\n"
+      ],
+      "team": [
+        "---\nid: attribution\ntitle: Атрибуция\nlevel: team\nenforced: true\n---\nОбязательна.\n"
+      ],
+      "project": [],
+      "expect": {
+        "inForce": [
+          [
+            "attribution",
+            "personal",
+            []
+          ],
+          [
+            "attribution",
+            "team",
+            []
+          ]
+        ],
+        "kept": [],
+        "conflicts": [
+          [
+            "attribution",
+            "attribution"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "same-text-above-is-no-news",
+      "personal": [
+        "---\nid: tone\ntitle: Тон\nlevel: personal\nabsolute: true\n---\nПрямо.\n"
+      ],
+      "team": [
+        "---\nid: tone\ntitle: Тон\nlevel: team\n---\nПрямо.\n"
+      ],
+      "project": [],
+      "expect": {
+        "inForce": [
+          [
+            "tone",
+            "personal",
+            []
+          ]
+        ],
+        "kept": [],
+        "conflicts": []
+      }
+    }
+  ],
+  "assembly": [
+    {
+      "id": "round-trip-and-one-edited-rule",
+      "base": "# Правила владельца\n\nКоротко.\n",
+      "rules": [
+        [
+          "---\nid: tone\ntitle: Тон\nlevel: personal\n---\nПрямо.\nБез воды.\n",
+          []
+        ],
+        [
+          "---\nid: tests\ntitle: Тесты\nlevel: project\n---\nГонять bun test.\n",
+          [
+            "personal"
+          ]
+        ]
+      ],
+      "edits": [
+        [
+          "Без воды.",
+          "Без воды и повторов."
+        ],
+        [
+          "Коротко.",
+          "Коротко.\n\nМоя заметка вне правил."
+        ]
+      ],
+      "expect": [
+        {
+          "piece": "base",
+          "edited": true
+        },
+        {
+          "piece": "rule",
+          "id": "tone",
+          "edited": true,
+          "body": "Прямо.\nБез воды и повторов.\n"
+        },
+        {
+          "piece": "rule",
+          "id": "tests",
+          "edited": false,
+          "body": "Гонять bun test.\n"
+        }
+      ]
+    },
+    {
+      "id": "text-outside-markers-is-kept-apart",
+      "base": null,
+      "rules": [
+        [
+          "---\nid: tone\ntitle: Тон\nlevel: personal\n---\nПрямо.\n",
+          []
+        ]
+      ],
+      "edits": [
+        [
+          "<!-- /vibememory:rule -->\n",
+          "<!-- /vibememory:rule -->\n\n## Моё\n\nТолько здесь.\n"
+        ]
+      ],
+      "expect": [
+        {
+          "piece": "rule",
+          "id": "tone",
+          "edited": false,
+          "body": "Прямо.\n"
+        },
+        {
+          "piece": "outside",
+          "text": "## Моё\n\nТолько здесь.\n"
+        }
+      ]
+    },
+    {
+      "id": "a-cut-marker-is-refused",
+      "base": null,
+      "rules": [
+        [
+          "---\nid: tone\ntitle: Тон\nlevel: personal\n---\nПрямо.\n",
+          []
+        ]
+      ],
+      "edits": [
+        [
+          "<!-- /vibememory:rule -->\n",
+          ""
+        ]
+      ],
+      "error": "not closed"
+    }
+  ],
+  "judge": [
+    {
+      "id": "duplicate-stale-custom-and-project-only",
+      "file": "CLAUDE.md",
+      "whole": false,
+      "text": "# CLAUDE.md проекта\n\n## Коммиты — по-русски\n\nSubject и body — по-русски.\n\n## Тесты\n\nГонять cargo test.\n\n## Тон\n\nПрямо.\nБез воды.\nИ с примерами.\n\n## Только здесь\n\nСобирать через make.\n",
+      "histories": [
+        {
+          "id": "commit-language",
+          "versions": [
+            [
+              "Коммиты — по-русски",
+              "Subject — по-русски.\n"
+            ],
+            [
+              "Коммиты — по-русски",
+              "Subject и body — по-русски.\n"
+            ]
+          ]
+        },
+        {
+          "id": "tests",
+          "versions": [
+            [
+              "Тесты",
+              "Гонять cargo test.\n"
+            ],
+            [
+              "Тесты",
+              "Гонять cargo test и clippy.\n"
+            ]
+          ]
+        },
+        {
+          "id": "tone",
+          "versions": [
+            [
+              "Тон",
+              "Прямо.\nБез воды.\n"
+            ],
+            [
+              "Тон",
+              "Прямо и строго.\nБез воды.\n"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "heading": "Коммиты — по-русски",
+          "rule": "commit-language",
+          "guessed": true,
+          "state": "duplicate"
+        },
+        {
+          "heading": "Тесты",
+          "rule": "tests",
+          "guessed": true,
+          "state": "stale",
+          "behind": 1
+        },
+        {
+          "heading": "Тон",
+          "rule": "tone",
+          "guessed": true,
+          "state": "custom",
+          "clean": true,
+          "merged": "Прямо и строго.\nБез воды.\nИ с примерами.\n"
+        },
+        {
+          "heading": "Только здесь",
+          "rule": null,
+          "guessed": false,
+          "state": "projectOnly"
+        }
+      ]
+    },
+    {
+      "id": "marker-wins-over-heading",
+      "file": "AGENTS.local.md",
+      "whole": false,
+      "text": "<!-- vibememory:rule tests@0000000000000000 -->\n## Тон\n\nГонять cargo test.\n<!-- /vibememory:rule -->\n",
+      "histories": [
+        {
+          "id": "tests",
+          "versions": [
+            [
+              "Тесты",
+              "Гонять cargo test.\n"
+            ]
+          ]
+        },
+        {
+          "id": "tone",
+          "versions": [
+            [
+              "Тон",
+              "Прямо.\n"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "heading": "Тон",
+          "rule": "tests",
+          "guessed": false,
+          "state": "duplicate"
+        }
+      ]
+    },
+    {
+      "id": "a-rules-directory-file-is-one-rule",
+      "file": "commits.mdc",
+      "whole": true,
+      "text": "---\ndescription: commits\nglobs: \"**\"\n---\n# Коммиты\n\nSubject — по-русски.\n",
+      "histories": [
+        {
+          "id": "commit-language",
+          "versions": [
+            [
+              "Коммиты — по-русски",
+              "Subject — по-русски.\n"
+            ],
+            [
+              "Коммиты — по-русски",
+              "Subject и body — по-русски.\n"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "heading": "Коммиты",
+          "rule": "commit-language",
+          "guessed": true,
+          "state": "stale",
+          "behind": 1
+        }
+      ]
+    },
+    {
+      "id": "both-changed-the-same-line-is-a-conflict",
+      "file": "CLAUDE.md",
+      "whole": false,
+      "text": "## Тон\n\nМягко.\nБез воды.\n",
+      "histories": [
+        {
+          "id": "tone",
+          "versions": [
+            [
+              "Тон",
+              "Прямо.\nБез воды.\n"
+            ],
+            [
+              "Тон",
+              "Строго.\nБез воды.\n"
+            ]
+          ]
+        }
+      ],
+      "expect": [
+        {
+          "heading": "Тон",
+          "rule": "tone",
+          "guessed": true,
+          "state": "custom",
+          "clean": false,
+          "merged": "<<<<<<< project\nМягко.\n=======\nСтрого.\n>>>>>>> rules\nБез воды.\n"
+        }
+      ]
+    }
+  ],
+  "similar": [
+    {
+      "id": "same-title-or-same-words-is-found",
+      "title": "Коммиты по-русски",
+      "text": "Сообщения коммитов пишем по-русски, subject и body.",
+      "rules": [
+        [
+          "commit-language",
+          "Коммиты — по-русски",
+          "Subject и body коммитов — по-русски."
+        ],
+        [
+          "tone",
+          "Тон",
+          "Прямо и строго."
+        ]
+      ],
+      "expect": [
+        "commit-language"
+      ]
+    },
+    {
+      "id": "nothing-alike-is-nothing",
+      "title": "Деплой",
+      "text": "Выкладка через hostRelease.sh.",
+      "rules": [
+        [
+          "tone",
+          "Тон",
+          "Прямо и строго."
+        ]
+      ],
+      "expect": []
+    }
+  ]
+}
