@@ -8,8 +8,7 @@
 #            grant, clone, a session reaching the host, revocation and the refusal after it; every step says PASS or FAIL
 #   down   — both VMs and the ssh alias removed; the images and the build cache stay in /Volumes/Storage/Caches
 #
-# The checks state the behaviour the product promises, so a known defect fails until it is fixed
-# A step marked WORKAROUND lets the run go on past such a defect; it goes when the defect is fixed
+# The checks state the behaviour the product promises, so a defect fails the run instead of being worked around
 #
 # Runs on the OWNER'S Mac (Apple Silicon): limactl, docker (colima) and ssh are needed
 # The VMs live in /Volumes/Storage/Caches/lima, Lima's image downloads in /Volumes/Storage/Caches/lima-cache
@@ -180,19 +179,9 @@ up() {
   onHost true
 
   say "4/6 hostBootstrap.sh"
-  if ! onHost 'command -v git' >/dev/null; then
-    # WORKAROUND(git on a clean host): hostBootstrap.sh names git and stops instead of installing it
-    say "    находка: на чистом сервере нет git, hostBootstrap.sh его не ставит — ставлю сам"
-    onHost 'sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git >/dev/null'
-  fi
   "$ROOT/infra/hostBootstrap.sh" --alias "$ALIAS" | sed 's/^/    /'
 
   say "5/6 hostMcp.sh"
-  if ! onHost 'sudo test -e /srv/vibememory/access/access.json'; then
-    # WORKAROUND(first snapshot on a clean host): hostMcp.sh builds it only from the old single-token server's file
-    say "    находка: hostMcp.sh не собирает первый снимок без файла токена прежнего сервера — кладу тестовый"
-    onHost 'mkdir -p ~/vibememory && (umask 077; head -c 32 /dev/urandom | base64 | tr -d "/+=\n" > ~/vibememory/mcp-token)'
-  fi
   "$ROOT/infra/hostMcp.sh" --binary "$LAB/bin/vibememory-mcp" --owner "$OWNER" --alias "$ALIAS" \
     --domain "$domain" --app-domain "app.$domain" | sed 's/^/    /'
 
@@ -249,6 +238,14 @@ check() {
   TEAM="$TEAM_PREFIX-$(date +%s)"
   onHost "$ADMIN team add $TEAM --owner $TEAM_OWNER --sessions && $ADMIN member add $TEAM $MEMBER" >/dev/null
   say "Команда $TEAM с сессиями, участник $MEMBER"
+
+  say ""
+  say "Хост"
+  if onHost 'systemctl is-enabled --quiet vibememory-repack.timer'; then
+    pass "ночная упаковка личного стора стоит таймером systemd"
+  else
+    flunk "ночной упаковки личного стора нет: в образе нет cron, а таймера hostBootstrap.sh не поставил"
+  fi
   # Expanded on the member's machine, not here
   # shellcheck disable=SC2088
   engine='~/.vibememory/bin/vibememory'
@@ -274,29 +271,13 @@ check() {
   if [ -n "$grant" ]; then pass "admin key add выдаёт грант"; else flunk "admin key add не выдал гранта"; fi
   printf '%s\n' "$grant" > "$LAB/grant.json"
   limactl copy "$LAB/grant.json" "$CLIENT_VM:/tmp/grant.json"
-  answer=$(onClient "$engine connect --grant < /tmp/grant.json 2>&1" || true)
+  answer=$(onClient "$engine connect --grant --machine-id $MEMBER-$MACHINE < /tmp/grant.json 2>&1" || true)
   if printf '%s' "$answer" | grep -q "^connected: team $TEAM"; then
-    pass "connect --grant сразу после install подключает машину"
+    pass "connect --grant сразу после install настраивает движок и подключает машину"
   else
     flunk "connect --grant после install: $(printf '%s' "$answer" | grep '^connect:' | head -n 1)"
-    # WORKAROUND(engine of a member machine): install configures nothing without a personal store,
-    # And connect --grant sends the person back to install
-    say "      находка: движок участника без личного стора настраивается только руками — config.json с machineId"
-    onClient "printf '{\"machineId\":\"$MEMBER-$MACHINE\"}\n' > ~/.vibememory/config.json && $engine install" >/dev/null
-    for key in $(memberKeys); do
-      onHost "$ADMIN key revoke $key" >/dev/null
-    done
-    request=$(onClient "$engine connect --key-request 2>/dev/null" | head -n 1)
-    printf '%s\n' "$request" | onHost "$ADMIN key add $MEMBER $MACHINE $TEAM" > "$LAB/grant.json" 2>/dev/null
-    limactl copy "$LAB/grant.json" "$CLIENT_VM:/tmp/grant.json"
-    answer=$(onClient "$engine connect --grant < /tmp/grant.json 2>&1" || true)
-    if printf '%s' "$answer" | grep -q "^connected: team $TEAM"; then
-      pass "connect --grant с настроенным движком подключает машину"
-    else
-      flunk "connect --grant с настроенным движком: $(printf '%s' "$answer" | grep '^connect:' | head -n 1)"
-      summary
-      return
-    fi
+    summary
+    return
   fi
   if onClient "git -C ~/.vibememory/stores/$TEAM/store config core.sshCommand" | grep -q "StrictHostKeyChecking=yes"; then
     pass "клон ходит своим ключом и ключом хоста из гранта"
@@ -313,7 +294,7 @@ check() {
   after=$(newSessionId)
   startSession "$after"
   if stillLive "$after"; then
-    flunk "закончившаяся сессия в настоящем каталоге проекта ещё час числится живой — тик не импортирует проект"
+    flunk "закончившаяся сессия в настоящем каталоге проекта ещё числится живой — тик не импортирует проект"
   else
     pass "SessionEnd снимает сессию с живых"
   fi

@@ -283,6 +283,7 @@ fn teams_json(teams: &[vibememory_cli::team_connect::TeamFacts]) -> serde_json::
                         "recheckAt": pause.recheck_at,
                     })),
                     "failures": facts.failures,
+                    "lastFailure": facts.last_failure,
                 })
             })
             .collect(),
@@ -303,6 +304,12 @@ fn print_teams(layout: &Layout) -> usize {
             None => "in step".to_owned(),
         };
         println!("team     {} — {line}", facts.team);
+        if facts.pause.is_none()
+            && facts.failures > 0
+            && let Some(why) = &facts.last_failure
+        {
+            println!("         last: {why}");
+        }
         if let Some(pause) = &facts.pause {
             println!(
                 "         {}",
@@ -648,7 +655,7 @@ fn connect_command(args: &[String]) -> ExitCode {
             if grant.mode == vibememory_core::team_store::PERSONAL_MODE {
                 return connect_personal(&layout, &grant, pending, machine_id.as_deref());
             }
-            return connect_key(&layout, &grant, pending);
+            return connect_key(&layout, &grant, pending, machine_id.as_deref());
         }
         (Ok(vibememory_core::claim::Claim::Key(grant)), None) => {
             eprintln!(
@@ -758,7 +765,7 @@ fn grant_command(args: &[String]) -> ExitCode {
             if grant.mode == vibememory_core::team_store::PERSONAL_MODE {
                 return connect_personal(&layout, &grant, pending, machine_id.as_deref());
             }
-            connect_key(&layout, &grant, pending)
+            connect_key(&layout, &grant, pending, machine_id.as_deref())
         }
         Err(failure) => {
             eprintln!("connect: the grant is refused: {failure}");
@@ -915,6 +922,28 @@ fn print_claim_failure(
     }
 }
 
+/// Writes `config.json` with the machine's id on a machine that has none: the one asked for with `--machine-id`,
+/// Or the machine's network name, by the rule the personal store's connection follows
+fn configure_engine(
+    layout: &vibememory_cli::install::Layout,
+    asked: Option<&str>,
+) -> Result<(), String> {
+    let machine_id = vibememory_cli::personal_connect::machine_id(asked).ok_or_else(|| {
+        "no machine id: name this machine with --machine-id <name> (letters, digits, - _ .)"
+            .to_owned()
+    })?;
+    std::fs::create_dir_all(&layout.engine_dir).map_err(|error| error.to_string())?;
+    let text = serde_json::to_string_pretty(&serde_json::json!({ "machineId": machine_id }))
+        .map_err(|error| error.to_string())?;
+    let path = layout.engine_dir.join("config.json");
+    vibememory_cli::route::write_config(&path, &format!("{text}\n"))?;
+    println!(
+        "config:    {} written, machine {machine_id}",
+        path.display()
+    );
+    Ok(())
+}
+
 /// A personal store answer: the key kept, the main store cloned or re-aimed, `config.json` written
 /// when there was none, and the full install — hooks, schedule, links, PATH — on top.
 fn connect_personal(
@@ -991,7 +1020,27 @@ fn connect_key(
     layout: &vibememory_cli::install::Layout,
     grant: &vibememory_core::claim::KeyGrant,
     pending: vibememory_cli::team_connect::PendingKey,
+    machine_id: Option<&str>,
 ) -> ExitCode {
+    // Sessions travel with the engine, and a member's machine may have no store of its own to have set it up:
+    // The engine is set up here, as `connect` does for the personal store, before the key is kept
+    if !engine_configured(layout) {
+        if let Err(error) = configure_engine(layout, machine_id) {
+            pending.discard();
+            eprintln!("connect: {error}");
+            eprintln!(
+                "connect: key {} is registered for this machine on the host: revoke it in the cabinet, or with \
+                 `vibememory-mcp admin key revoke` on a host without one",
+                grant.key_id
+            );
+            return ExitCode::FAILURE;
+        }
+        if install(false) != ExitCode::SUCCESS {
+            eprintln!(
+                "connect: the engine is configured but not fully installed: vibememory doctor says what is left"
+            );
+        }
+    }
     match vibememory_cli::team_connect::keep_key(layout, grant, pending, engine_configured(layout))
     {
         Ok(store) => {
@@ -1463,6 +1512,13 @@ fn route_command(args: &[String]) -> ExitCode {
             for pattern in patterns {
                 println!("route    {pattern}: {verb}");
             }
+            if let [verb, _, _, team] = args
+                && verb == "add"
+                && let Err(error) = keep_sessions_before_route(&layout, &text, team)
+            {
+                eprintln!("route: {error}");
+                return ExitCode::FAILURE;
+            }
             println!(
                 "new sessions follow the route; a project whose sessions are already in another store moves with \
                  vibememory project move"
@@ -1478,6 +1534,33 @@ fn route_command(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The sessions a project already has here stay on this machine when it is routed to a team: set aside in the
+/// team's clone now, at the moment of the route, so that every session started after it goes to the team
+/// A memory-only team has no clone and no sessions to set aside
+fn keep_sessions_before_route(layout: &Layout, text: &str, team: &str) -> Result<(), String> {
+    if !vibememory_cli::team_connect::connected_teams(layout).contains(&team.to_owned()) {
+        return Ok(());
+    }
+    let routed = Config::parse(text, PathSyntax::Posix).map_err(|error| error.to_string())?;
+    let clone = layout.team_store(team);
+    let before = vibememory_cli::tick::sessions_before_route(
+        &layout.config_dir,
+        &clone,
+        &routed.naming,
+        &routed.routes,
+        team,
+    );
+    vibememory_cli::local_only::keep(&clone, &before)?;
+    if !before.is_empty() {
+        println!(
+            "kept     {} file(s) of sessions from before the route: they stay on this machine, and the team \
+             gets the sessions started from now on",
+            before.len()
+        );
+    }
+    Ok(())
 }
 
 /// `route list`: every route, then what is wrong with them.
@@ -2241,6 +2324,22 @@ fn say(message: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// Closes a session in the live list `SessionStart` put it on: the store its working directory is routed to.
+///
+/// A session that ended outside every clone — in a real directory the tick has yet to import, or one that never
+/// wrote — has nothing to commit, but it is still on that list
+/// Left there, it counts as running until its heartbeat goes stale, an hour, and the tick does not import a
+/// directory with a running session: the project's sessions would wait that hour to reach the store
+fn end_where_started(layout: &Layout, config: &Config, input: &vibememory_cli::hook::HookInput) {
+    let syntax = session_start::host_syntax();
+    let cwd = canonical_cwd(&input.cwd, syntax);
+    if let Ok(store) = vibememory_cli::stores::for_cwd(layout, config, &cwd, syntax)
+        && let Ok(clone) = std::fs::canonicalize(&store.clone)
+    {
+        let _ = record_end(&clone, &store.machine_id, &input.session_id);
+    }
+}
+
 /// `Stop` and `SessionEnd`: commit what the session has written so far.
 ///
 /// Both events do the same work, because neither can be relied on alone: a session whose turn
@@ -2279,11 +2378,17 @@ fn session_progress_hook(ended: bool) -> ExitCode {
     }
     let transcript = std::path::PathBuf::from(&input.transcript_path);
     let Ok(real) = std::fs::canonicalize(&transcript) else {
+        if ended {
+            end_where_started(&layout, &config, &input);
+        }
         return ExitCode::SUCCESS;
     };
     let Some((owner, relative)) = vibememory_cli::stores::for_file(&layout, &config, &real) else {
         // A session in a real directory: the tick imports it, and saying so on every stop would
         // be noise, since SessionStart already said it once.
+        if ended {
+            end_where_started(&layout, &config, &input);
+        }
         return ExitCode::SUCCESS;
     };
     let store = owner.clone.clone();

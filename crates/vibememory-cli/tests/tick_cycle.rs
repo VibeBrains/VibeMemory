@@ -1182,6 +1182,7 @@ fn a_paused_store_cycle_still_does_the_work_that_saves_data() {
         deletions_held: 0,
         ignored: Vec::new(),
         pause: None,
+        last_failure: None,
     }
     .write(engine)
     .expect("state");
@@ -1466,4 +1467,48 @@ fn a_card_of_this_machine_holding_an_agent_token_stays_on_this_machine() {
     );
     let held = vibememory_cli::held::Held::read(pair.mac.parent().expect("engine dir"));
     assert!(held.files.contains_key(card), "{:?}", held.files);
+}
+
+#[test]
+fn a_fetch_the_remote_refuses_is_a_failure_even_with_nothing_to_send() {
+    // A machine with nothing to send only fetches: a revoked key or a host gone used to leave the tick
+    // Reporting nothing, while the machine stopped receiving every other machine's sessions
+    let temp = TempDir::new("tick-fetch-refused");
+    let pair = two_machines(&temp);
+    let engine = pair.mac.parent().expect("engine dir").to_path_buf();
+    let in_step = tick(&pair.mac, &temp);
+    assert!(in_step.problems.is_empty(), "{:?}", in_step.problems);
+
+    let remote = temp.path().join("remote.git");
+    let gone = temp.path().join("remote.gone");
+    fs::rename(&remote, &gone).expect("the host goes away");
+    let ticked = tick(&pair.mac, &temp);
+    assert!(!ticked.pushed, "there was nothing to send");
+    assert!(
+        ticked
+            .problems
+            .iter()
+            .any(|problem| problem.starts_with("fetch from the store's host failed:")),
+        "the refused fetch reaches the report: {:?}",
+        ticked.problems
+    );
+    let state = vibememory_cli::guard::TickState::read(&engine);
+    assert_eq!(state.consecutive_failures, 1);
+    let why = state
+        .last_failure
+        .expect("the cause is remembered for doctor");
+    assert!(
+        why.starts_with("fetch from the store's host failed:") && !why.contains('\n'),
+        "one line a person can act on: {why}"
+    );
+
+    fs::rename(&gone, &remote).expect("the host is back");
+    let back = tick(&pair.mac, &temp);
+    assert!(back.problems.is_empty(), "{:?}", back.problems);
+    let state = vibememory_cli::guard::TickState::read(&engine);
+    assert_eq!(state.consecutive_failures, 0);
+    assert_eq!(
+        state.last_failure, None,
+        "a run that works clears the cause"
+    );
 }

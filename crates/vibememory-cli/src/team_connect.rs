@@ -145,7 +145,7 @@ pub struct ConnectedStore {
 pub enum KeyRefusal {
     /// The team's sessions are off: its store is not cloned, and the key has nothing to push.
     SessionsOff,
-    /// The engine is not installed: a team store is kept by the tick, which is not there.
+    /// The engine is not configured: a team store is kept by the tick, which does not run without `config.json`.
     EngineMissing,
     /// The cabinet named no host key, so the host could not be checked on the first connection.
     NoHostKeys,
@@ -160,7 +160,8 @@ impl std::fmt::Display for KeyRefusal {
                 "the team's sessions are off: turn them on on the team's page, then connect again with a new code or grant",
             ),
             Self::EngineMissing => formatter.write_str(
-                "sessions travel with the engine, which is not installed here: run `vibememory install`, then connect again with a new code or grant",
+                "sessions travel with the engine, which is not configured here (no config.json): connect again \
+                 with --machine-id <name> and a new code or grant",
             ),
             Self::NoHostKeys => formatter.write_str(
                 "the cabinet named no key of its host, so the host could not be checked: try again in a few minutes with a new code",
@@ -462,6 +463,8 @@ pub struct TeamFacts {
     pub pause: Option<crate::guard::StorePause>,
     /// Failing runs in a row of this store's tick.
     pub failures: u32,
+    /// Why the last of them failed, in one line.
+    pub last_failure: Option<String>,
 }
 
 /// The facts of every connected team.
@@ -503,6 +506,7 @@ pub fn team_facts(layout: &Layout) -> Vec<TeamFacts> {
                 problems,
                 pause: state.pause,
                 failures: state.consecutive_failures,
+                last_failure: state.last_failure,
             }
         })
         .collect()

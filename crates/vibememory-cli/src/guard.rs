@@ -59,6 +59,27 @@ pub struct TickState {
     /// member removed, a path the team's store may not hold. Pushes wait; everything else goes on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pause: Option<StorePause>,
+    /// Why the last run that tried failed, in one line; `None` once a run works.
+    /// `doctor` says it under the count of failing runs: a count alone does not say what to do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_failure: Option<String>,
+}
+
+/// One line of a failure for a person: the first line that says something.
+/// git puts the cause first (`Permission denied (publickey)`, `Could not resolve hostname`) and its
+/// Generic advice after it.
+#[must_use]
+pub fn failure_line(problem: &str) -> String {
+    let mut lines = problem
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let first = lines.next().unwrap_or_default();
+    // "fetch …: " leads into git's own words, which start on the same line
+    match lines.next() {
+        Some(cause) if first.ends_with(':') => format!("{first} {cause}"),
+        _ => first.to_owned(),
+    }
 }
 
 /// A pause of a store's pushes, on the host's word.
@@ -152,6 +173,7 @@ impl TickState {
                     deletions_held: self.deletions_held,
                     ignored: self.ignored.clone(),
                     pause: self.pause.clone(),
+                    last_failure: self.last_failure.clone(),
                 },
                 false,
             );
@@ -164,6 +186,7 @@ impl TickState {
                 deletions_held: self.deletions_held,
                 ignored: self.ignored.clone(),
                 pause: self.pause.clone(),
+                last_failure: None,
             },
             recovered,
         )

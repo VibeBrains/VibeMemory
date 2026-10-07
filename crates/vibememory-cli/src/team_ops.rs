@@ -77,6 +77,7 @@ pub fn reclone_from(
         pause: None,
         consecutive_failures: 0,
         runs_to_skip: 0,
+        last_failure: None,
         ..state
     }
     .write(&state_dir)?;

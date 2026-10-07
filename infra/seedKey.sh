@@ -13,12 +13,14 @@ readonly DEFAULT_USER=vm
 readonly DEFAULT_HOST=vibememory.ru
 readonly DEFAULT_PORT=22
 readonly DEFAULT_KEY="$HOME/.ssh/id_ed25519_vibememory"
-readonly SSH_ALIAS=vibememory
+readonly DEFAULT_ALIAS=vibememory
 
 sshUser="${VIBEMEMORY_SSH_USER:-$DEFAULT_USER}"
 sshHost="${VIBEMEMORY_SSH_HOST:-$DEFAULT_HOST}"
 sshPort="${VIBEMEMORY_SSH_PORT:-$DEFAULT_PORT}"
 keyPath="${VIBEMEMORY_SSH_KEY:-$DEFAULT_KEY}"
+# The other scripts take the same name with --alias: a second host, or a test one, gets a name of its own
+SSH_ALIAS="${VIBEMEMORY_SSH_ALIAS:-$DEFAULT_ALIAS}"
 
 say() { printf '%s\n' "$*"; }
 fail() {
@@ -31,6 +33,7 @@ usage() {
 Засеять SSH-ключ на хост VibeMemory. Запускается НА ДОМАШНЕЙ МАШИНЕ.
 
   ./infra/seedKey.sh [--user vm] [--host vibememory.ru] [--port 22] [--key ~/.ssh/id_ed25519_vibememory]
+                    [--alias vibememory]
 
 Что делает:
   1. создаёт ключ ed25519, если его ещё нет (парольную фразу спросит ssh-keygen);
@@ -39,7 +42,7 @@ usage() {
   4. проверяет вход по ключу без пароля.
 
 Переменные окружения: VIBEMEMORY_SSH_USER, VIBEMEMORY_SSH_HOST, VIBEMEMORY_SSH_PORT,
-VIBEMEMORY_SSH_KEY.
+VIBEMEMORY_SSH_KEY, VIBEMEMORY_SSH_ALIAS.
 TEXT
 }
 
@@ -49,6 +52,7 @@ while [ "$#" -gt 0 ]; do
     --host) sshHost="${2:-}"; shift 2 ;;
     --port) sshPort="${2:-}"; shift 2 ;;
     --key)  keyPath="${2:-}"; shift 2 ;;
+    --alias) SSH_ALIAS="${2:-}"; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) fail "Неизвестный аргумент: $1 (--help покажет список)" ;;
   esac
@@ -58,6 +62,7 @@ done
 [ -n "$sshHost" ] || fail "Пустой адрес сервера"
 [ -n "$sshPort" ] || fail "Пустой порт"
 [ -n "$keyPath" ] || fail "Пустой путь к ключу"
+case "$SSH_ALIAS" in "" | *[!A-Za-z0-9._-]*) fail "Алиас — латинские буквы, цифры, точка, дефис и подчёркивание: «$SSH_ALIAS»" ;; esac
 
 for tool in ssh ssh-keygen ssh-copy-id; do
   command -v "$tool" >/dev/null 2>&1 ||

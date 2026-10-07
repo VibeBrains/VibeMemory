@@ -80,12 +80,12 @@ say ""
 # ordinary ones and nothing needs escaping twice.
 ssh -o BatchMode=yes "$sshAlias" 'bash -s' <<'REMOTE'
 set -euo pipefail
-# git is not on a fresh Debian by default; the server side says so plainly rather than failing
-# three commands later.
-command -v git >/dev/null 2>&1 || {
-  echo "На сервере нет git. Установите: sudo apt-get install -y git" >&2
-  exit 1
-}
+# git is not on a fresh Debian or Ubuntu image, and every later step needs it
+if ! command -v git >/dev/null 2>&1; then
+  sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git >/dev/null
+  echo "1/6 git установлен: $(git --version)"
+fi
 
 # Three accounts, each able to do exactly its job:
 #   vm    — the owner: sudo, keys, the personal store;
@@ -194,25 +194,48 @@ git config --system --get-all safe.directory 2>/dev/null | grep -Fxq "$repo" ||
 echo "4/6 Права стора: группа vibememory, запись группе только в objects/ и refs/; путь к нему — 710; safe.directory для $repo"
 
 # Nightly repacking, incremental: storeRepack.sh, installed in step 2, says why it is not `git gc`
-# and refuses to start without room. An earlier bootstrap wrote its own copy under ~/vibememory/bin;
-# that copy is left where it is, and the crontab line below moves to the shared one.
-#
-# `set -e` kills the script on the first non-zero status, and both `crontab -l` (no crontab yet)
-# and `grep -q` (no match) return one legitimately. Hence `|| true` and an explicit `if`.
-if command -v crontab >/dev/null 2>&1; then
-  line="17 4 * * * $repack $repo"
-  current="$(crontab -l 2>/dev/null || true)"
-  if printf '%s\n' "$current" | grep -Fxq "$line"; then
-    echo "5/6 Ночная упаковка уже в cron"
-  else
-    # Earlier lines are replaced, not left beside the new one: the weekly and nightly `gc` of
-    # previous bootstraps, and a repack line pointing elsewhere.
-    printf '%s\n%s\n' "$(printf '%s\n' "$current" | grep -Fv "$repoPath gc" | grep -Fv "storeRepack.sh" || true)" "$line" | grep -v '^$' | crontab -
-    echo "5/6 Ночная упаковка поставлена в cron (04:17, частичная, журнал: journalctl -t vibememory-repack)"
+# and refuses to start without room
+# A systemd timer, as for the team stores: cloud images of Debian 13 come without cron
+# Earlier bootstraps put it into the owner's crontab; those lines go once the timer is in place,
+# Or the store would be repacked twice a night
+unitDir=/etc/systemd/system
+service="[Unit]
+Description=VibeMemory: nightly repacking of the owner's store
+
+[Service]
+Type=oneshot
+User=$(id -un)
+ExecStart=$repack $repo"
+timer="[Unit]
+Description=VibeMemory: repack the owner's store every night
+
+[Timer]
+OnCalendar=*-*-* 04:17:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target"
+changed=0
+for unit in vibememory-repack.service vibememory-repack.timer; do
+  case "$unit" in *.service) text="$service" ;; *) text="$timer" ;; esac
+  if [ "$(sudo cat "$unitDir/$unit" 2>/dev/null || true)" != "$text" ]; then
+    printf '%s\n' "$text" | sudo tee "$unitDir/$unit" >/dev/null
+    changed=1
   fi
-else
-  echo "5/6 crontab не найден — упаковку придётся запускать вручную: $repack ~/$repoPath"
+done
+[ "$changed" = 0 ] || sudo systemctl daemon-reload
+sudo systemctl enable --now --quiet vibememory-repack.timer
+# `set -e` kills the script on the first non-zero status, and both `crontab -l` (no crontab yet)
+# And `grep -v` (nothing left) return one legitimately: hence `|| true`
+if command -v crontab >/dev/null 2>&1; then
+  current="$(crontab -l 2>/dev/null || true)"
+  kept="$(printf '%s\n' "$current" | grep -Fv "$repoPath gc" | grep -Fv "storeRepack.sh" || true)"
+  if [ "$kept" != "$current" ]; then
+    if [ -n "$kept" ]; then printf '%s\n' "$kept" | crontab -; else crontab -r; fi
+    echo "5/6 Прежняя строка упаковки убрана из crontab: её место занял таймер"
+  fi
 fi
+echo "5/6 Ночная упаковка — таймер vibememory-repack.timer (04:17, частичная, журнал: journalctl -t vibememory-repack)"
 
 hook="$repo/hooks/post-receive"
 if [ -n "$mirror" ]; then

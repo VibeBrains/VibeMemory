@@ -1362,11 +1362,12 @@
   проходит `connect --key-request` → `admin key add` → `connect --grant`, клон, сессии до и после маршрута, отзыв ключа.
   Путь ключа подтвердился; найдено девять дефектов, проверки стенда держат их красными до исправления.
   [мануал](manuals/selfHostLab.md), [knowledge](knowledge/design/selfHostLab.md).
-- [ ] **Исправить находки стенда своего сервера** — по [knowledge/design/selfHostLab.md](knowledge/design/selfHostLab.md):
-  git и fail2ban ставят скрипты, упаковка личного стора — таймером systemd, первый снимок на чистом сервере, движок
-  машины участника без личного стора, отказ fetch в счётчике неудач, граница «до команды» — `route add`, а не первый
-  импорт, `SessionEnd` снимает живую сессию в настоящем каталоге, `seedKey.sh` с алиасом. Обходы WORKAROUND в
-  `selfHostLab.sh` уходят вместе с исправлениями; `check` — все PASS.
+- [x] **Находки стенда своего сервера исправлены** — ✅ (2026-10-07, next) `hostBootstrap.sh` ставит git, упаковка
+  личного стора — таймер systemd (строка crontab убирается), `hostMcp.sh` собирает первый снимок на чистом сервере,
+  fail2ban — шаг мануала, а не скрипта (решение в `hostMcp.sh`), `connect` с ключом команды настраивает движок машины
+  без `config.json`, отказ fetch — неудача прогона с причиной `last:` в `doctor`, сессии до команды откладывает
+  `route add`, `SessionEnd` снимает живую сессию вне клона, `seedKey.sh --alias`. Обходы из стенда убраны, `up` с нуля
+  чистый, `check` — 12 PASS. [knowledge](knowledge/design/selfHostLab.md).
 - [x] **Выпуск 0.8.0: общие правила для всех агентов** — ✅ (2026-10-07, main) `CLAUDE.md` доезжает до
   `~/.dsh/AGENTS.md`, бюджет инструкций DSH в `mcp-config dsh`; подключение агентов больше не молчит (`waiting`,
   `decline`, `list`), `handoff_list` и аннотации инструментов у сервера памяти.
