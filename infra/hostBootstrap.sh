@@ -257,10 +257,15 @@ hardening=10-vibememory-hardening.conf
 service=20-vibememory-vmgit.conf
 # The file name must sort before 50-cloud-init.conf: for sshd the first value seen wins, and cloud
 # images ship that file with PasswordAuthentication yes.
+# KexAlgorithms: the provider's image pins a list without post-quantum exchanges in sshd_config itself
+# The drop-ins are included above that line, so this list wins
+# No NIST curves in it: Apple's ssh offers ecdh-sha2-nistp256 first and would keep choosing it
+# A client without post-quantum support falls back to curve25519, which every OpenSSH since 6.5 has
 hardeningText='PermitRootLogin prohibit-password
 PasswordAuthentication no
 KbdInteractiveAuthentication no
-MaxAuthTries 3'
+MaxAuthTries 3
+KexAlgorithms mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org'
 # Ends with `Match all`: drop-ins are included at the top of sshd_config, and without it every
 # directive after the Include would apply to vmgit alone.
 serviceText='# Written by infra/hostBootstrap.sh. The memory server account: keys only, from the one file the
@@ -354,6 +359,7 @@ for user in vm vmgit; do
   printf '    %-6s %s\n' "$user" "$(sudo sshd -T -C "user=$user,host=x,addr=192.0.2.1" |
     awk '$1 ~ /^(passwordauthentication|permittty|allowtcpforwarding|permitrootlogin)$/ {printf "%s=%s ", $1, $2}')"
 done
+printf '    %-6s %s\n' kex "$(sudo sshd -T | awk '$1 == "kexalgorithms" {print $2}')"
 REMOTE
 fi
 

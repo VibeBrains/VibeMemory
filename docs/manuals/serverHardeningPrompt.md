@@ -240,7 +240,27 @@ sudo ss -tulnp                 # каждый порт не на 127.0.0.1 — �
 ```
 PermitRootLogin prohibit-password
 MaxAuthTries 3
+KexAlgorithms mlkem768x25519-sha256,sntrup761x25519-sha512,sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org
 ```
+
+**`KexAlgorithms` — проверь, о чём договариваются клиент и сервер, до правки:**
+
+```bash
+sudo sshd -T | grep '^kexalgorithms'                     # что сервер принимает на деле
+grep -n '^KexAlgorithms' /etc/ssh/sshd_config            # не прибит ли список в главном конфиге образом провайдера
+ssh -v -o ControlPath=none <host> true 2>&1 | grep 'kex: algorithm'   # о чём договорились сейчас
+```
+
+Образ провайдера может прибить в главном конфиге старый список, без постквантовых алгоритмов, хотя сам
+OpenSSH 9.9+ их умеет.
+Drop-in подключается выше этой строки, поэтому его список побеждает.
+NIST-кривые (`ecdh-sha2-nistp*`) в список не входят: Apple-сборка ssh на macOS предлагает
+`ecdh-sha2-nistp256` первой, и пока сервер его принимает, Mac выбирает его.
+Клиент без постквантовой поддержки откатывается на curve25519 — она есть в любом OpenSSH с 6.5, в PuTTY и в
+ssh для Windows.
+До правки — журнал отказов за пару недель: `journalctl -u ssh | grep 'no matching key exchange'`.
+Если там только `diffie-hellman-group1-sha1` и `group14`, это сканеры, а не свои клиенты.
+После правки — тот же `ssh -v`: `kex: algorithm: mlkem768x25519-sha256`.
 
 **Проверь до правки, есть ли у root рабочие ключи** — содержимым файла, а не его размером:
 `sudo test -s` здесь врёт. Облачные образы Ubuntu и Debian (cloud-init, `disable_root: true` —

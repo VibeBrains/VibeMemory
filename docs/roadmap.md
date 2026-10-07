@@ -452,6 +452,12 @@
   через 120 с и маркером из нового соединения, `reload` вместо `restart`. Измерен фон перебора:
   615 неудач пароля и 290 уникальных адресов в час, принятых паролей ноль. Разбор и порядок —
   [knowledge/design/sshHardening.md](knowledge/design/sshHardening.md).
+- [x] **Постквантовый обмен ключами ssh на хосте** — ✅ (2026-10-07, next) Mac и хост договаривались на
+  `ecdh-sha2-nistp256`: образ провайдера прибил `KexAlgorithms` без `mlkem` в главном `sshd_config`, а Apple-ssh
+  предлагает nistp256 первым. В drop-in `10-vibememory-hardening.conf` (`hostBootstrap.sh`) — `mlkem768x25519`,
+  `sntrup761x25519` и curve25519, без NIST-кривых и DH-GEX; применено со страховкой, подтверждено новым входом.
+  Теперь `mlkem768x25519-sha256`, curve25519 для старых клиентов входит, nistp256 отвергается. Тот же шаг — в
+  `manuals/serverHardeningPrompt.md`. [knowledge](knowledge/design/sshHardening.md).
 - [x] **`fail2ban` на хосте** — ✅ (2026-09-09, next) `backend = systemd` (на Debian 12 нет
   `auth.log`), `mode = normal`, 5 неудач за 10 минут → час бана с ростом для повторных; свой адрес
   в `ignoreip` намеренно не вписан. Через минуту после установки джейл показывал два бана и **не
