@@ -55,8 +55,9 @@ VibeMemory это чинит:
 Здесь — главное. Полный каталог — [docs/functional.md](docs/functional.md).
 
 - **Синхронизация сессий Claude Code** между macOS, Windows и Linux: хуки, фоновый тик раз в две минуты, детерминированное слияние транскриптов, список сессий в Claude Desktop совпадает на всех машинах.
-- **Сервер памяти по MCP** — `memory_search`, `memory_get`, `memory_save`, `memory_update` и `history_search` для любого MCP-агента; `vibememory mcp-config <агент>` печатает готовое подключение.
-- **Сессии любого агента в общей истории** — `vibememory session put` принимает сессию в простом формате JSONL; агента без своих хуков регистрирует `session agent add`, и его логи отдаёт тик.
+- **Сервер памяти по MCP** — `memory_search`, `memory_get`, `memory_save`, `memory_update`, `history_search` и `handoff_list` для любого MCP-агента; `vibememory mcp-config <агент>` печатает готовое подключение.
+- **Сессии любого агента в общей истории** — `vibememory session put` принимает сессию в простом формате JSONL; агента без своих хуков регистрирует `session agent add`, и его логи отдаёт тик. Пока регистрации нет, об этом говорят `doctor`, `install`, `update` и сама сессия Claude, а `session agent decline` — второй ответ: «оставить на этой машине». `session agent list` показывает, у кого сессии доезжают.
+- **Общие правила для всех агентов** — `CLAUDE.md` доезжает и до файла инструкций каждого агента на машине (у DeepSeek Harness — `~/.dsh/AGENTS.md`); правка в любом из них доходит до остальных.
 - **DeepSeek Harness одной командой** — `vibememory session agent add --agent dsh-desktop --preset dsh --backfill`.
 - **Команды** — общий стор команды на сервере, права участников и агентов, сессии по переключателю.
 - **Память без потерь** — записи памяти не перезаписываются «кто новее», конфликт сохраняет обе версии.
@@ -120,9 +121,11 @@ cargo build --release
 
 Если VibeMemory оказался полезным — буду рад благодарности 🙏
 
-<a href="media/QR-Code.jpg" target="_blank" rel="noopener noreferrer">
-  <img src="media/QR-Code.jpg" width="120" alt="QR-код для поддержки проекта" />
-</a>
+Поддержать можно на [Boosty](https://boosty.to/borodatych/donate) — подписка или разовый донат, — либо переводом по СБП.
+
+| Boosty | Перевод |
+|:---:|:---:|
+| <a href="https://boosty.to/borodatych/donate" target="_blank" rel="noopener noreferrer"><img src="media/QR-Boosty.png" width="120" alt="QR-код Boosty — поддержать проект" /></a> | <a href="media/QR-Code.jpg" target="_blank" rel="noopener noreferrer"><img src="media/QR-Code.jpg" width="120" alt="QR-код для поддержки проекта" /></a> |
 
 ---
 

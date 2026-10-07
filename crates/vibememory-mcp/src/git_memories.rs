@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use vibememory_core::memory::journal::{self, Event, Memory, fold};
 
 use crate::memories::{
-    DirectoryProject, Memories, TranscriptRef, next_write, transcript_of, version_name,
+    DirectoryProject, Handoffs, Memories, TranscriptRef, next_write, transcript_of, version_name,
 };
 
 /// The branch the store keeps its history on.
@@ -581,6 +581,12 @@ impl Memories for GitMemories {
 
     fn new_version(&self, id: &str) -> String {
         version_name(&self.writer, &self.now(), next_write(), id)
+    }
+
+    fn handoffs(&self, _project: &str) -> Result<Handoffs, String> {
+        // A hand-off is a file in a working copy, and the host keeps a bare repository and nothing
+        // else. Answering "none" would be a lie: there is nothing here to read them from.
+        Ok(Handoffs::NotVisible)
     }
 
     fn now(&self) -> String {

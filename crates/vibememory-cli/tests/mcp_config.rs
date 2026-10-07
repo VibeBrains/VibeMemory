@@ -7,7 +7,7 @@
     clippy::indexing_slicing
 )]
 
-use vibememory_cli::mcp_config::{CLIENTS, Client, Machine, instructions};
+use vibememory_cli::mcp_config::{CLIENTS, Client, DSH_INSTRUCTIONS_BUDGET, Machine, instructions};
 use vibememory_core::naming::slug::is_slug;
 
 fn mac() -> Machine {
@@ -104,6 +104,12 @@ fn each_client_gets_its_own_format_and_agent() {
     assert!(
         dsh.contains(r#"cwd: "/u/me""#),
         "no project in the home directory: a write names its own"
+    );
+    assert!(
+        dsh.contains(&format!(
+            "- id: agent-instructions\n  name: \"@deepseek-ai/dsh-agent-instructions\"\n  config:\n    maxBytes: {DSH_INSTRUCTIONS_BUDGET}\n"
+        )),
+        "the shared instructions fit beside a project's own: {dsh}"
     );
     let chatgpt = instructions(Client::ChatGpt, &machine);
     assert!(chatgpt.contains("in the browser cannot"));

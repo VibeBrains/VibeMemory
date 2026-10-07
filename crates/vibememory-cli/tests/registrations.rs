@@ -25,6 +25,7 @@ fn layout(temp: &TempDir) -> Layout {
     Layout {
         config_dir: temp.dir("claude"),
         engine_dir: temp.dir("engine"),
+        home: None,
     }
 }
 

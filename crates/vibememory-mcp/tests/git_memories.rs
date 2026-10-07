@@ -466,3 +466,49 @@ fn another_agents_session_is_found_beside_claude_codes_and_a_sidecar_is_not_a_se
         );
     }
 }
+
+#[test]
+fn the_host_has_no_working_copy_to_read_hand_offs_from() {
+    let temp = Temp::new("handoffs");
+    let (bare, work) = host_and_machine(&temp);
+    // The hand-off is in the store and in the machine's working copy; the host has the repository
+    // and no file to read it from.
+    let sessions = work.join("projects/Project/memory/sessions");
+    fs::create_dir_all(&sessions).expect("sessions");
+    fs::write(
+        sessions.join("engine.md"),
+        "---\nstatus: open\n---\n\nwork\n",
+    )
+    .expect("hand-off");
+    git(&work, &["add", "-A"], None);
+    git(&work, &["commit", "--quiet", "-m", "hand-off"], None);
+    git(&work, &["push", "--quiet", "origin", "main"], None);
+    let host = GitMemories::new(bare, "host-test".to_owned());
+
+    // An answer, not a refusal — and not an empty list either, which would read as "nothing is in
+    // progress" while the note is plainly there.
+    let answer = tools::call(
+        "handoff_list",
+        &json!({ "project": "Project" }),
+        &CALLER,
+        &host,
+    )
+    .expect("an answer");
+    assert!(answer["handoffs"].is_null(), "{answer}");
+    assert!(
+        answer["why"].as_str().is_some_and(|why| !why.is_empty()),
+        "{answer}"
+    );
+
+    // The shape is the neighbour's: `project_resolve` answers `null` and a sentence on the host
+    // for the same reason — there is nothing here to see the client's side with.
+    let resolved = tools::call(
+        "project_resolve",
+        &json!({ "directory": "/home/alice/Project" }),
+        &CALLER,
+        &host,
+    )
+    .expect("an answer");
+    assert!(resolved["project"].is_null(), "{resolved}");
+    assert!(resolved["why"].is_string(), "{resolved}");
+}

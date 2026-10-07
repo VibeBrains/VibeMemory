@@ -25,6 +25,7 @@ pub mod apply;
 pub mod disk;
 pub mod export;
 pub mod git_memories;
+pub mod handoffs;
 pub mod host;
 pub mod hostops;
 pub mod http;

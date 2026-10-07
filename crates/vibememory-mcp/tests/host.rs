@@ -440,6 +440,19 @@ fn a_memory_team_writes_only_to_the_projects_the_cabinet_listed() {
     assert!(!refused, "{resolved}");
     assert!(resolved["project"].is_null(), "{resolved}");
     assert_eq!(resolved["projects"], json!(["VibeIDE"]));
+
+    // And there is nothing to read hand-offs from: the host keeps the store as a bare repository,
+    // so the answer is `null` and a sentence — never an empty list, which would read as "nothing
+    // is in progress".
+    let (handoffs, refused, _) = call(
+        &stand,
+        ALICE,
+        "handoff_list",
+        &json!({ "project": "VibeIDE" }),
+    );
+    assert!(!refused, "{handoffs}");
+    assert!(handoffs["handoffs"].is_null(), "{handoffs}");
+    assert!(handoffs["why"].is_string(), "{handoffs}");
 }
 
 #[test]

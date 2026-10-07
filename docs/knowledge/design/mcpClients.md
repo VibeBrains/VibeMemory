@@ -33,6 +33,8 @@
 - Пути Codex, Gemini CLI и Cursor под Windows: документация пишет `~`; `%USERPROFILE%` выведен, а не прочитан.
 - Подхватывает ли работающая сессия Codex правку `config.toml`.
 - Путь профиля DSH под Windows.
+- Бюджет файлов инструкций DSH (65 536 байт по умолчанию) поднимает строка `agent-instructions` того же
+  `cordis.patch.yml` — её печатает `mcp-config dsh`, разбор — [sharedRules.md](sharedRules.md).
 
 ## Найдено у соседей
 

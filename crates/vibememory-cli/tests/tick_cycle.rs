@@ -89,6 +89,7 @@ fn tick(store: &Path, temp: &TempDir) -> Ticked {
         team: None,
         routes: &vibememory_core::naming::StoreRoutes::default(),
         recheck_at: "2026-09-05T11:00:00Z",
+        home: None,
     };
     run(&machine, STAMP, CUTOFF)
 }
@@ -527,6 +528,7 @@ fn a_fresh_heartbeat_is_left_alone() {
         team: None,
         routes: &vibememory_core::naming::StoreRoutes::default(),
         recheck_at: "2026-09-05T11:00:00Z",
+        home: None,
     };
     let ticked = run(&machine, STAMP, "2020-01-01T00:00:00Z");
     assert!(
@@ -687,6 +689,7 @@ fn a_real_directory_is_imported_by_the_tick_exactly_as_the_hook_promised() {
         team: None,
         routes: &vibememory_core::naming::StoreRoutes::default(),
         recheck_at: "2026-09-05T11:00:00Z",
+        home: None,
     };
     let ticked = run(&machine, STAMP, CUTOFF);
 
@@ -734,6 +737,7 @@ fn links_made_by_switch_are_recorded_so_the_other_machine_learns_them() {
         team: None,
         routes: &vibememory_core::naming::StoreRoutes::default(),
         recheck_at: "2026-09-05T11:00:00Z",
+        home: None,
     };
     let ticked = run(&machine, STAMP, CUTOFF);
     assert_eq!(ticked.recorded_links, 1, "{ticked:?}");
@@ -792,6 +796,7 @@ fn a_link_is_recorded_only_with_the_working_directory_that_encodes_to_it() {
         team: None,
         routes: &vibememory_core::naming::StoreRoutes::default(),
         recheck_at: "2026-09-05T11:00:00Z",
+        home: None,
     };
     let ticked = run(&machine, STAMP, CUTOFF);
     assert_eq!(ticked.recorded_links, 2, "{ticked:?}");
@@ -912,6 +917,7 @@ fn a_tick_repairs_a_desktop_card_this_machine_can_prove() {
             team: None,
             routes: &vibememory_core::naming::StoreRoutes::default(),
             recheck_at: "2026-09-05T11:00:00Z",
+            home: None,
         },
         STAMP,
         CUTOFF,
@@ -1012,6 +1018,7 @@ fn a_card_of_an_old_session_is_repaired_through_the_link_that_session_proved() {
             team: None,
             routes: &vibememory_core::naming::StoreRoutes::default(),
             recheck_at: "2026-09-05T11:00:00Z",
+            home: None,
         },
         STAMP,
         CUTOFF,
@@ -1088,6 +1095,7 @@ fn tick_with_cap(store: &Path, temp: &TempDir, cap: usize, released: bool) -> Ti
             team: None,
             routes: &vibememory_core::naming::StoreRoutes::default(),
             recheck_at: "2026-09-05T11:00:00Z",
+            home: None,
         },
         STAMP,
         CUTOFF,
@@ -1232,6 +1240,7 @@ fn tick_ignoring(store: &Path, temp: &TempDir, config_dir: &Path, ignore: &str) 
             team: None,
             routes: &vibememory_core::naming::StoreRoutes::default(),
             recheck_at: "2026-09-05T11:00:00Z",
+            home: None,
         },
         STAMP,
         CUTOFF,

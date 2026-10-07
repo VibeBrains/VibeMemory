@@ -362,6 +362,7 @@ fn remote_for_directory(
     let layout = vibememory_cli::install::Layout {
         config_dir: std::path::PathBuf::new(),
         engine_dir: engine_dir.to_path_buf(),
+        home: None,
     };
     let syntax = vibememory_cli::hook::session_start::host_syntax();
     let canonical = vibememory_core::naming::canonical_cwd(&cwd.to_string_lossy(), syntax);

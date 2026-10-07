@@ -10,6 +10,8 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use vibememory_core::memory::journal::{self, Event, Memory, fold};
 
+use crate::handoffs::{self, Handoff};
+
 /// The journal of one project, and a way to add to it.
 ///
 /// One method per thing the server actually needs. Deliberately not "give me the store": a server
@@ -52,6 +54,13 @@ pub trait Memories {
     /// What went wrong reading the file.
     fn read_transcript(&self, project: &str, transcript: &TranscriptRef)
     -> Result<Vec<u8>, String>;
+
+    /// The open hand-offs of one project: the notes an agent left for whoever continues a flow.
+    ///
+    /// # Errors
+    ///
+    /// What went wrong reading them. A directory that is not there is no hand-offs, not an error.
+    fn handoffs(&self, project: &str) -> Result<Handoffs, String>;
 
     /// A uuid for a new event: unique on this machine, and the same shape the engine writes.
     fn new_version(&self, id: &str) -> String;
@@ -101,6 +110,18 @@ pub enum DirectoryProject {
     NotVisible,
 }
 
+/// What a store can say about the hand-offs of a project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Handoffs {
+    /// The open ones the working copy holds, by name.
+    Read(Vec<Handoff>),
+    /// This store keeps no working copy to read them from: the host reads a bare repository, and a
+    /// hand-off is a file in a clone. The tool says so instead of answering "none", as
+    /// `project_resolve` says why it cannot name the client's folder —
+    /// [`DirectoryProject::NotVisible`].
+    NotVisible,
+}
+
 /// A reference to memory is memory: a server shares one store between the requests it answers.
 impl<M: Memories + ?Sized> Memories for &M {
     fn projects(&self) -> Result<Vec<String>, String> {
@@ -125,6 +146,10 @@ impl<M: Memories + ?Sized> Memories for &M {
         transcript: &TranscriptRef,
     ) -> Result<Vec<u8>, String> {
         (**self).read_transcript(project, transcript)
+    }
+
+    fn handoffs(&self, project: &str) -> Result<Handoffs, String> {
+        (**self).handoffs(project)
     }
 
     fn new_version(&self, id: &str) -> String {
@@ -190,6 +215,13 @@ pub fn transcript_of(name: &str) -> Option<(Option<String>, String)> {
     }
 }
 
+/// The directory a project's memory lives in, under the project: the journal and the projection
+/// beside it. The engine's own layout, repeated here because the engine's name for it is private.
+const MEMORY_DIR: &str = "memory";
+
+/// The directory the hand-offs of a project live in, under its memory directory.
+const HANDOFFS_DIR: &str = "sessions";
+
 /// The real store under `<engine>/store/projects/<name>/memory.jsonl`.
 pub struct StoreMemories {
     store: PathBuf,
@@ -233,6 +265,15 @@ impl StoreMemories {
             .join("projects")
             .join(project)
             .join(vibememory_cli::memory::JOURNAL_FILE)
+    }
+
+    /// Where the hand-offs of a project lie: `memory/sessions/` beside the journal.
+    fn handoffs_of(&self, project: &str) -> PathBuf {
+        self.store
+            .join("projects")
+            .join(project)
+            .join(MEMORY_DIR)
+            .join(HANDOFFS_DIR)
     }
 }
 
@@ -326,6 +367,12 @@ impl Memories for StoreMemories {
             &transcript.session,
         ));
         std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))
+    }
+
+    fn handoffs(&self, project: &str) -> Result<Handoffs, String> {
+        Ok(Handoffs::Read(handoffs::open_in(
+            &self.handoffs_of(project),
+        )))
     }
 
     fn new_version(&self, id: &str) -> String {
@@ -429,6 +476,8 @@ pub struct FakeMemories {
     pub reads: AtomicU64,
     /// What [`Memories::project_of_directory`] answers, by directory.
     pub directories: Mutex<BTreeMap<String, DirectoryProject>>,
+    /// The hand-offs of each project; a project that was not seeded has none.
+    pub handoffs: Mutex<BTreeMap<String, Vec<Handoff>>>,
     /// What [`Memories::store_bytes`] answers: the size a test gives the store.
     pub store_bytes: AtomicU64,
 }
@@ -450,6 +499,7 @@ impl FakeMemories {
             history: Mutex::new(BTreeMap::new()),
             reads: AtomicU64::new(0),
             directories: Mutex::new(BTreeMap::new()),
+            handoffs: Mutex::new(BTreeMap::new()),
             store_bytes: AtomicU64::new(0),
         }
     }
@@ -476,6 +526,11 @@ impl FakeMemories {
     /// Seeds what [`Memories::project_of_directory`] answers for one directory.
     pub fn answer_directory(&self, directory: &str, answer: DirectoryProject) {
         held(&self.directories).insert(directory.to_owned(), answer);
+    }
+
+    /// Seeds the hand-offs of a project, as the working copy would hold them.
+    pub fn seed_handoffs(&self, project: &str, handoffs: Vec<Handoff>) {
+        held(&self.handoffs).insert(project.to_owned(), handoffs);
     }
 }
 
@@ -535,6 +590,15 @@ impl Memories for FakeMemories {
             .ok_or_else(|| format!("no transcript {}", transcript.session))
     }
 
+    fn handoffs(&self, project: &str) -> Result<Handoffs, String> {
+        Ok(Handoffs::Read(
+            held(&self.handoffs)
+                .get(project)
+                .cloned()
+                .unwrap_or_default(),
+        ))
+    }
+
     fn new_version(&self, id: &str) -> String {
         format!(
             "fake-{}-{}-{id}",
@@ -542,7 +606,6 @@ impl Memories for FakeMemories {
             self.written.fetch_add(1, Ordering::Relaxed)
         )
     }
-
     fn now(&self) -> String {
         self.stamp.clone()
     }
@@ -644,6 +707,7 @@ pub fn for_directory(
     let layout = vibememory_cli::install::Layout {
         config_dir: PathBuf::new(),
         engine_dir: engine_dir.to_path_buf(),
+        home: None,
     };
     let syntax = vibememory_cli::hook::session_start::host_syntax();
     let canonical = vibememory_core::naming::canonical_cwd(&cwd.to_string_lossy(), syntax);

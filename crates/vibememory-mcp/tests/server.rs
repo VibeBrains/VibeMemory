@@ -12,6 +12,7 @@
 )]
 
 use serde_json::{Value, json};
+use vibememory_mcp::handoffs::Handoff;
 use vibememory_mcp::memories::{DirectoryProject, FakeMemories, Memories};
 use vibememory_mcp::protocol::{self, PROTOCOL_VERSION};
 use vibememory_mcp::tools::{self, Caller};
@@ -80,8 +81,135 @@ fn the_handshake_and_the_catalogue_are_what_a_client_expects() {
             "memory_update",
             "memory_delete",
             "history_search",
-            "project_resolve"
+            "project_resolve",
+            "handoff_list"
         ]
+    );
+}
+
+#[test]
+fn the_tools_that_keep_the_memory_say_how_it_is_kept() {
+    let fake = memories();
+    let request =
+        protocol::parse(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#).expect("parse");
+    let answer = protocol::handle(&request, &CALLER, &fake).expect("answer");
+    let value = serde_json::to_value(answer).expect("encode");
+    let tools = value["result"]["tools"].as_array().expect("array");
+    let described = |name: &str| {
+        tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .and_then(|tool| tool["description"].as_str())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    // The discipline travels with the tools an agent reads: a decision becomes a record, and a
+    // flow left in the middle becomes a hand-off. Substrings, not whole texts: the wording of a
+    // description is not a contract, the rule inside it is.
+    for name in ["memory_save", "memory_search", "handoff_list"] {
+        let description = described(name);
+        assert!(
+            description.contains("belongs in a record"),
+            "{name} does not say when to write one: {description}"
+        );
+        assert!(
+            description.contains("leaves a hand-off for whoever continues it"),
+            "{name} does not say where a flow left in the middle goes: {description}"
+        );
+    }
+}
+
+#[test]
+fn every_tool_says_what_a_client_may_do_with_it() {
+    let fake = memories();
+    let request =
+        protocol::parse(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#).expect("parse");
+    let answer = protocol::handle(&request, &CALLER, &fake).expect("answer");
+    let value = serde_json::to_value(answer).expect("encode");
+    let tools = value["result"]["tools"].as_array().expect("array");
+    let field = |name: &str, field: &str| {
+        tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("no tool {name}"))[field]
+            .clone()
+    };
+    // A tool without a title or without annotations is a tool a client has to guess about, and a
+    // tool that appears without a row in the table is exactly the one nobody checked.
+    for tool in tools {
+        let name = tool["name"].as_str().expect("name");
+        assert!(
+            !tool["title"].as_str().unwrap_or_default().is_empty(),
+            "{name} has no title"
+        );
+        assert!(
+            tool["annotations"]["readOnlyHint"].is_boolean(),
+            "{name} says nothing about what it does"
+        );
+    }
+    for name in [
+        "memory_search",
+        "memory_get",
+        "history_search",
+        "project_resolve",
+        "handoff_list",
+    ] {
+        assert_eq!(
+            field(name, "annotations")["readOnlyHint"],
+            true,
+            "{name} only reads and must say so"
+        );
+    }
+    // What takes a record away asks a person twice; what adds or changes does not.
+    assert_eq!(
+        field("memory_delete", "annotations")["destructiveHint"],
+        true
+    );
+    for name in ["memory_save", "memory_update"] {
+        assert_eq!(
+            field(name, "annotations")["destructiveHint"],
+            false,
+            "{name}"
+        );
+        assert_eq!(field(name, "annotations")["readOnlyHint"], false, "{name}");
+    }
+}
+
+#[test]
+fn a_store_without_hand_offs_answers_an_empty_list() {
+    let fake = memories();
+    let here = Caller::owner(AGENT, Some("VibeMemory"));
+    let answer = tools::call("handoff_list", &json!({}), &here, &fake).expect("hand-offs");
+    assert_eq!(answer, json!({ "project": "VibeMemory", "handoffs": [] }));
+}
+
+#[test]
+fn handoffs_come_back_through_the_tool_whole() {
+    let fake = memories();
+    fake.seed_handoffs(
+        "VibeMemory",
+        vec![Handoff {
+            name: "engine".to_owned(),
+            description: Some("the engine".to_owned()),
+            status: Some("open".to_owned()),
+            updated: Some("2026-10-01".to_owned()),
+            size: 12,
+            body: "where it stopped".to_owned(),
+        }],
+    );
+    let here = Caller::owner(AGENT, Some("VibeMemory"));
+    let answer = tools::call("handoff_list", &json!({}), &here, &fake).expect("hand-offs");
+    assert_eq!(
+        answer["handoffs"],
+        json!([{
+            "project": "VibeMemory",
+            "name": "engine",
+            "description": "the engine",
+            "status": "open",
+            "updated": "2026-10-01",
+            "size": 12,
+            "body": "where it stopped",
+        }])
     );
 }
 

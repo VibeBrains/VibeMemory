@@ -11,11 +11,15 @@ readonly DEFAULT_ALIAS=vibememory
 readonly DEFAULT_DOMAIN=vibememory.ru
 readonly DEFAULT_APP_DOMAIN=app.vibememory.ru
 readonly DEFAULT_DEMO_DOMAIN=demo.vibememory.ru
+readonly DEFAULT_IDE_DOMAIN=vibeide.ru
+readonly DEFAULT_IDEA_DOMAIN=vibeidea.ru
 readonly DEFAULT_MCP_PORT=8787
 readonly DEFAULT_CABINET_PORT=3000
 readonly RELEASES=/srv/vibememory/releases
 readonly SITE=/srv/vibememory/site
 readonly DEMO=/srv/vibememory/demo
+readonly IDE_SITE=/srv/vibeide/site
+readonly IDEA_SITE=/srv/vibeidea/site
 # A lost SYN is retried instead of failing the run: the path to the host drops a connection now and
 # then, and every step here is safe to repeat.
 readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=4)
@@ -24,6 +28,8 @@ sshAlias="${VIBEMEMORY_SSH_ALIAS:-$DEFAULT_ALIAS}"
 domain="${VIBEMEMORY_DOMAIN:-$DEFAULT_DOMAIN}"
 appDomain="${VIBEMEMORY_APP_DOMAIN:-$DEFAULT_APP_DOMAIN}"
 demoDomain="${VIBEMEMORY_DEMO_DOMAIN:-$DEFAULT_DEMO_DOMAIN}"
+ideDomain="${VIBEIDE_DOMAIN:-$DEFAULT_IDE_DOMAIN}"
+ideaDomain="${VIBEIDEA_DOMAIN:-$DEFAULT_IDEA_DOMAIN}"
 mcpPort="${VIBEMEMORY_MCP_PORT:-$DEFAULT_MCP_PORT}"
 cabinetPort="${VIBEMEMORY_CABINET_PORT:-$DEFAULT_CABINET_PORT}"
 
@@ -35,17 +41,19 @@ while [ "$#" -gt 0 ]; do
     --domain) domain="${2:-}"; shift 2 ;;
     --app-domain) appDomain="${2:-}"; shift 2 ;;
     --demo-domain) demoDomain="${2:-}"; shift 2 ;;
+    --ide-domain) ideDomain="${2:-}"; shift 2 ;;
+    --idea-domain) ideaDomain="${2:-}"; shift 2 ;;
     --mcp-port) mcpPort="${2:-}"; shift 2 ;;
     --cabinet-port) cabinetPort="${2:-}"; shift 2 ;;
     -h | --help)
-      printf 'Поставить Caddyfile хоста из infra/Caddyfile.tmpl.\n\n  ./infra/caddyApply.sh [--alias vibememory] [--domain %s] [--app-domain %s] [--demo-domain %s]\n' \
-        "$DEFAULT_DOMAIN" "$DEFAULT_APP_DOMAIN" "$DEFAULT_DEMO_DOMAIN"
+      printf 'Поставить Caddyfile хоста из infra/Caddyfile.tmpl.\n\n  ./infra/caddyApply.sh [--alias vibememory] [--domain %s] [--app-domain %s] [--demo-domain %s] [--ide-domain %s] [--idea-domain %s]\n' \
+        "$DEFAULT_DOMAIN" "$DEFAULT_APP_DOMAIN" "$DEFAULT_DEMO_DOMAIN" "$DEFAULT_IDE_DOMAIN" "$DEFAULT_IDEA_DOMAIN"
       exit 0 ;;
     *) fail "неизвестный аргумент $1" ;;
   esac
 done
 
-for name in "$domain" "$appDomain" "$demoDomain"; do
+for name in "$domain" "$appDomain" "$demoDomain" "$ideDomain" "$ideaDomain"; do
   case "$name" in *[!a-zA-Z0-9.-]*|"") fail "домен $name выглядит не как домен" ;; esac
 done
 for port in "$mcpPort" "$cabinetPort"; do
@@ -55,6 +63,8 @@ done
 
 rendered=$(sed -e "s|{{DOMAIN}}|$domain|g" -e "s|{{APP_DOMAIN}}|$appDomain|g" \
   -e "s|{{DEMO_DOMAIN}}|$demoDomain|g" -e "s|{{DEMO}}|$DEMO|g" \
+  -e "s|{{IDE_DOMAIN}}|$ideDomain|g" -e "s|{{IDE_SITE}}|$IDE_SITE|g" \
+  -e "s|{{IDEA_DOMAIN}}|$ideaDomain|g" -e "s|{{IDEA_SITE}}|$IDEA_SITE|g" \
   -e "s|{{MCP_PORT}}|$mcpPort|g" -e "s|{{CABINET_PORT}}|$cabinetPort|g" \
   -e "s|{{RELEASES}}|$RELEASES|g" -e "s|{{SITE}}|$SITE|g" "$TEMPLATE")
 case "$rendered" in *'{{'*) fail "в шаблоне осталась неподставленная переменная" ;; esac
@@ -69,6 +79,8 @@ command -v caddy >/dev/null || sudo DEBIAN_FRONTEND=noninteractive apt-get insta
 sudo test -d /srv/vibememory/releases || sudo install -d -o root -g root -m 755 /srv/vibememory/releases
 sudo test -d /srv/vibememory/site || sudo install -d -o root -g root -m 755 /srv/vibememory/site
 sudo test -d /srv/vibememory/demo || sudo install -d -o root -g root -m 755 /srv/vibememory/demo
+sudo test -d /srv/vibeide/site || sudo install -d -o root -g root -m 755 /srv/vibeide /srv/vibeide/site
+sudo test -d /srv/vibeidea/site || sudo install -d -o root -g root -m 755 /srv/vibeidea /srv/vibeidea/site
 caddyfile=/etc/caddy/Caddyfile
 if sudo cmp -s "$candidate" "$caddyfile"; then
   echo "Caddy: без изменений ($(systemctl is-active caddy))"

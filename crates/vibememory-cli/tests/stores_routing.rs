@@ -43,6 +43,7 @@ fn a_session_goes_to_the_store_its_directory_is_routed_to() {
     let layout = Layout {
         config_dir: temp.dir("claude"),
         engine_dir: temp.dir("engine"),
+        home: None,
     };
     let base = fs::canonicalize(temp.path()).unwrap().display().to_string();
     let config = Config::parse(
