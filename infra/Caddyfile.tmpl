@@ -6,8 +6,8 @@
 # {{APP_DOMAIN}} is for people: the cabinet, and the releases under /dl/ beside its download page.
 # {{DEMO_DOMAIN}} is static pages shown to people outside the product — a pitch, a demo — put by
 # infra/demoDeploy.sh under {{DEMO}}/current.
-# {{IDE_DOMAIN}} is the VibeIDE landing: a static build from the VibeIDE.ru repository, put by its deploy.sh
-# under {{IDE_SITE}}/current. The family's sites live on one host, so this file is theirs too.
+# {{IDE_DOMAIN}} and {{IDEA_DOMAIN}} are the VibeIDE and VibeIDEA landings: static builds from the VibeIDE.ru and
+# VibeIDEA.ru repositories. The family's sites live on one host, so this file is theirs too.
 {{DOMAIN}} {
 	handle /mcp {
 		reverse_proxy 127.0.0.1:{{MCP_PORT}}
@@ -45,17 +45,30 @@
 	file_server
 }
 
-{{IDE_DOMAIN}} {
-	root * {{IDE_SITE}}/current
+# The IDE landings share one shape: static Astro builds put by their own deploy.sh under <site>/current.
+# Pages carry the download links of the latest builds: a cached page would send people to an old build.
+# Bundled assets are named by their content, so they never change under the same name.
+(familySite) {
+	root * {args.0}/current
 	encode gzip
-	# Pages carry the download links of the latest builds: a cached page would send people to an old build.
-	# Bundled assets are named by their content, so they never change under the same name.
 	@pages not path /_astro/*
 	header @pages Cache-Control "no-cache"
 	header /_astro/* Cache-Control "public, max-age=31536000, immutable"
 	file_server
 }
 
+{{IDE_DOMAIN}} {
+	import familySite {{IDE_SITE}}
+}
+
 www.{{IDE_DOMAIN}} {
 	redir https://{{IDE_DOMAIN}}{uri} permanent
+}
+
+{{IDEA_DOMAIN}} {
+	import familySite {{IDEA_SITE}}
+}
+
+www.{{IDEA_DOMAIN}} {
+	redir https://{{IDEA_DOMAIN}}{uri} permanent
 }

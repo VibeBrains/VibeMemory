@@ -1352,6 +1352,9 @@
   проверяется `access check` до записи. Клиент: `connect --key-request` и `connect --grant` — грант того же вида, что
   ответ кабинета. README, LICENSE, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, QR. [мануал](manuals/selfHosting.md),
   [knowledge](knowledge/design/openSource.md).
+- [x] **vibeidea.ru на общем хосте** — ✅ (2026-10-07, next) лендинг VibeIDEA рядом с vibeide.ru: оба сайта IDE — один
+  сниппет `familySite` в `infra/Caddyfile.tmpl`, домен и каталог `/srv/vibeidea/site` — в `caddyApply.sh`.
+  [мануал](manuals/cabinetSetup.md).
 - [x] **vibeide.ru на общем хосте** — ✅ (2026-10-07, next) лендинг VibeIDE переехал со своего сервера: блок
   в `infra/Caddyfile.tmpl` с `no-cache` для страниц и вечным кэшем для ассетов, `www` — перенаправлением, каталог
   `/srv/vibeide/site` создаёт `caddyApply.sh`. [мануал](manuals/cabinetSetup.md).
