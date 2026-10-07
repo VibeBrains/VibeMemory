@@ -223,7 +223,7 @@ fn an_agents_file_reads_back_into_the_rules_it_was_written_from() {
                     assert_eq!(body, text(&want["body"]), "{id}: {rule}");
                 }
                 (Piece::Outside(outside), "outside") => {
-                    assert_eq!(outside, text(&want["text"]), "{id}")
+                    assert_eq!(outside, text(&want["text"]), "{id}");
                 }
                 (other, kind) => panic!("{id}: expected a {kind} piece, read {other:?}"),
             }
