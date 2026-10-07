@@ -16,9 +16,25 @@ const RULE_OPEN: &str = "<!-- vibememory:rule ";
 const RULE_CLOSE: &str = "<!-- /vibememory:rule -->";
 const MARKER_END: &str = " -->";
 
+/// How the first line of every file the engine writes begins: what tells its files from a person's, whatever the
+/// rest of the line says in this version or a later one.
+pub const HEADER_MARK: &str = "<!-- Written by VibeMemory";
+
+/// Whether a line is the engine's first line, of this version's wording or another's.
+#[must_use]
+pub fn is_header(line: &str) -> bool {
+    line.starts_with(HEADER_MARK)
+}
+
+/// Whether a file is one the engine wrote: its header line is there.
+#[must_use]
+pub fn written_by_engine(text: &str) -> bool {
+    text.lines().any(is_header)
+}
+
 /// The first line of every file the engine writes: what the file is and where an edit goes.
 pub const HEADER: &str = "<!-- Written by VibeMemory from your rules. Edit a rule between its markers or with \
-                          `vibememory rule edit`: the change reaches every agent. Text outside the markers stays \
+                          `vibememory rule add` (it replaces a rule of the same id): the change reaches every agent. Text outside the markers stays \
                           here only. -->";
 
 /// The line a rule carries when it replaces one of the same id below: the agent may hold both.
@@ -143,7 +159,7 @@ pub fn disassemble(text: &str) -> Result<Vec<Piece>, RulesError> {
     let mut outside = String::new();
     let mut lines = text.lines();
     while let Some(line) = lines.next() {
-        if line == HEADER {
+        if is_header(line) {
             continue;
         }
         if let Some(from) = marker(line, BASE_OPEN) {
