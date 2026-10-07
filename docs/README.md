@@ -27,6 +27,7 @@ docs/
 │   ├── namingFixtures.md   # как добавить кейс в fixtures/naming/, метки provenance, оракул, новая версия CLI
 │   ├── teamSetup.md        # участник memory-команды: программы, connect, регистрация агента, doctor, disconnect
 │   ├── selfHosting.md      # свой сервер без кабинета: установка и консоль vibememory-mcp admin — команды, участники, токены, ключи
+│   ├── selfHostLab.md      # стенд своего сервера на Mac: infra/selfHostLab.sh up, check, down — путь ключа машины с PASS/FAIL
 │   ├── serverHardeningPrompt.md # промпт агенту соседнего проекта: аудит и ужесточение доступа к серверу, каждый пункт — итог реальной проверки
 │   └── memoryRecordsSpec.md # формат памяти: журнал, документ-проекция, правила расхождений
 └── knowledge/              # база знаний: проверенные факты и грабли
