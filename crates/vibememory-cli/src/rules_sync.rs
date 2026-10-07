@@ -373,3 +373,58 @@ fn sections(text: &str) -> Vec<Section> {
     }
     found
 }
+
+/// The directory of the engine's notes of which project was told about its rule files, and on which day.
+pub const NOTICED_DIR: &str = "rules-noticed";
+
+/// What `SessionStart` tells a session about the project's own rule files, once a day: the blocks that repeat or
+/// lag behind the rules in force, and the command that shows them. Nothing in a project whose mode handles them, or
+/// whose files say nothing the rules do. `today` is the date the caller's clock gives, `YYYY-MM-DD`.
+#[must_use]
+pub fn notice(
+    engine_dir: &Path,
+    personal_store: &Path,
+    store: &Path,
+    team: bool,
+    project: &str,
+    cwd: &Path,
+    today: &str,
+) -> Option<String> {
+    if mode_of(&store.join("projects").join(project)) != Mode::Advise {
+        return None;
+    }
+    let marker = engine_dir
+        .join(NOTICED_DIR)
+        .join(vibememory_core::rules::rule::version_of("", project));
+    if std::fs::read_to_string(&marker).is_ok_and(|day| day.trim() == today) {
+        return None;
+    }
+    // the day is noted whatever is found: the history is read at most once a day for a project
+    if let Some(parent) = marker.parent()
+        && std::fs::create_dir_all(parent).is_ok()
+    {
+        let _ = std::fs::write(&marker, today);
+    }
+    if local_files(cwd).is_empty() {
+        return None;
+    }
+    let histories = histories(personal_store, store, team, project);
+    let (mut duplicates, mut stale, mut custom) = (0, 0, 0);
+    for judged in judge_project(cwd, &histories) {
+        for finding in judged.findings {
+            match finding.state {
+                State::Duplicate => duplicates += 1,
+                State::Stale { .. } => stale += 1,
+                State::Custom { .. } => custom += 1,
+                State::ProjectOnly => {}
+            }
+        }
+    }
+    (duplicates + stale + custom > 0).then(|| {
+        format!(
+            "VibeMemory: this project's own rule files repeat the rules in force — {duplicates} duplicate(s), {stale} \
+             old version(s), {custom} changed by hand. `vibememory rules sync` shows each and what to do; the agent \
+             gets the rules in force anyway."
+        )
+    })
+}

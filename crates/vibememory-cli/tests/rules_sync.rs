@@ -199,3 +199,28 @@ fn override_lays_the_rule_over_the_projects_version_and_keeps_that_aside() {
         "both custom versions are kept aside"
     );
 }
+
+#[test]
+fn a_session_hears_about_the_projects_rule_files_once_a_day() {
+    let temp = TempDir::new("rules-sync-notice");
+    let store = store(&temp);
+    let dir = project(&temp);
+    let engine = temp.dir("engine");
+    fs::create_dir_all(store.join("projects/app")).unwrap();
+    let say = |day: &str| {
+        vibememory_cli::rules_sync::notice(&engine, &store, &store, false, "app", &dir, day)
+    };
+    let first = say("2026-10-07").expect("the project's files repeat the rules");
+    assert!(
+        first.contains("1 duplicate(s), 1 old version(s), 2 changed by hand"),
+        "{first}"
+    );
+    assert_eq!(say("2026-10-07"), None, "once a day");
+    assert!(say("2026-10-08").is_some(), "and again the next day");
+    fs::write(store.join("projects/app/rules.mode"), "merge\n").unwrap();
+    assert_eq!(
+        say("2026-10-09"),
+        None,
+        "a project in merge mode is handled by the tick, not told"
+    );
+}
