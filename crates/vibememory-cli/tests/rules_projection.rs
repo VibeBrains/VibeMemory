@@ -1,0 +1,392 @@
+//! Rules and skills written out for the agents of a machine, and the agents' edits taken back: against real
+//! directories laid out as an installed machine has them, under a home of the test's own.
+
+// The test writes files and runs git, so the purity gate is lifted here.
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::disallowed_methods,
+    clippy::disallowed_types
+)]
+
+mod support;
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use support::{TempDir, git};
+use vibememory_cli::rules::{
+    Agents, Projected, ProjectsRun, project_personal, project_projects, read_rules,
+};
+use vibememory_core::desktop::roots::Roots;
+use vibememory_core::naming::PathSyntax;
+use vibememory_core::rules::Rule;
+
+const STAMP: &str = "2026-10-07T20:00:00Z";
+
+struct Machine {
+    _temp: TempDir,
+    home: PathBuf,
+    config_dir: PathBuf,
+    engine: PathBuf,
+    store: PathBuf,
+}
+
+/// A machine with Claude Code and DSH; Codex only when asked.
+fn machine(label: &str, codex: bool) -> Machine {
+    let temp = TempDir::new(label);
+    let home = temp.dir("home");
+    fs::create_dir_all(home.join(".dsh")).unwrap();
+    if codex {
+        fs::create_dir_all(home.join(".codex")).unwrap();
+    }
+    let config_dir = temp.dir("home/.claude");
+    let engine = temp.dir("home/.vibememory");
+    let store = temp.dir("home/.vibememory/store");
+    fs::create_dir_all(store.join("config/rules")).unwrap();
+    fs::write(
+        store.join("config/CLAUDE.md"),
+        "# Правила владельца\n\nКоротко.\n",
+    )
+    .unwrap();
+    Machine {
+        home,
+        config_dir,
+        engine,
+        store,
+        _temp: temp,
+    }
+}
+
+fn rule(id: &str, title: &str, level: &str, body: &str) -> String {
+    format!("---\nid: {id}\ntitle: {title}\nlevel: {level}\n---\n{body}")
+}
+
+fn agents(m: &Machine) -> Agents {
+    Agents::of(&m.config_dir, Some(&m.home))
+}
+
+fn personal(m: &Machine) -> Projected {
+    project_personal(&m.store, &m.engine, &agents(m), STAMP)
+}
+
+fn quarantined(m: &Machine) -> Vec<String> {
+    fs::read_dir(m.engine.join("quarantine"))
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn the_persons_rules_reach_every_agent_in_the_form_it_reads() {
+    let m = machine("rules-personal", true);
+    fs::write(
+        m.store.join("config/rules/tone.md"),
+        rule("tone", "Тон", "personal", "Прямо.\n"),
+    )
+    .unwrap();
+    let done = personal(&m);
+    assert!(done.problems.is_empty(), "{:?}", done.problems);
+
+    let claude = fs::read_to_string(m.config_dir.join("rules/vm-tone.md")).unwrap();
+    assert!(
+        claude.contains("## Тон") && claude.contains("Прямо."),
+        "{claude}"
+    );
+    for agent in [
+        m.home.join(".dsh/AGENTS.md"),
+        m.home.join(".codex/AGENTS.md"),
+    ] {
+        let text = fs::read_to_string(&agent).unwrap();
+        assert!(
+            text.contains("Коротко."),
+            "the owner's CLAUDE.md comes first: {text}"
+        );
+        assert!(text.contains("## Тон"), "{text}");
+    }
+    // a second run has nothing to write
+    assert!(personal(&m).written.is_empty());
+}
+
+#[test]
+fn the_plain_copy_080_wrote_becomes_the_base_not_a_second_copy() {
+    let m = machine("rules-migration", false);
+    let dsh = m.home.join(".dsh/AGENTS.md");
+    fs::write(&dsh, "# Правила владельца\n\nКоротко.\n").unwrap();
+    personal(&m);
+    let text = fs::read_to_string(&dsh).unwrap();
+    assert_eq!(text.matches("Коротко.").count(), 1, "{text}");
+}
+
+#[test]
+fn an_edit_in_an_agents_file_is_an_edit_of_the_rule() {
+    let m = machine("rules-edit", false);
+    fs::write(
+        m.store.join("config/rules/tone.md"),
+        rule("tone", "Тон", "personal", "Прямо.\n"),
+    )
+    .unwrap();
+    personal(&m);
+    let dsh = m.home.join(".dsh/AGENTS.md");
+    let edited = fs::read_to_string(&dsh)
+        .unwrap()
+        .replace("Прямо.", "Прямо и строго.")
+        .replace("Коротко.", "Коротко и ясно.");
+    fs::write(&dsh, format!("{edited}\n## Моё\n\nТолько здесь.\n")).unwrap();
+
+    let done = personal(&m);
+    assert_eq!(
+        done.taken,
+        vec!["base".to_owned(), "tone".to_owned()],
+        "{done:?}"
+    );
+    let (rules, _) = read_rules(&m.store.join("config/rules"));
+    assert_eq!(rules["tone"].body, "Прямо и строго.\n");
+    assert!(
+        fs::read_to_string(m.store.join("config/CLAUDE.md"))
+            .unwrap()
+            .contains("Коротко и ясно.")
+    );
+    assert!(
+        fs::read_to_string(m.config_dir.join("rules/vm-tone.md"))
+            .unwrap()
+            .contains("Прямо и строго."),
+        "the edit reaches the other agents"
+    );
+    assert!(
+        fs::read_to_string(&dsh).unwrap().contains("Только здесь."),
+        "the person's own text outside the markers stays"
+    );
+}
+
+#[test]
+fn a_rule_changed_on_both_sides_keeps_the_store_and_sets_the_agents_version_aside() {
+    let m = machine("rules-conflict", false);
+    let stored = m.store.join("config/rules/tone.md");
+    fs::write(&stored, rule("tone", "Тон", "personal", "Прямо.\n")).unwrap();
+    personal(&m);
+    fs::write(&stored, rule("tone", "Тон", "personal", "Строго.\n")).unwrap();
+    let claude = m.config_dir.join("rules/vm-tone.md");
+    fs::write(
+        &claude,
+        fs::read_to_string(&claude)
+            .unwrap()
+            .replace("Прямо.", "Мягко."),
+    )
+    .unwrap();
+
+    let done = personal(&m);
+    assert_eq!(done.conflicts, vec!["tone".to_owned()], "{done:?}");
+    assert!(fs::read_to_string(&claude).unwrap().contains("Строго."));
+    assert!(
+        quarantined(&m)
+            .iter()
+            .any(|name| name.starts_with("rule-tone-")),
+        "{:?}",
+        quarantined(&m)
+    );
+}
+
+#[test]
+fn skills_are_linked_for_the_agents_and_one_an_agent_would_refuse_is_named() {
+    let m = machine("rules-skills", false);
+    let skills = m.store.join("config/skills");
+    for (name, manifest) in [
+        (
+            "watch",
+            "---\nname: watch\ndescription: Смотрит видео.\n---\n",
+        ),
+        ("Bad_Name", "---\nname: Bad_Name\ndescription: x\n---\n"),
+    ] {
+        fs::create_dir_all(skills.join(name)).unwrap();
+        fs::write(skills.join(name).join("SKILL.md"), manifest).unwrap();
+    }
+    fs::create_dir_all(skills.join("synced/abc")).unwrap();
+    // a skill the person keeps by hand under the same name as a stored one is left alone
+    fs::create_dir_all(skills.join("notes")).unwrap();
+    fs::write(
+        skills.join("notes/SKILL.md"),
+        "---\nname: notes\ndescription: n\n---\n",
+    )
+    .unwrap();
+    let shared = m.home.join(".agents/skills");
+    fs::create_dir_all(shared.join("notes")).unwrap();
+
+    let done = personal(&m);
+    assert!(fs::read_link(shared.join("watch")).is_ok(), "{done:?}");
+    assert!(!shared.join("Bad_Name").exists());
+    assert!(
+        !shared.join("synced").exists(),
+        "Claude's own synced skills are not other agents'"
+    );
+    assert!(
+        !fs::symlink_metadata(shared.join("notes"))
+            .unwrap()
+            .is_symlink()
+    );
+    assert!(
+        done.problems
+            .iter()
+            .any(|problem| problem.starts_with("skill Bad_Name")),
+        "{:?}",
+        done.problems
+    );
+
+    fs::remove_dir_all(skills.join("watch")).unwrap();
+    personal(&m);
+    assert!(
+        fs::symlink_metadata(shared.join("watch")).is_err(),
+        "a link to a removed skill goes"
+    );
+}
+
+fn project_store(m: &Machine, cwd: &Path) {
+    fs::create_dir_all(m.store.join("machines/mac-test")).unwrap();
+    let links = serde_json::json!({
+        "version": 1,
+        "links": [{
+            "enc": "-work-app", "name": "app", "cwd": cwd.display().to_string(),
+            "syntax": "posix", "source": "observed", "predicted": false
+        }]
+    });
+    fs::write(
+        m.store.join("machines/mac-test/links.json"),
+        links.to_string(),
+    )
+    .unwrap();
+}
+
+fn projects(m: &Machine, team: Option<&str>) -> Projected {
+    let roots = Roots::new(std::collections::BTreeMap::new(), PathSyntax::Posix);
+    let (personal, _) = read_rules(&m.store.join("config/rules"));
+    let personal: Vec<Rule> = personal.into_values().collect();
+    let agents = agents(m);
+    project_projects(&ProjectsRun {
+        store: &m.store,
+        engine_dir: &m.engine,
+        machine_id: "mac-test",
+        roots: &roots,
+        personal: &personal,
+        team,
+        agents: &agents,
+        stamp: STAMP,
+    })
+}
+
+#[test]
+fn a_projects_rules_go_into_its_directory_and_git_is_told_to_ignore_them() {
+    let m = machine("rules-project", false);
+    let cwd = fs::canonicalize(m.home.parent().unwrap())
+        .unwrap()
+        .join("work");
+    fs::create_dir_all(&cwd).unwrap();
+    git(&cwd, &["init", "--quiet"]);
+    project_store(&m, &cwd);
+    fs::write(
+        m.store.join("config/rules/tests.md"),
+        rule("tests", "Тесты", "personal", "cargo test.\n"),
+    )
+    .unwrap();
+    let rules = m.store.join("projects/app/rules");
+    fs::create_dir_all(&rules).unwrap();
+    fs::write(
+        rules.join("tests.md"),
+        rule("tests", "Тесты", "project", "bun test.\n"),
+    )
+    .unwrap();
+
+    let done = projects(&m, None);
+    assert!(done.problems.is_empty(), "{:?}", done.problems);
+    let claude = fs::read_to_string(cwd.join(".claude/rules/vm-tests.md")).unwrap();
+    assert!(
+        claude.contains("bun test.") && claude.contains("replaces the personal rule"),
+        "{claude}"
+    );
+    assert!(
+        fs::read_to_string(cwd.join("AGENTS.local.md"))
+            .unwrap()
+            .contains("bun test.")
+    );
+    let status = std::process::Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .current_dir(&cwd)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&status.stdout),
+        "",
+        "git sees none of it"
+    );
+
+    // the project's own edit is the project rule's
+    let file = cwd.join("AGENTS.local.md");
+    fs::write(
+        &file,
+        fs::read_to_string(&file)
+            .unwrap()
+            .replace("bun test.", "bun run test."),
+    )
+    .unwrap();
+    let done = projects(&m, None);
+    assert_eq!(done.taken, vec!["tests".to_owned()]);
+    assert!(
+        fs::read_to_string(rules.join("tests.md"))
+            .unwrap()
+            .contains("bun run test.")
+    );
+
+    // rules gone, the files go
+    fs::remove_file(rules.join("tests.md")).unwrap();
+    projects(&m, None);
+    assert!(!cwd.join(".claude/rules/vm-tests.md").exists());
+    assert!(!cwd.join("AGENTS.local.md").exists());
+}
+
+#[test]
+fn a_member_cannot_change_a_team_rule_from_a_project_file() {
+    let m = machine("rules-team", false);
+    let cwd = fs::canonicalize(m.home.parent().unwrap())
+        .unwrap()
+        .join("work");
+    fs::create_dir_all(&cwd).unwrap();
+    project_store(&m, &cwd);
+    fs::create_dir_all(m.store.join("rules")).unwrap();
+    let stored = m.store.join("rules/style.md");
+    fs::write(&stored, rule("style", "Стиль", "team", "Как у команды.\n")).unwrap();
+    projects(&m, Some("acme"));
+    let file = cwd.join(".claude/rules/vm-style.md");
+    fs::write(
+        &file,
+        fs::read_to_string(&file)
+            .unwrap()
+            .replace("Как у команды.", "Как хочу."),
+    )
+    .unwrap();
+
+    let done = projects(&m, Some("acme"));
+    assert!(done.taken.is_empty(), "{done:?}");
+    assert!(
+        fs::read_to_string(&stored)
+            .unwrap()
+            .contains("Как у команды.")
+    );
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("Как у команды."),
+        "written back as the team has it"
+    );
+    assert!(
+        done.problems
+            .iter()
+            .any(|problem| problem.contains("rule propose")),
+        "{:?}",
+        done.problems
+    );
+}

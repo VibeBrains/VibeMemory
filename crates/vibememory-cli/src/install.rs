@@ -94,7 +94,7 @@ pub struct Layout {
     /// `~/.vibememory` — the engine's own directory.
     pub engine_dir: PathBuf,
     /// The home directory other agents keep their own directories under (`~/.dsh`); `None` when
-    /// there is none, and then no agent is given the shared instructions.
+    /// there is none, and then no agent but Claude Code is given the person's rules and skills.
     pub home: Option<PathBuf>,
 }
 
@@ -255,12 +255,6 @@ pub enum Step {
         /// File name, e.g. `CLAUDE.md`.
         name: &'static str,
     },
-    /// The instructions of an agent living on this machine, kept the same as the shared
-    /// `CLAUDE.md`.
-    AgentInstructions {
-        /// The agent.
-        preset: crate::agents::Preset,
-    },
     /// `~/.claude/skills` → `<store>/config/skills`.
     SkillsLink,
     /// The scheduled tick: a `LaunchAgent` on macOS, a Task Scheduler task on Windows.
@@ -331,15 +325,6 @@ impl Step {
                 Some(team) => format!("directory {relative} in team {team}'s store"),
             },
             Self::ManagedCopy { name } => format!("managed copy of {name}"),
-            Self::AgentInstructions { preset } => format!(
-                "{} instructions {} from {}",
-                preset.title(),
-                preset
-                    .home(Path::new("~"))
-                    .join(preset.instructions_name())
-                    .display(),
-                crate::managed::RULES_FILE
-            ),
             Self::SkillsLink => "skills link".to_owned(),
             Self::Schedule => "scheduled tick".to_owned(),
             Self::Hooks => "hooks in settings.json".to_owned(),
@@ -775,9 +760,6 @@ fn perform(layout: &Layout, step: &Step) -> Result<(), String> {
         Step::ManagedCopy { name } => {
             reconcile_managed(layout, &store, &crate::managed::Copy::config(layout, name))
         }
-        // Planned only for an agent found here; gone since the plan, it has nothing to receive.
-        Step::AgentInstructions { preset } => crate::managed::Copy::instructions(layout, *preset)
-            .map_or(Ok(()), |copy| reconcile_managed(layout, &store, &copy)),
         // Nothing to apply: a flag that switches the cache off is the owner's to remove, and the
         // plan never reports this step as missing — only satisfied or in conflict. The same goes
         // for a held deletion: releasing it is a decision, not a repair. And Git for Windows is
@@ -1267,22 +1249,13 @@ pub fn plan_team(layout: &Layout, team: &str) -> Vec<Action> {
     actions
 }
 
-/// The managed copies of the personal store: the config directory's files, then the instructions
-/// of each agent that lives on this machine.
+/// The managed copies of the personal store: the config directory's files.
 fn push_managed_copies(layout: &Layout, store: &Path, actions: &mut Vec<Action>) {
     for name in MANAGED_FILES {
         actions.push(Action {
             step: Step::ManagedCopy { name },
             state: managed_copy_state(layout, store, &crate::managed::Copy::config(layout, name)),
         });
-    }
-    for preset in crate::agents::Preset::ALL {
-        if let Some(copy) = crate::managed::Copy::instructions(layout, *preset) {
-            actions.push(Action {
-                step: Step::AgentInstructions { preset: *preset },
-                state: managed_copy_state(layout, store, &copy),
-            });
-        }
     }
 }
 

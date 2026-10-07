@@ -13,21 +13,15 @@
 //! machine, so what the store holds is the shared part, and what comes back gets the hooks put on
 //! top again.
 //!
-//! `CLAUDE.md` also reaches every other agent living on this machine, as the file of instructions
-//! that agent reads in every project (`~/.dsh/AGENTS.md`): the rules belong to the person, not to
-//! one agent. Each such file is one more copy of the same store file, reconciled the same way, so
-//! an edit made in any of them reaches all the others and two edits made apart are a conflict.
+//! Every other agent gets the person's instructions from `crate::rules`, assembled from `CLAUDE.md` and the
+//! person's rules with markers that make an edit there an edit of one rule.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::agents::Preset;
 use crate::install::{Layout, MANAGED_FILES, for_the_store, nothing_to_share, write_hooks};
-
-/// The store file every agent's instructions are kept the same as.
-pub const RULES_FILE: &str = "CLAUDE.md";
 
 /// One managed copy: a file on this machine and the file of `<store>/config/` it is kept equal to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,32 +45,14 @@ impl Copy {
             shared: name,
         }
     }
-
-    /// The instructions of an agent, when the agent lives on this machine: its directory is
-    /// there. An agent that is not installed is not given a directory of its own by the engine.
-    #[must_use]
-    pub fn instructions(layout: &Layout, preset: Preset) -> Option<Self> {
-        let agent_home = preset.home(layout.home.as_deref()?);
-        agent_home.is_dir().then(|| Self {
-            key: format!("{}-{}", preset.name(), preset.instructions_name()),
-            local: agent_home.join(preset.instructions_name()),
-            shared: RULES_FILE,
-        })
-    }
 }
 
-/// Every managed copy of this machine: the config directory's files first, then the instructions
-/// of each agent that lives here.
+/// Every managed copy of this machine: the config directory's files.
 #[must_use]
 pub fn copies(layout: &Layout) -> Vec<Copy> {
     MANAGED_FILES
         .iter()
         .map(|name| Copy::config(layout, name))
-        .chain(
-            Preset::ALL
-                .iter()
-                .filter_map(|preset| Copy::instructions(layout, *preset)),
-        )
         .collect()
 }
 

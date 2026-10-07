@@ -3358,6 +3358,23 @@ fn report_tick(ticked: &vibememory_cli::tick::Ticked, max_deletions: usize) {
             println!("the team's sessions are switched off: this machine leaves its store");
         }
     }
+    let rules = &ticked.rules;
+    if !rules.written.is_empty() || !rules.taken.is_empty() {
+        println!(
+            "rules and skills: {} agent file(s) written, {} edit(s) taken from agents' files ({})",
+            rules.written.len(),
+            rules.taken.len(),
+            rules.taken.join(", ")
+        );
+    }
+    for id in &rules.conflicts {
+        println!(
+            "rules: {id} was changed in an agent's file and in the store both — the agent's version is in the quarantine"
+        );
+    }
+    for problem in &rules.problems {
+        println!("rules: {problem}");
+    }
     let managed = &ticked.managed;
     for name in &managed.withheld {
         println!(
