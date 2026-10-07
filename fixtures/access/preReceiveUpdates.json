@@ -55,7 +55,7 @@
         "teams": [
           "syncteam"
         ],
-        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEjloikgIGS/muxcOd05JM/U/PUHriDXYRQh8QGy7ssU"
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIERERERERERERERERERERERERERERERERERERERERERE"
       }
     ]
   },
