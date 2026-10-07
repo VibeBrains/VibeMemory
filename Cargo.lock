@@ -334,7 +334,7 @@ dependencies = [
 
 [[package]]
 name = "vibememory-cli"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "junction",
  "ruzstd",
@@ -347,7 +347,7 @@ dependencies = [
 
 [[package]]
 name = "vibememory-core"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "globset",
  "ruzstd",
@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "vibememory-mcp"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",

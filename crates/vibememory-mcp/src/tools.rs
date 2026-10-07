@@ -29,6 +29,10 @@ const ANNOTATIONS: &[(&str, &str, Kind)] = &[
     ("history_search", "Search past sessions", Kind::Read),
     ("project_resolve", "Resolve a project", Kind::Read),
     ("handoff_list", "Read open hand-offs", Kind::Read),
+    ("rules_get", "Read the rules in force", Kind::Read),
+    ("rule_save", "Write a rule", Kind::Write),
+    ("skill_get", "Read a skill", Kind::Read),
+    ("skill_save", "Write a skill", Kind::Write),
 ];
 
 /// What a tool does to what it touches.
@@ -177,6 +181,7 @@ pub fn catalogue() -> Value {
         tools.push(history_search_entry());
         tools.push(project_resolve_entry());
         tools.push(handoff_list_entry());
+        tools.extend(crate::rule_tools::catalogue());
         let mut all = Value::Array(std::mem::take(tools));
         annotate(&mut all);
         all
@@ -267,7 +272,8 @@ pub fn call(
         "history_search" => history_search(arguments, caller, memories),
         "project_resolve" => project_resolve(arguments, caller, memories),
         "handoff_list" => handoff_list(arguments, caller, memories),
-        other => Err(format!("unknown tool: {other}")),
+        other => crate::rule_tools::call(other, arguments, caller, memories)
+            .unwrap_or_else(|| Err(format!("unknown tool: {other}"))),
     }
 }
 
@@ -365,7 +371,7 @@ impl<'a> Caller<'a> {
 }
 
 /// Refuses a change the caller has no right to, with the advice that fits the reason.
-fn may_write(caller: &Caller<'_>) -> Result<(), String> {
+pub(crate) fn may_write(caller: &Caller<'_>) -> Result<(), String> {
     match caller.writes {
         Writes::Allowed => Ok(()),
         Writes::ReaderToken => Err("this token only reads: a token that writes is issued by \

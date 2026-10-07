@@ -61,9 +61,8 @@ pub fn parse(stderr: &str) -> Option<Refusal> {
 #[must_use]
 pub fn remedy(code: &str) -> Remedy {
     match code {
-        "pathDenied" | "configDenied" | "refDenied" | "tokenInPush" | "contentTooLarge" => {
-            Remedy::Reclone
-        }
+        "pathDenied" | "rulesDenied" | "configDenied" | "refDenied" | "tokenInPush"
+        | "contentTooLarge" => Remedy::Reclone,
         "diskReserve" | "hostFailure" | "snapshotUnusable" => Remedy::Transient,
         "pushDenied" | "exportDenied" => Remedy::SessionsOff,
         _ => Remedy::Cabinet,

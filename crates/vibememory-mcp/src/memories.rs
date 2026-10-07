@@ -77,6 +77,18 @@ pub trait Memories {
     /// What stopped the rules from answering, or a store that cannot see the client's disk.
     fn project_of_directory(&self, directory: &str) -> Result<DirectoryProject, String>;
 
+    /// The store's directory on this machine, where rules and skills are files; `None` on the host, which keeps bare
+    /// repositories only.
+    fn store_dir(&self) -> Option<PathBuf> {
+        None
+    }
+
+    /// The personal store's directory on this machine: the person's rules live there whichever store the server
+    /// answers for.
+    fn personal_store_dir(&self) -> Option<PathBuf> {
+        None
+    }
+
     /// The bytes the store takes on disk: what a team's quota counts, history included.
     ///
     /// # Errors
@@ -150,6 +162,14 @@ impl<M: Memories + ?Sized> Memories for &M {
 
     fn handoffs(&self, project: &str) -> Result<Handoffs, String> {
         (**self).handoffs(project)
+    }
+
+    fn store_dir(&self) -> Option<PathBuf> {
+        (**self).store_dir()
+    }
+
+    fn personal_store_dir(&self) -> Option<PathBuf> {
+        (**self).personal_store_dir()
     }
 
     fn new_version(&self, id: &str) -> String {
@@ -373,6 +393,14 @@ impl Memories for StoreMemories {
         Ok(Handoffs::Read(handoffs::open_in(
             &self.handoffs_of(project),
         )))
+    }
+
+    fn store_dir(&self) -> Option<PathBuf> {
+        Some(self.store.clone())
+    }
+
+    fn personal_store_dir(&self) -> Option<PathBuf> {
+        Some(self.engine_dir.join("store"))
     }
 
     fn new_version(&self, id: &str) -> String {

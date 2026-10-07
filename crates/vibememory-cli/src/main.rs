@@ -6,6 +6,8 @@
     clippy::disallowed_macros
 )]
 
+mod rules_command;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -55,6 +57,9 @@ fn main() -> ExitCode {
         Some("session") => session_command(&args.collect::<Vec<String>>()),
         Some("project") => project_command(&args.collect::<Vec<String>>()),
         Some("route") => route_command(&args.collect::<Vec<String>>()),
+        Some("rule") => rules_command::rule(&layout(), &args.collect::<Vec<String>>()),
+        Some("skill") => rules_command::skill(&layout(), &args.collect::<Vec<String>>()),
+        Some("rules") => rules_command::rules(&layout(), &args.collect::<Vec<String>>()),
         Some("store") => store_command(&args.collect::<Vec<String>>()),
         Some("merge-driver") => merge_driver_command(&args.collect::<Vec<String>>()),
         Some("hook") => match args.next().as_deref() {
@@ -208,6 +213,7 @@ fn report(strict: bool, json: bool) -> ExitCode {
     print_clients(&layout, &tokens, &readings);
     wrong += print_watched_agents(&layout);
     wrong += print_teams(&layout);
+    print_rules(&layout);
     print_advice(&layout, &config);
     if strict && wrong > 0 {
         eprintln!(
@@ -288,6 +294,34 @@ fn teams_json(teams: &[vibememory_cli::team_connect::TeamFacts]) -> serde_json::
             })
             .collect(),
     )
+}
+
+/// The person's rules and skills: how many, which agents of this machine get them, and the files an agent would
+/// refuse. Not a failure: a broken rule file is skipped, the others still reach the agents.
+fn print_rules(layout: &Layout) {
+    let store = layout.store();
+    let (rules, problems) =
+        vibememory_cli::rules::read_rules(&store.join(vibememory_cli::rules::PERSONAL_RULES));
+    let agents = vibememory_cli::rules::Agents::of(&layout.config_dir, layout.home.as_deref());
+    let mut names = vec!["Claude Code"];
+    names.extend(agents.assembled.iter().map(|(agent, _)| *agent));
+    let long = rules
+        .values()
+        .filter(|rule| rule.body.len() > rules_command::RULE_LIMIT)
+        .count();
+    println!(
+        "rules    {} personal rule(s) for {}{}",
+        rules.len(),
+        names.join(", "),
+        if long > 0 {
+            format!("; {long} long — `vibememory rules lint`")
+        } else {
+            String::new()
+        }
+    );
+    for problem in problems {
+        println!("         {problem}");
+    }
 }
 
 /// The team stores: each connected team, what is wrong with its files, and its pause with what to
@@ -2275,6 +2309,21 @@ fn session_start_hook() -> ExitCode {
     if let Some(message) = decision.additional_context() {
         notes.push(message);
     }
+    // the project's own rule files against the rules in force: once a day, in `advise` mode
+    if let Some(name) = decision.store_name() {
+        let today: String = vibememory_cli::clock::now().chars().take(10).collect();
+        if let Some(note) = vibememory_cli::rules_sync::notice(
+            &layout.engine_dir,
+            &layout.store(),
+            &store.clone,
+            store.team.is_some(),
+            name,
+            std::path::Path::new(&input.cwd),
+            &today,
+        ) {
+            notes.push(note);
+        }
+    }
     if notes.is_empty() {
         ExitCode::SUCCESS
     } else {
@@ -3357,6 +3406,23 @@ fn report_tick(ticked: &vibememory_cli::tick::Ticked, max_deletions: usize) {
         vibememory_cli::tick::StoreCycle::SessionsOff => {
             println!("the team's sessions are switched off: this machine leaves its store");
         }
+    }
+    let rules = &ticked.rules;
+    if !rules.written.is_empty() || !rules.taken.is_empty() {
+        println!(
+            "rules and skills: {} agent file(s) written, {} edit(s) taken from agents' files ({})",
+            rules.written.len(),
+            rules.taken.len(),
+            rules.taken.join(", ")
+        );
+    }
+    for id in &rules.conflicts {
+        println!(
+            "rules: {id} was changed in an agent's file and in the store both — the agent's version is in the quarantine"
+        );
+    }
+    for problem in &rules.problems {
+        println!("rules: {problem}");
     }
     let managed = &ticked.managed;
     for name in &managed.withheld {

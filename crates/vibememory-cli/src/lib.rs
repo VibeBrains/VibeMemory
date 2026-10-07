@@ -46,6 +46,8 @@ pub mod project_move;
 pub mod registrations;
 pub mod relink;
 pub mod route;
+pub mod rules;
+pub mod rules_sync;
 pub mod sha256;
 pub mod store;
 pub mod stores;

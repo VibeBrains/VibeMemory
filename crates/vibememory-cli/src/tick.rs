@@ -97,6 +97,8 @@ pub struct Ticked {
     pub stale_sessions: Vec<String>,
     /// What happened to the managed copies of `CLAUDE.md` and `settings.json`.
     pub managed: crate::managed::Reconciled,
+    /// What happened to the rules and skills written out for the agents.
+    pub rules: crate::rules::Projected,
     /// Desktop cards published to the outbox.
     pub cards_out: usize,
     /// Desktop cards written into the local Desktop store.
@@ -268,6 +270,10 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
         }
     }
 
+    // After the managed copies, so that `CLAUDE.md` is the one the store agrees on, and before the commit, so that
+    // an edit an agent made to a rule goes out in this very run
+    result.rules = project_rules(machine, stamp);
+
     match commit_shared_files(store, &engine_dir_of(store), &live, stamp, personal) {
         Ok(files) => result.shared_files_committed = files,
         Err(problem) => result.problems.push(problem),
@@ -313,6 +319,47 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
     }
 
     result
+}
+
+/// The rules and skills of this store, out to the agents: the person's everywhere in the personal store's run, and in
+/// every run the projects of that store with their team's and their own
+///
+/// A team's run reads the person's rules from the personal store beside its own state directory
+/// (`<engine>/stores/<team>/store` and `<engine>/store`): they are what a team's rule may replace
+fn project_rules(machine: &Machine<'_>, stamp: &str) -> crate::rules::Projected {
+    let engine_dir = engine_dir_of(machine.store);
+    let agents = crate::rules::Agents::of(machine.config_dir, machine.home);
+    let personal_store = match machine.team {
+        None => machine.store.to_path_buf(),
+        Some(_) => engine_dir.parent().and_then(Path::parent).map_or_else(
+            || machine.store.to_path_buf(),
+            |engine| engine.join("store"),
+        ),
+    };
+    let mut report = match machine.team {
+        None => crate::rules::project_personal(machine.store, &engine_dir, &agents, stamp),
+        Some(_) => crate::rules::Projected::default(),
+    };
+    // what is wrong with these files is said by the personal store's run, once
+    let (personal, _) =
+        crate::rules::read_rules(&personal_store.join(crate::rules::PERSONAL_RULES));
+    let personal: Vec<vibememory_core::rules::Rule> = personal.into_values().collect();
+    let projects = crate::rules::project_projects(&crate::rules::ProjectsRun {
+        store: machine.store,
+        engine_dir: &engine_dir,
+        machine_id: machine.machine_id,
+        roots: machine.roots,
+        personal: &personal,
+        personal_store: &personal_store,
+        team: machine.team,
+        agents: &agents,
+        stamp,
+    });
+    report.written.extend(projects.written);
+    report.taken.extend(projects.taken);
+    report.conflicts.extend(projects.conflicts);
+    report.problems.extend(projects.problems);
+    report
 }
 
 /// Why this run failed, in one line for `doctor`; `None` when it worked
@@ -1186,11 +1233,21 @@ fn commit_shared_files(
 ) -> Result<usize, String> {
     // `config/` too in the personal store: the shared skills and managed copies live there, and
     // nothing else commits them. A skill rewritten on this machine stayed uncommitted for a day
-    // because this step looked only at `projects/`. A team's store carries sessions and memory
-    // alone — its host refuses `config/` — so there the engine does not even try.
+    // because this step looked only at `projects/`. A team's store carries no `config/` — its host
+    // refuses it — but its rules, skills and proposals instead.
     let mut changed = git::changed_paths(store, "projects", TIMEOUT)?;
     if personal {
         changed.extend(git::changed_paths(store, "config", TIMEOUT)?);
+    } else {
+        // a team's rules and skills, accepted by its owner or an admin, and the members' proposals; the host takes
+        // `rules/` and `skills/` from those who run the team only
+        for dir in [
+            crate::rules::TEAM_RULES,
+            crate::rules::TEAM_SKILLS,
+            crate::rules::PROPOSALS,
+        ] {
+            changed.extend(git::changed_paths(store, dir, TIMEOUT)?);
+        }
     }
     let candidates: Vec<String> = changed
         .into_iter()

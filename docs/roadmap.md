@@ -779,6 +779,19 @@
 
 ## Этап 5 — MCP-память для любых агентов
 
+- [x] **Правила и навыки для всех агентов** — ✅ (2026-10-07, next) повод — владелец: DSH видит память, но не правила и
+  навыки. Правило — запись с `id` на трёх уровнях (личные `config/rules/`, командные `rules/` и `skills/` стора команды,
+  проектные `projects/<проект>/rules|skills`); тик раскладывает Claude Code (`~/.claude/rules/vm-*.md`), DSH и Codex
+  (собранные `AGENTS.md` с метками за базой `CLAUDE.md`), навыки ссылками в `~/.agents/skills` и `~/.codex/skills`,
+  проектные — в рабочий каталог под `.git/info/exclude`; правка у агента — правка правила, конфликт — карантин.
+  Сервер памяти: `rules_get`, `rule_save`, `skill_get`, `skill_save`, уровень — слово человека (`levelRequired`),
+  похожие — `similarFound`, командное — предложение. Хост: `rules/`, `skills/` команды — от владельца и админов
+  (`rulesDenied`), `proposals/` — всем. Терминал: `rule`, `skill`, `rules sync|mode|lint|split`; режимы проекта
+  advise / merge / override; строка в `doctor`, заметка сессии раз в сутки. Механизм 0.8.0 «копия `CLAUDE.md` в
+  `~/.dsh/AGENTS.md`» заменён. [спека](spec/rulesAndSkills.md), [формат](manuals/rulesSpec.md),
+  [knowledge](knowledge/design/rulesAndSkills.md).
+- [ ] **Разрезать глобальный `CLAUDE.md` на правила** — `vibememory rules split`, после просмотра плана владельцем;
+  затем `rules sync` по проектам с ручными копиями (VibeSnipe `.vibe/rules/`).
 - [x] **Общие правила для всех агентов** — ✅ (2026-10-07, next) повод — хендофф DSH из VibeSnipe: правила видел
   только Claude. Канон — `config/CLAUDE.md`; файл инструкций каждого агента, живущего на машине, — ещё одна
   управляемая копия того же файла (`managed::Copy`), у DSH это `~/.dsh/AGENTS.md`, путь прочитан из его бандла.
@@ -1368,6 +1381,9 @@
   без `config.json`, отказ fetch — неудача прогона с причиной `last:` в `doctor`, сессии до команды откладывает
   `route add`, `SessionEnd` снимает живую сессию вне клона, `seedKey.sh --alias`. Обходы из стенда убраны, `up` с нуля
   чистый, `check` — 12 PASS. [knowledge](knowledge/design/selfHostLab.md).
+- [x] **Выпуск 0.9.0: правила и навыки для всех агентов** — ✅ (2026-10-08, main) личные, командные и проектные
+  правила и навыки у Claude Code, DSH и Codex; уровень — слово человека; командные — у владельца и админов;
+  `rules sync` с режимами advise / merge / override; стенд — 17 PASS.
 - [x] **Выпуск 0.8.1: свой сервер с первого раза** — ✅ (2026-10-07, main) девять находок стенда своего сервера:
   скрипты хоста на чистом Debian, движок машины участника из `connect`, отказ fetch в `doctor`, сессии после
   `route add` — команде, `SessionEnd` вне клона; стенд `infra/selfHostLab.sh`.

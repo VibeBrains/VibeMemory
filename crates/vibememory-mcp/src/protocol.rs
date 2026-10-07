@@ -6,6 +6,8 @@
 //! pair of streams, so the whole protocol is tested without a store or a pipe.
 
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
+
 use serde_json::{Value, json};
 
 use crate::memories::Memories;
@@ -92,15 +94,23 @@ pub fn handle(
             });
             // The agent learns the name the store gave its folder: without it a model asked to
             // look up this project's memory has no way to know what to pass as `project`.
-            if let (Some(project), Some(fields)) = (caller.project, result.as_object_mut()) {
-                fields.insert(
-                    "instructions".to_owned(),
-                    json!(format!(
-                        "Started in the store project {project}: memory_save, memory_update and \
+            let mut instructions = String::new();
+            if let Some(project) = caller.project {
+                instructions = format!(
+                    "Started in the store project {project}: memory_save, memory_update and \
                      memory_delete use it when `project` is omitted, and memory_search and \
-                     history_search take it as `project` to stay inside this project."
-                    )),
+                     history_search take it as `project` to stay inside this project. "
                 );
+            }
+            // every agent learns where a rule goes when a person asks for one: the level is theirs to name
+            let _ = write!(
+                instructions,
+                "Rules and skills: rules_get gives the rules in force when your client does not load rule \
+                 files itself; rule_save and skill_save write one at the level the person named. {}",
+                crate::rule_tools::LEVELS
+            );
+            if let Some(fields) = result.as_object_mut() {
+                fields.insert("instructions".to_owned(), json!(instructions));
             }
             Response::ok(id, result)
         }
