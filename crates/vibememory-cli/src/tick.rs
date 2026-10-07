@@ -1233,11 +1233,21 @@ fn commit_shared_files(
 ) -> Result<usize, String> {
     // `config/` too in the personal store: the shared skills and managed copies live there, and
     // nothing else commits them. A skill rewritten on this machine stayed uncommitted for a day
-    // because this step looked only at `projects/`. A team's store carries sessions and memory
-    // alone — its host refuses `config/` — so there the engine does not even try.
+    // because this step looked only at `projects/`. A team's store carries no `config/` — its host
+    // refuses it — but its rules, skills and proposals instead.
     let mut changed = git::changed_paths(store, "projects", TIMEOUT)?;
     if personal {
         changed.extend(git::changed_paths(store, "config", TIMEOUT)?);
+    } else {
+        // a team's rules and skills, accepted by its owner or an admin, and the members' proposals; the host takes
+        // `rules/` and `skills/` from those who run the team only
+        for dir in [
+            crate::rules::TEAM_RULES,
+            crate::rules::TEAM_SKILLS,
+            crate::rules::PROPOSALS,
+        ] {
+            changed.extend(git::changed_paths(store, dir, TIMEOUT)?);
+        }
     }
     let candidates: Vec<String> = changed
         .into_iter()

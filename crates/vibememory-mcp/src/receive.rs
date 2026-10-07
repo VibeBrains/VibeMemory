@@ -15,6 +15,10 @@ const PROJECTS_PREFIX: &str = "projects/";
 const MACHINES_PREFIX: &str = "machines/";
 /// The store's configuration, which no member may push.
 const CONFIG_PREFIX: &str = "config/";
+/// A team's rules and skills: in force for every member, so written by the owner and admins alone.
+const TEAM_RULES_PREFIXES: &[&str] = &["rules/", "skills/"];
+/// Where a member proposes a rule or a skill to the team.
+const PROPOSALS_PREFIX: &str = "proposals/";
 
 /// One line of `pre-receive`'s input: the reference moves from `old` to `new`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,7 +232,11 @@ pub fn decide(push: &Push<'_>, snapshot: Option<&Snapshot>) -> Result<(), PushRe
             ),
         ));
     }
-    paths_allowed(push.changed, &key.store_name)?;
+    let runs_the_team = team
+        .members
+        .get(&key.member)
+        .is_some_and(|rank| rank.runs_the_team());
+    paths_allowed(push.changed, &key.store_name, runs_the_team)?;
     sizes_allowed(push.sizes, team.limits.quota_bytes)?;
     // Last: the objects are read only for a push every other rule lets land
     match push.objects {
@@ -249,9 +257,14 @@ pub fn decide(push: &Push<'_>, snapshot: Option<&Snapshot>) -> Result<(), PushRe
     }
 }
 
-/// The paths a member may change: `projects/` and the directory of their own machine — never the
-/// store's configuration, which would run on every member's machine.
-fn paths_allowed(changed: &[String], store_name: &str) -> Result<(), PushRefusal> {
+/// The paths a member may change: `projects/`, the directory of their own machine and `proposals/` — never the
+/// store's configuration, which would run on every member's machine. The team's `rules/` and `skills/` are an owner's
+/// or an admin's: every member's agents follow them.
+fn paths_allowed(
+    changed: &[String],
+    store_name: &str,
+    runs_the_team: bool,
+) -> Result<(), PushRefusal> {
     // a name git read as bytes that are not UTF-8 arrives with U+FFFD in it
     let unreadable: Vec<String> = changed
         .iter()
@@ -280,16 +293,40 @@ fn paths_allowed(changed: &[String], store_name: &str) -> Result<(), PushRefusal
             config,
         ));
     }
+    let team_rules = |path: &String| {
+        TEAM_RULES_PREFIXES
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+    };
+    if !runs_the_team {
+        let rules: Vec<String> = changed
+            .iter()
+            .filter(|path| team_rules(path))
+            .cloned()
+            .collect();
+        if !rules.is_empty() {
+            return Err(refuse_paths(
+                "rulesDenied",
+                "the team's rules and skills are written by its owner and admins; a member proposes them in proposals/",
+                rules,
+            ));
+        }
+    }
     let own_machine = format!("{MACHINES_PREFIX}{store_name}/");
     let outside: Vec<String> = changed
         .iter()
-        .filter(|path| !path.starts_with(PROJECTS_PREFIX) && !path.starts_with(&own_machine))
+        .filter(|path| {
+            !path.starts_with(PROJECTS_PREFIX)
+                && !path.starts_with(&own_machine)
+                && !path.starts_with(PROPOSALS_PREFIX)
+                && !team_rules(path)
+        })
         .cloned()
         .collect();
     if !outside.is_empty() {
         return Err(refuse_paths(
             "pathDenied",
-            "a member pushes projects/ and the machines/ directory of their own key",
+            "a member pushes projects/, proposals/ and the machines/ directory of their own key",
             outside,
         ));
     }

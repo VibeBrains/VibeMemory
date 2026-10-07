@@ -4,7 +4,12 @@
     "teamCount": 5,
     "teams": {
       "syncteam": {
-        "writable": true
+        "writable": true,
+        "members": {
+          "borodatych": "owner",
+          "alice": "admin",
+          "carol": "member"
+        }
       },
       "otherteam": {
         "mode": "sync",
@@ -41,6 +46,16 @@
           "otherteam"
         ],
         "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi"
+      },
+      {
+        "id": "mk_c4r0pk3y",
+        "member": "carol",
+        "machine": "desk",
+        "storeName": "carol-desk",
+        "teams": [
+          "syncteam"
+        ],
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEjloikgIGS/muxcOd05JM/U/PUHriDXYRQh8QGy7ssU"
       }
     ]
   },
@@ -762,6 +777,75 @@
       "sizes": {
         "treeBytes": 52428800
       },
+      "expect": {
+        "code": "ok"
+      }
+    },
+    {
+      "id": "adminWritesTeamRules",
+      "provenance": "computed",
+      "note": "An admin's push of the team's rules and skills: every member's agents follow them, and an admin runs the team.",
+      "key": "mk_3f8k1p0z",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "rules/style.md",
+        "skills/deploy/SKILL.md"
+      ],
+      "expect": {
+        "code": "ok"
+      }
+    },
+    {
+      "id": "memberTeamRules",
+      "provenance": "computed",
+      "note": "A member may not change the rules every member's agents follow.",
+      "key": "mk_c4r0pk3y",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "machines/carol-desk/live.json",
+        "rules/style.md",
+        "skills/deploy/SKILL.md"
+      ],
+      "expect": {
+        "code": "rulesDenied",
+        "paths": [
+          "rules/style.md",
+          "skills/deploy/SKILL.md"
+        ]
+      }
+    },
+    {
+      "id": "memberProposes",
+      "provenance": "computed",
+      "note": "A member proposes a rule or a skill; the owner or an admin accepts it.",
+      "key": "mk_c4r0pk3y",
+      "team": "syncteam",
+      "updates": [
+        [
+          "1111111111111111111111111111111111111111",
+          "2222222222222222222222222222222222222222",
+          "refs/heads/main"
+        ]
+      ],
+      "changed": [
+        "proposals/rules/style.carol.md",
+        "proposals/skills/deploy.carol/SKILL.md",
+        "projects/Acme/rules/tests.md"
+      ],
       "expect": {
         "code": "ok"
       }

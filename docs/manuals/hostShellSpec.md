@@ -107,7 +107,8 @@ push (`git diff-tree`), а не всё дерево: не тронутый push'
 | `readOnly` | У команды `writable: false` — грант истёк |
 | `refDenied` | Любая ссылка кроме `refs/heads/main` — ветка, тег, заметка — или удаление `main` |
 | `configDenied` | Изменён путь под `config/`: общий `settings.json` с хуками стал бы исполнением команд на машинах участников |
-| `pathDenied` | Изменён путь вне `projects/` и `machines/<storeName ключа>/` — в том числе `.gitattributes`, чужая машина (и машина, чьё имя лишь начинается с `storeName` ключа), `history.jsonl` — или имя пути не UTF-8 либо несёт управляющий символ |
+| `rulesDenied` | Участник, не владелец и не админ команды, изменил `rules/` или `skills/` стора команды: их выполняют агенты всех участников. Предложение участника кладётся в `proposals/`, принимает его владелец или админ (`vibememory rule accept`) |
+| `pathDenied` | Изменён путь вне `projects/`, `proposals/`, `rules/` и `skills/` команды и `machines/<storeName ключа>/` — в том числе `.gitattributes`, чужая машина (и машина, чьё имя лишь начинается с `storeName` ключа), `history.jsonl` — или имя пути не UTF-8 либо несёт управляющий символ |
 | `diskReserve` | После push на хосте осталось бы меньше резерва свободного места (по умолчанию 2 ГиБ) |
 | `quota` | Размер стора вместе с входящим пакетом больше `quotaBytes` команды |
 | `contentTooLarge` | Объекты push без сжатия больше того, что хост читает на токены (по умолчанию 4 ГиБ): push делится на части |
@@ -122,7 +123,7 @@ push (`git diff-tree`), а не всё дерево: не тронутый push'
   `writable: true`
 - `notAMember`, `teamGone`, `unknownKey` — стор не трогается вовсе; `doctor` называет причину и адрес
   кабинета
-- `pathDenied`, `configDenied` — fetch идёт, push не пробуется; `doctor` называет пути и
+- `pathDenied`, `rulesDenied`, `configDenied` — fetch идёт, push не пробуется; `doctor` называет пути и
   `vibememory store reclone <store-id>`: движок историю не переписывает, а отвергнутый коммит остался бы
   в ней навсегда
 - `refDenied` — дефект клиента: тик пушит только `main`
