@@ -1,5 +1,5 @@
 {
-  "about": "Rules and skills: the formats, the levels stacked, an agent's file assembled and read back, a project's rule files judged. Format of this file: docs/manuals/rulesSpec.md, section «Фикстуры».",
+  "about": "Rules and skills: the formats, the levels stacked, an agent's file assembled and read back, a project's rule files judged, a team's rules held until shown. Format of this file: docs/manuals/rulesSpec.md, section «Фикстуры».",
   "rules": [
     {
       "id": "plain",
@@ -588,6 +588,114 @@
         ]
       ],
       "expect": []
+    }
+  ],
+  "shown": [
+    {
+      "id": "nothing-shown-everything-waits",
+      "note": "Машина ещё ничего не показывала: командные правила ждут показа, наружу не идёт ничего.",
+      "current": [
+        "---\nid: review\ntitle: Ревью\nlevel: team\n---\nКаждое изменение — через ревью.\n",
+        "---\nid: deploy\ntitle: Выкладка\nlevel: team\n---\nПо пятницам не выкладываем.\n"
+      ],
+      "shown": [],
+      "expect": {
+        "laid": [],
+        "unseen": [
+          [
+            "deploy",
+            "new"
+          ],
+          [
+            "review",
+            "new"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "shown-goes-out",
+      "note": "Показанное правило без изменений раскладывается.",
+      "current": [
+        "---\nid: review\ntitle: Ревью\nlevel: team\n---\nКаждое изменение — через ревью.\n"
+      ],
+      "shown": [
+        "---\nid: review\ntitle: Ревью\nlevel: team\n---\nКаждое изменение — через ревью.\n"
+      ],
+      "expect": {
+        "laid": [
+          [
+            "review",
+            "Каждое изменение — через ревью.\n"
+          ]
+        ],
+        "unseen": []
+      }
+    },
+    {
+      "id": "changed-keeps-the-shown-text",
+      "note": "Изменённое правило до показа раскладывается в показанном виде, новое ждёт.",
+      "current": [
+        "---\nid: review\ntitle: Ревью\nlevel: team\n---\nКаждое изменение — через два ревью.\n",
+        "---\nid: deploy\ntitle: Выкладка\nlevel: team\n---\nПо пятницам не выкладываем.\n"
+      ],
+      "shown": [
+        "---\nid: review\ntitle: Ревью\nlevel: team\n---\nКаждое изменение — через ревью.\n"
+      ],
+      "expect": {
+        "laid": [
+          [
+            "review",
+            "Каждое изменение — через ревью.\n"
+          ]
+        ],
+        "unseen": [
+          [
+            "deploy",
+            "new"
+          ],
+          [
+            "review",
+            "changed"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "enforced-switched-on-is-a-change",
+      "note": "Флаг enforced не входит в версию текста, но включённый без показа он бы действовал: это изменение.",
+      "current": [
+        "---\nid: review\ntitle: Ревью\nlevel: team\nenforced: true\n---\nКаждое изменение — через ревью.\n"
+      ],
+      "shown": [
+        "---\nid: review\ntitle: Ревью\nlevel: team\n---\nКаждое изменение — через ревью.\n"
+      ],
+      "expect": {
+        "laid": [
+          [
+            "review",
+            "Каждое изменение — через ревью.\n"
+          ]
+        ],
+        "unseen": [
+          [
+            "review",
+            "changed"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "removed-goes-at-once",
+      "note": "Правило, которое команда убрала, уходит сразу: забрать указание согласия не требует.",
+      "current": [],
+      "shown": [
+        "---\nid: review\ntitle: Ревью\nlevel: team\n---\nКаждое изменение — через ревью.\n"
+      ],
+      "expect": {
+        "laid": [],
+        "unseen": []
+      }
     }
   ]
 }

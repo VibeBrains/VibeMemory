@@ -1,6 +1,6 @@
 //! Data-driven tests for rules and skills: the formats, the levels stacked, an agent's file assembled and read back,
-//! a project's rule files judged against the rules' histories. Every expectation lives in
-//! `fixtures/rules/rulesScenarios.json`.
+//! a project's rule files judged against the rules' histories, a team's rules held until shown.
+//! Every expectation lives in `fixtures/rules/rulesScenarios.json`.
 
 #![allow(
     clippy::panic,
@@ -13,6 +13,7 @@ use serde_json::Value;
 use vibememory_core::rules::assembly::{Piece, assemble, disassemble};
 use vibememory_core::rules::compare::{Block, History, Merge, State, blocks, judge, similar};
 use vibememory_core::rules::layers::resolve;
+use vibememory_core::rules::shown::gate;
 use vibememory_core::rules::skill::parse_skill;
 use vibememory_core::rules::{Level, Rule};
 
@@ -324,5 +325,39 @@ fn a_rule_about_to_be_written_finds_the_ones_it_repeats() {
             .map(text)
             .collect();
         assert_eq!(found, want, "{id}");
+    }
+}
+
+#[test]
+fn a_teams_rules_go_out_as_they_were_shown() {
+    for case in scenarios()["shown"].as_array().unwrap() {
+        let id = text(&case["id"]);
+        let current = rules_of(&case["current"]);
+        let shown = rules_of(&case["shown"]);
+        let gated = gate(&current, &shown);
+        let laid: Vec<(String, String)> = gated
+            .laid
+            .iter()
+            .map(|rule| (rule.id.as_str().to_owned(), rule.body.clone()))
+            .collect();
+        let want: Vec<(String, String)> = case["expect"]["laid"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| (text(&row[0]).to_owned(), text(&row[1]).to_owned()))
+            .collect();
+        assert_eq!(laid, want, "{id}");
+        let unseen: Vec<(String, &str)> = gated
+            .unseen
+            .iter()
+            .map(|unseen| (unseen.rule.id.as_str().to_owned(), unseen.change.as_str()))
+            .collect();
+        let want: Vec<(String, &str)> = case["expect"]["unseen"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| (text(&row[0]).to_owned(), text(&row[1])))
+            .collect();
+        assert_eq!(unseen, want, "{id}");
     }
 }

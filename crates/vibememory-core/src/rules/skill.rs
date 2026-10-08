@@ -10,6 +10,9 @@ use super::rule::is_slug;
 /// The file every skill directory holds.
 pub const SKILL_FILE: &str = "SKILL.md";
 
+/// The directory of a skill's scripts: code an agent runs, not text it reads.
+pub const SKILL_SCRIPTS: &str = "scripts";
+
 /// The longest name: the Agent Skills format's limit.
 pub const MAX_NAME: usize = 64;
 

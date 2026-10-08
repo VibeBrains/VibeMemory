@@ -328,7 +328,6 @@ pub fn run(machine: &Machine<'_>, stamp: &str, heartbeat_cutoff: &str) -> Ticked
 /// (`<engine>/stores/<team>/store` and `<engine>/store`): they are what a team's rule may replace
 fn project_rules(machine: &Machine<'_>, stamp: &str) -> crate::rules::Projected {
     let engine_dir = engine_dir_of(machine.store);
-    let agents = crate::rules::Agents::of(machine.config_dir, machine.home);
     let personal_store = match machine.team {
         None => machine.store.to_path_buf(),
         Some(_) => engine_dir.parent().and_then(Path::parent).map_or_else(
@@ -336,6 +335,10 @@ fn project_rules(machine: &Machine<'_>, stamp: &str) -> crate::rules::Projected 
             |engine| engine.join("store"),
         ),
     };
+    // the person's own settings, from the engine directory the personal store lies in
+    let settings =
+        crate::config::RulesConfig::of_engine(personal_store.parent().unwrap_or(&engine_dir));
+    let agents = crate::rules::Agents::of(machine.config_dir, machine.home, &settings);
     let mut report = match machine.team {
         None => crate::rules::project_personal(machine.store, &engine_dir, &agents, stamp),
         Some(_) => crate::rules::Projected::default(),
@@ -359,6 +362,7 @@ fn project_rules(machine: &Machine<'_>, stamp: &str) -> crate::rules::Projected 
     report.taken.extend(projects.taken);
     report.conflicts.extend(projects.conflicts);
     report.problems.extend(projects.problems);
+    report.warnings.extend(projects.warnings);
     report
 }
 
@@ -953,7 +957,7 @@ fn project_memory(store: &Path, machine_id: &str, stamp: &str) -> Result<Vec<Str
         if !journal.exists() {
             continue;
         }
-        let memory_dir = project.path().join("memory");
+        let memory_dir = project.path().join(crate::memory::MEMORY_DIR_NAME);
         let synced = crate::memory::sync(&memory_dir, &journal, stamp, machine_id, &kept)?;
         if !synced.written.is_empty() || !synced.removed.is_empty() || synced.imported > 0 {
             projected.push(project.file_name().to_string_lossy().into_owned());

@@ -20,8 +20,8 @@ pub const REMOTE_MEMORY_VAR: &str = "CLAUDE_CODE_REMOTE_MEMORY_DIR";
 pub const SETTINGS_MEMORY_KEY: &str = "autoMemoryDirectory";
 /// The journal's file name inside the project's store directory.
 pub const JOURNAL_FILE: &str = "memory.jsonl";
-/// The directory name the CLI uses under a project.
-const MEMORY_DIR_NAME: &str = "memory";
+/// The directory name the CLI uses under a project, and the store under `projects/<project>/`.
+pub const MEMORY_DIR_NAME: &str = "memory";
 /// Where quarantined versions go, under the engine directory.
 const QUARANTINE_DIR: &str = "quarantine";
 

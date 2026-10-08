@@ -23,8 +23,8 @@ disallowed-types = [
   { path = "std::net::TcpStream", reason = "vibememory-core is pure logic: no network" },
   { path = "std::net::TcpListener", reason = "vibememory-core is pure logic: no network" },
   { path = "std::net::UdpSocket", reason = "vibememory-core is pure logic: no network" },
-  { path = "std::os::unix::net::UnixStream", reason = "vibememory-core is pure logic: no network" },
-  { path = "std::os::unix::net::UnixListener", reason = "vibememory-core is pure logic: no network" },
+  { path = "std::os::unix::net::UnixStream", reason = "vibememory-core is pure logic: no network", allow-invalid = true },
+  { path = "std::os::unix::net::UnixListener", reason = "vibememory-core is pure logic: no network", allow-invalid = true },
 ]
 disallowed-methods = [
   { path = "std::fs::canonicalize", reason = "vibememory-core is pure logic: no I/O" },
@@ -59,7 +59,9 @@ disallowed-methods = [
   { path = "std::env::vars", reason = "vibememory-core is pure logic: no environment" },
   { path = "std::env::vars_os", reason = "vibememory-core is pure logic: no environment" },
   { path = "std::fs::soft_link", reason = "vibememory-core is pure logic: no I/O" },
-  { path = "std::os::unix::fs::symlink", reason = "vibememory-core is pure logic: no I/O" },
+  { path = "std::os::unix::fs::symlink", reason = "vibememory-core is pure logic: no I/O", allow-invalid = true },
+  { path = "std::os::windows::fs::symlink_file", reason = "vibememory-core is pure logic: no I/O", allow-invalid = true },
+  { path = "std::os::windows::fs::symlink_dir", reason = "vibememory-core is pure logic: no I/O", allow-invalid = true },
   { path = "std::path::Path::exists", reason = "vibememory-core is pure logic: paths are data, not files" },
   { path = "std::path::Path::try_exists", reason = "vibememory-core is pure logic: paths are data, not files" },
   { path = "std::path::Path::is_dir", reason = "vibememory-core is pure logic: paths are data, not files" },

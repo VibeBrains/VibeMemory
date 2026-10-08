@@ -114,6 +114,45 @@ const SERVER: &str = crate::registrations::LOCAL_SERVER;
 /// A quarter of a megabyte holds both with room to spare and is a small part of a million-token context
 pub const DSH_INSTRUCTIONS_BUDGET: usize = 262_144;
 
+/// DSH's own budget for instruction files, when its profiles say nothing.
+pub const DSH_DEFAULT_BUDGET: usize = 65_536;
+
+/// The plugin whose `maxBytes` is DSH's budget for instruction files.
+const DSH_INSTRUCTIONS_PLUGIN: &str = "@deepseek-ai/dsh-agent-instructions";
+
+/// The budget a DSH profile's `cordis.patch.yml` sets for instruction files, if it sets one: `maxBytes` of the
+/// list item that names the instructions plugin.
+#[must_use]
+pub fn budget_in(patch: &str) -> Option<usize> {
+    let mut lines = patch
+        .lines()
+        .skip_while(|line| !line.contains(DSH_INSTRUCTIONS_PLUGIN));
+    lines.next()?;
+    lines
+        .take_while(|line| !line.trim_start().starts_with("- "))
+        .find_map(|line| line.trim().strip_prefix("maxBytes:"))
+        .and_then(|value| value.trim().parse().ok())
+}
+
+/// The smallest budget for instruction files any DSH profile of this machine runs with: the one that drops a file
+/// first. `dsh_home` is `~/.dsh`.
+#[must_use]
+pub fn dsh_budget(dsh_home: &std::path::Path) -> usize {
+    let Ok(profiles) = std::fs::read_dir(dsh_home.join("profiles")) else {
+        return DSH_DEFAULT_BUDGET;
+    };
+    profiles
+        .filter_map(Result::ok)
+        .map(|profile| {
+            std::fs::read_to_string(profile.path().join("cordis.patch.yml"))
+                .ok()
+                .and_then(|patch| budget_in(&patch))
+                .unwrap_or(DSH_DEFAULT_BUDGET)
+        })
+        .min()
+        .unwrap_or(DSH_DEFAULT_BUDGET)
+}
+
 impl Machine {
     /// This machine: the server `install` placed, and the engine directory when it is not the
     /// default one.

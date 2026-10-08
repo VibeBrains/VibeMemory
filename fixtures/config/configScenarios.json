@@ -195,6 +195,37 @@
       "expect": {
         "error": "invalid"
       }
+    },
+    {
+      "id": "rules-section",
+      "provenance": "computed",
+      "note": "Раздел rules: порог длинного правила и агенты, которым раскладывать правила, кроме Claude Code — здесь только DSH, ~/.codex/AGENTS.md не пишется.",
+      "text": "{\"machineId\": \"m\", \"rules\": {\"longRuleBytes\": 4096, \"agents\": [\"dsh\"]}}",
+      "expect": {
+        "ok": {
+          "machineId": "m",
+          "roots": {},
+          "desktopStore": "auto"
+        }
+      }
+    },
+    {
+      "id": "rules-unknown-agent",
+      "provenance": "computed",
+      "note": "Агент вне списка движка — ошибка, а не молча пропущенный агент: опечатка в «dsh» оставила бы DSH без правил.",
+      "text": "{\"machineId\": \"m\", \"rules\": {\"agents\": [\"cursor\"]}}",
+      "expect": {
+        "error": "unknownAgent"
+      }
+    },
+    {
+      "id": "rules-unknown-key",
+      "provenance": "computed",
+      "note": "Неизвестный ключ раздела rules — ошибка, как везде в конфиге.",
+      "text": "{\"machineId\": \"m\", \"rules\": {\"longRule\": 10}}",
+      "expect": {
+        "error": "invalid"
+      }
     }
   ]
 }

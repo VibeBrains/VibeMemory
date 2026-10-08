@@ -2,7 +2,8 @@
 //! out for each agent in the form it reads, and compared with what a project already holds.
 //!
 //! Pure logic: reading and checking the formats, stacking the levels, assembling an agent's file and reading it back,
-//! judging a project's own rule files against the rules' histories. Files, git and agents are the engine's business.
+//! judging a project's own rule files against the rules' histories, holding a team's rules until they are shown.
+//! Files, git and agents are the engine's business.
 //! The model behind it — `docs/spec/rulesAndSkills.md`.
 
 pub mod assembly;
@@ -10,6 +11,7 @@ pub mod compare;
 pub mod frontmatter;
 pub mod layers;
 pub mod rule;
+pub mod shown;
 pub mod skill;
 
 pub use rule::{Level, Rule, RuleId};

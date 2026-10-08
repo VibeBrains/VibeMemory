@@ -8,6 +8,8 @@
 //! Rules and skills are files of the store on this machine. The host keeps bare repositories only and answers that
 //! they are written where the engine runs — the same answer it gives for hand-offs.
 
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
@@ -16,7 +18,7 @@ use vibememory_cli::rules::{
     read_rules, write_rule,
 };
 use vibememory_core::rules::compare::similar;
-use vibememory_core::rules::layers::resolve;
+use vibememory_core::rules::layers::{Resolved, resolve};
 use vibememory_core::rules::skill::{SKILL_FILE, parse_skill};
 use vibememory_core::rules::{Level, Rule, RuleId};
 
@@ -184,25 +186,7 @@ fn rules_in(dir: &Path) -> Vec<Rule> {
 fn rules_get(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -> ToolResult {
     let places = places(memories)?;
     let project = project(arguments, caller, memories)?;
-    let personal = rules_in(&places.personal.join(PERSONAL_RULES));
-    let team = if places.team {
-        rules_in(&places.store.join(TEAM_RULES))
-    } else {
-        Vec::new()
-    };
-    let own = project
-        .as_deref()
-        .map(|project| {
-            rules_in(
-                &places
-                    .store
-                    .join("projects")
-                    .join(project)
-                    .join(PROJECT_RULES),
-            )
-        })
-        .unwrap_or_default();
-    let resolved = resolve(&personal, &team, &own);
+    let resolved = resolved(&places, project.as_deref());
     let rules: Vec<Value> = resolved
         .rules
         .iter()
@@ -232,7 +216,27 @@ fn rules_get(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) ->
             })
         })
         .collect();
-    Ok(json!({ "project": project, "rules": rules, "conflicts": conflicts }))
+    let mut answer = serde_json::Map::new();
+    answer.insert("project".to_owned(), json!(project));
+    answer.insert("rules".to_owned(), json!(rules));
+    answer.insert("conflicts".to_owned(), json!(conflicts));
+    if places.team {
+        let waiting: Vec<Value> = vibememory_cli::rules_shown::team_rules(&places.store, false)
+            .waiting
+            .iter()
+            .map(|waiting| {
+                json!({ "id": waiting.rule.id.as_str(), "title": waiting.rule.title, "change": waiting.change.as_str() })
+            })
+            .collect();
+        if !waiting.is_empty() {
+            answer.insert("teamRulesNotShown".to_owned(), json!({
+                "rules": waiting,
+                "note": "the team's new or changed rules are not in force on this machine until the person is told: \
+                         name them to the person; `vibememory rules status` shows and takes them",
+            }));
+        }
+    }
+    Ok(Value::Object(answer))
 }
 
 /// A kebab-case id from a title: latin letters and digits; a title in another script gives nothing, and the caller
@@ -430,24 +434,10 @@ fn skill_get(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) ->
         }
         return Err(format!("no skill {name}"));
     }
-    let mut skills = Vec::new();
-    for (level, dir) in &dirs {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            continue;
-        };
-        for entry in entries.filter_map(Result::ok) {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name == vibememory_cli::rules::CLAUDE_SYNCED {
-                continue;
-            }
-            if let Ok(manifest) = std::fs::read_to_string(entry.path().join(SKILL_FILE))
-                .map_err(|error| error.to_string())
-                .and_then(|text| parse_skill(&name, &text).map_err(|error| error.to_string()))
-            {
-                skills.push(json!({ "name": manifest.name, "level": level.as_str(), "description": manifest.description }));
-            }
-        }
-    }
+    let skills: Vec<Value> = skills(&places, project.as_deref())
+        .into_iter()
+        .map(|skill| json!({ "name": skill.name, "level": skill.level.as_str(), "description": skill.description }))
+        .collect();
     Ok(json!({ "skills": skills }))
 }
 
@@ -494,4 +484,225 @@ fn skill_save(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -
     answer.insert(verb.to_owned(), json!(name));
     answer.insert("level".to_owned(), json!(level.as_str()));
     Ok(Value::Object(answer))
+}
+
+/// The scheme of the resources this server gives: a rule in force, a skill.
+pub const SCHEME: &str = "vibememory://";
+
+/// The rules in force and the skills, as MCP resources: an agent whose client reads resources — DSH does — gets them
+/// without a directory of its own. Nothing on the host, which keeps no files of a machine.
+#[must_use]
+pub fn resources(caller: &Caller<'_>, memories: &dyn Memories) -> Vec<Value> {
+    let Ok(places) = places(memories) else {
+        return Vec::new();
+    };
+    let project = project(&json!({}), caller, memories).ok().flatten();
+    let mut found: Vec<Value> = in_force(&places, project.as_deref())
+        .into_iter()
+        .map(|rule| {
+            json!({
+                "uri": format!("{SCHEME}rules/{}", rule.id),
+                "name": rule.id.as_str(),
+                "title": rule.title,
+                "description": format!("A {} rule, always in force", rule.level.as_str()),
+                "mimeType": "text/markdown",
+            })
+        })
+        .collect();
+    found.extend(skills(&places, project.as_deref()).into_iter().map(|skill| {
+        json!({
+            "uri": format!("{SCHEME}skills/{}", skill.name),
+            "name": skill.name,
+            "description": format!("A {} skill: {}", skill.level.as_str(), skill.description),
+            "mimeType": "text/markdown",
+        })
+    }));
+    found
+}
+
+/// One resource's contents.
+///
+/// # Errors
+///
+/// A sentence naming what is not there.
+pub fn read_resource(
+    uri: &str,
+    caller: &Caller<'_>,
+    memories: &dyn Memories,
+) -> Result<Vec<Value>, String> {
+    let places = places(memories)?;
+    let project = project(&json!({}), caller, memories).ok().flatten();
+    let text = if let Some(id) = uri.strip_prefix(&format!("{SCHEME}rules/")) {
+        in_force(&places, project.as_deref())
+            .into_iter()
+            .find(|rule| rule.id.as_str() == id)
+            .map(|rule| format!("## {}\n\n{}", rule.title, rule.body))
+            .ok_or_else(|| format!("no rule {id} is in force here"))?
+    } else if let Some(name) = uri.strip_prefix(&format!("{SCHEME}skills/")) {
+        skill_dirs(&places, project.as_deref())
+            .iter()
+            .rev()
+            .find_map(|(_, dir)| std::fs::read_to_string(dir.join(name).join(SKILL_FILE)).ok())
+            .ok_or_else(|| format!("no skill {name}"))?
+    } else {
+        return Err(format!(
+            "no resource {uri}: this server gives {SCHEME}rules/<id> and {SCHEME}skills/<name>"
+        ));
+    };
+    Ok(vec![
+        json!({ "uri": uri, "mimeType": "text/markdown", "text": text }),
+    ])
+}
+
+/// The rules in force for a project: the person's, the team's as this machine's person was shown them, the
+/// project's, stacked.
+fn resolved(places: &Places, project: Option<&str>) -> Resolved {
+    let personal = rules_in(&places.personal.join(PERSONAL_RULES));
+    let team = if places.team {
+        vibememory_cli::rules_shown::team_rules(&places.store, false).laid
+    } else {
+        Vec::new()
+    };
+    let own = project
+        .map(|project| {
+            rules_in(
+                &places
+                    .store
+                    .join("projects")
+                    .join(project)
+                    .join(PROJECT_RULES),
+            )
+        })
+        .unwrap_or_default();
+    resolve(&personal, &team, &own)
+}
+
+fn in_force(places: &Places, project: Option<&str>) -> Vec<Rule> {
+    resolved(places, project)
+        .rules
+        .into_iter()
+        .map(|in_force| in_force.rule)
+        .collect()
+}
+
+/// A skill an agent can be given.
+struct Found {
+    name: String,
+    level: Level,
+    description: String,
+    dir: PathBuf,
+}
+
+/// The skills for a project, one a name: the level above wins, as for rules. A skill an agent would refuse is left
+/// out; Claude's own synced skills are not other agents'.
+fn skills(places: &Places, project: Option<&str>) -> Vec<Found> {
+    let mut found: BTreeMap<String, Found> = BTreeMap::new();
+    for (level, dir) in skill_dirs(places, project) {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == vibememory_cli::rules::CLAUDE_SYNCED {
+                continue;
+            }
+            if let Ok(manifest) = std::fs::read_to_string(entry.path().join(SKILL_FILE))
+                .map_err(|error| error.to_string())
+                .and_then(|text| parse_skill(&name, &text).map_err(|error| error.to_string()))
+            {
+                found.insert(
+                    name,
+                    Found {
+                        name: manifest.name,
+                        level,
+                        description: manifest.description,
+                        dir: entry.path(),
+                    },
+                );
+            }
+        }
+    }
+    found.into_values().collect()
+}
+
+/// The skills as MCP prompts: a client that shows prompts as commands — Claude Code as `/mcp__vibememory__<name>` —
+/// gives the person every skill of the store by name, in an agent that has no skills directory of its own.
+#[must_use]
+pub fn prompts(caller: &Caller<'_>, memories: &dyn Memories) -> Vec<Value> {
+    let Ok(places) = places(memories) else {
+        return Vec::new();
+    };
+    let project = project(&json!({}), caller, memories).ok().flatten();
+    skills(&places, project.as_deref())
+        .into_iter()
+        .map(|skill| {
+            json!({
+                "name": skill.name,
+                "description": skill.description,
+                "arguments": [{
+                    "name": PROMPT_TASK,
+                    "description": "What to do with the skill; empty leaves it to the conversation.",
+                    "required": false,
+                }],
+            })
+        })
+        .collect()
+}
+
+/// The argument of a skill's prompt: the task it is used for.
+const PROMPT_TASK: &str = "task";
+
+/// One skill as a prompt: its `SKILL.md` and where its other files lie, then the task when one is given.
+///
+/// # Errors
+///
+/// A sentence naming a skill that is not there.
+pub fn prompt(
+    name: &str,
+    arguments: &Value,
+    caller: &Caller<'_>,
+    memories: &dyn Memories,
+) -> Result<Value, String> {
+    let places = places(memories)?;
+    let project = project(&json!({}), caller, memories).ok().flatten();
+    let skill = skills(&places, project.as_deref())
+        .into_iter()
+        .find(|skill| skill.name == name)
+        .ok_or_else(|| format!("no skill {name}"))?;
+    let content = std::fs::read_to_string(skill.dir.join(SKILL_FILE))
+        .map_err(|error| format!("skill {name}: {error}"))?;
+    let mut text = format!(
+        "Use the skill {name}. Its files are in {}; the instructions:\n\n{content}",
+        skill.dir.display()
+    );
+    if let Some(task) = arguments
+        .get(PROMPT_TASK)
+        .and_then(Value::as_str)
+        .filter(|task| !task.trim().is_empty())
+    {
+        let _ = write!(text, "\n\nThe task: {task}");
+    }
+    Ok(json!({
+        "description": skill.description,
+        "messages": [{ "role": "user", "content": { "type": "text", "text": text } }],
+    }))
+}
+
+/// The rules that hold whatever else says — the person's `absolute` ones and the team's `enforced` ones in force —
+/// for the server's introduction: an agent that never calls `rules_get` still carries them.
+#[must_use]
+pub fn held(caller: &Caller<'_>, memories: &dyn Memories) -> Option<String> {
+    let places = places(memories).ok()?;
+    let project = project(&json!({}), caller, memories).ok().flatten();
+    let held: Vec<String> = in_force(&places, project.as_deref())
+        .into_iter()
+        .filter(|rule| rule.absolute || rule.enforced)
+        .map(|rule| format!("## {}\n\n{}", rule.title, rule.body.trim_end()))
+        .collect();
+    (!held.is_empty()).then(|| {
+        format!(
+            "Rules that hold whatever else says (the person's absolute ones, the team's enforced ones):\n\n{}",
+            held.join("\n\n")
+        )
+    })
 }

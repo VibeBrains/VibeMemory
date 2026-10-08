@@ -5,22 +5,21 @@ use std::process::ExitCode;
 
 use vibememory_cli::install::Layout;
 use vibememory_cli::rules::{
-    PERSONAL_RULES, PERSONAL_SKILLS, PROJECT_RULES, TEAM_RULES, TEAM_SKILLS, read_rules, write_rule,
+    PERSONAL_RULES, PERSONAL_SKILLS, PROJECT_RULES, PROJECT_SKILLS, TEAM_RULES, TEAM_SKILLS,
+    read_rules, write_rule,
 };
 use vibememory_cli::rules_sync::{self, MODE_FILE, Mode};
 use vibememory_core::rules::compare::{Merge, State};
 use vibememory_core::rules::layers::resolve;
 use vibememory_core::rules::rule::{MAX_ID, normalize_body};
-use vibememory_core::rules::skill::{SKILL_FILE, parse_skill};
+use vibememory_core::rules::skill::{SKILL_FILE, SKILL_SCRIPTS, parse_skill};
 use vibememory_core::rules::{Level, Rule, RuleId};
 
-const USAGE: &str = "usage: vibememory rule list|show <id>|add --level <personal|team|project> --title <t> [--id <id>] \
-                     [--absolute] [--enforced] [--path <glob>]… (the text on stdin)|remove <id> --level <l>|accept <id> \
-                     [dir]\n       vibememory skill list [dir]\n       vibememory rules sync [dir] [--apply] [--mode \
-                     advise|merge|override]|mode <dir> <advise|merge|override>|lint|split [--apply]";
-
-/// A rule longer than this is a procedure: a skill, with a line in the rule that points at it.
-pub const RULE_LIMIT: usize = 2048;
+const USAGE: &str = "usage: vibememory rule list|show <id>|history <id>|add --level <personal|team|project> --title \
+                     <t> [--id <id>] [--absolute] [--enforced] [--path <glob>]… (the text on stdin)|remove <id> --level \
+                     <l>|move <id> --level <from> --to <to>|accept <id> [dir]\n       vibememory skill list [dir]\n       \
+                     vibememory rules sync [dir] [--apply] [--mode advise|merge|override]|mode <dir> \
+                     <advise|merge|override>|status [dir]|lint|split [--apply] [--skills <id>,…]";
 
 /// Where a directory's rules are: the personal store, the store the directory is routed to, the project there.
 struct Context {
@@ -78,12 +77,13 @@ impl Context {
         }
     }
 
+    /// The rules in force here: a team's as this machine's person was shown them, like its agents have them.
     fn in_force(&self) -> vibememory_core::rules::layers::Resolved {
         let read = |dir: PathBuf| -> Vec<Rule> { read_rules(&dir).0.into_values().collect() };
         resolve(
             &read(self.personal.join(PERSONAL_RULES)),
             &if self.team.is_some() {
-                read(self.store.join(TEAM_RULES))
+                vibememory_cli::rules_shown::team_rules(&self.store, false).laid
             } else {
                 Vec::new()
             },
@@ -103,6 +103,17 @@ impl Context {
     }
 }
 
+/// Prints what a command did, or what stopped it, prefixed with the command.
+fn said(result: Result<String, String>, command: &str) -> ExitCode {
+    match result {
+        Ok(text) => {
+            println!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(error) => fail(&format!("{command}: {error}")),
+    }
+}
+
 fn fail(message: &str) -> ExitCode {
     eprintln!("{message}");
     ExitCode::FAILURE
@@ -113,6 +124,7 @@ pub fn rule(layout: &Layout, args: &[String]) -> ExitCode {
     let mut level = None;
     let mut id = None;
     let mut title = None;
+    let mut to = None;
     let mut paths = Vec::new();
     let (mut absolute, mut enforced) = (false, false);
     let mut words = Vec::new();
@@ -122,6 +134,7 @@ pub fn rule(layout: &Layout, args: &[String]) -> ExitCode {
             "--level" => level = rest.next().cloned(),
             "--id" => id = rest.next().cloned(),
             "--title" => title = rest.next().cloned(),
+            "--to" => to = rest.next().cloned(),
             "--path" => paths.extend(rest.next().cloned()),
             "--absolute" => absolute = true,
             "--enforced" => enforced = true,
@@ -138,21 +151,18 @@ pub fn rule(layout: &Layout, args: &[String]) -> ExitCode {
             let Some(id) = words.get(1) else {
                 return fail(USAGE);
             };
-            match context(layout, dir_arg(2)) {
-                Ok(context) => match context
-                    .in_force()
-                    .rules
-                    .into_iter()
-                    .find(|rule| rule.rule.id.as_str() == id)
-                {
-                    Some(in_force) => {
-                        print!("{}", in_force.rule.render());
-                        ExitCode::SUCCESS
-                    }
-                    None => fail(&format!("no rule {id} is in force here")),
-                },
-                Err(error) => fail(&error),
-            }
+            said(
+                context(layout, dir_arg(2)).and_then(|context| {
+                    context
+                        .in_force()
+                        .rules
+                        .into_iter()
+                        .find(|rule| rule.rule.id.as_str() == id)
+                        .map(|in_force| in_force.rule.render().trim_end().to_owned())
+                        .ok_or_else(|| format!("no rule {id} is in force here"))
+                }),
+                "rule show",
+            )
         }
         Some("add") => add(
             layout,
@@ -167,34 +177,44 @@ pub fn rule(layout: &Layout, args: &[String]) -> ExitCode {
             let (Some(id), Some(level)) = (words.get(1), level.as_deref()) else {
                 return fail(USAGE);
             };
-            let result = Level::parse(level)
+            let removed = Level::parse(level)
                 .map_err(|error| error.to_string())
                 .and_then(|level| context(layout, dir_arg(2))?.dir_of(level))
                 .and_then(|dir| {
                     std::fs::remove_file(dir.join(format!("{id}.md")))
                         .map_err(|error| error.to_string())
+                })
+                .map(|()| {
+                    format!("rule {id} removed; the agents' copies go with the engine's next run")
                 });
-            result.map_or_else(
-                |error| fail(&format!("rule remove: {error}")),
-                |()| {
-                    println!("rule {id} removed; the agents' copies go with the engine's next run");
-                    ExitCode::SUCCESS
-                },
+            said(removed, "rule remove")
+        }
+        Some("move") => {
+            let (Some(id), Some(from), Some(to)) = (words.get(1), level.as_deref(), to.as_deref())
+            else {
+                return fail(USAGE);
+            };
+            said(move_rule(layout, id, from, to, dir_arg(2)), "rule move")
+        }
+        Some("history") => {
+            let Some(id) = words.get(1) else {
+                return fail(USAGE);
+            };
+            said(
+                context(layout, dir_arg(2))
+                    .and_then(|context| history(&context, id))
+                    .map(|lines| lines.join("\n")),
+                "rule history",
             )
         }
         Some("accept") => {
             let Some(id) = words.get(1) else {
                 return fail(USAGE);
             };
-            context(layout, dir_arg(2))
-                .and_then(|context| accept(&context, id))
-                .map_or_else(
-                    |error| fail(&format!("rule accept: {error}")),
-                    |accepted| {
-                        println!("{accepted}");
-                        ExitCode::SUCCESS
-                    },
-                )
+            said(
+                context(layout, dir_arg(2)).and_then(|context| accept(&context, id)),
+                "rule accept",
+            )
         }
         _ => fail(USAGE),
     }
@@ -235,16 +255,151 @@ fn add(
             extra: Vec::new(),
         };
         rule.validate().map_err(|error| error.to_string())?;
-        write_rule(&context.dir_of(level)?, &rule)?;
-        Ok(id)
+        put(layout, &context, &rule)
     })();
     match result {
-        Ok(id) => {
-            println!("rule {id} saved; every agent gets it with the engine's next run");
+        Ok(said) => {
+            println!("{said}");
             ExitCode::SUCCESS
         }
         Err(error) => fail(&error),
     }
+}
+
+/// Writes a rule where its level puts it. A team's rule from a terminal is a proposal, as from an agent: the host
+/// takes `rules/` of a team from its owner and admins only, and a member's push of it would hold the whole store
+/// back until a reclone. The owner or an admin accepts it with `rule accept`.
+fn put(layout: &Layout, context: &Context, rule: &Rule) -> Result<String, String> {
+    if rule.level == Level::Team {
+        let team = context
+            .team
+            .as_deref()
+            .ok_or("this directory is not a team's project")?;
+        let who = vibememory_cli::team_connect::read_record(layout, team)?.member;
+        let dir = context
+            .store
+            .join(vibememory_cli::rules::PROPOSALS)
+            .join(TEAM_RULES);
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        std::fs::write(dir.join(format!("{}.{who}.md", rule.id)), rule.render())
+            .map_err(|error| error.to_string())?;
+        return Ok(format!(
+            "rule {} proposed to team {team}: its owner or an admin accepts it with `vibememory rule accept {}`",
+            rule.id, rule.id
+        ));
+    }
+    write_rule(&context.dir_of(rule.level)?, rule)?;
+    Ok(format!(
+        "rule {} saved; every agent gets it with the engine's next run",
+        rule.id
+    ))
+}
+
+/// `rule move <id> --level <from> --to <to>`: a rule that turned out to be wider or narrower than its level. A flag
+/// the new level does not have is dropped and said: `absolute` is a person's, `enforced` a team's.
+fn move_rule(
+    layout: &Layout,
+    id: &str,
+    from: &str,
+    to: &str,
+    dir: Option<&str>,
+) -> Result<String, String> {
+    let from = Level::parse(from).map_err(|error| error.to_string())?;
+    let to = Level::parse(to).map_err(|error| error.to_string())?;
+    if from == to {
+        return Err(format!("rule {id} is already at the {} level", to.as_str()));
+    }
+    let context = context(layout, dir)?;
+    let source = context.dir_of(from)?.join(format!("{id}.md"));
+    let text = std::fs::read_to_string(&source)
+        .map_err(|error| format!("{}: {error}", source.display()))?;
+    let mut rule = Rule::parse(&text).map_err(|error| error.to_string())?;
+    let mut dropped = Vec::new();
+    if rule.absolute && to != Level::Personal {
+        rule.absolute = false;
+        dropped.push("absolute");
+    }
+    if rule.enforced && to != Level::Team {
+        rule.enforced = false;
+        dropped.push("enforced");
+    }
+    rule.level = to;
+    let said = put(layout, &context, &rule)?;
+    let said = if to == Level::Team {
+        // a proposal is not a rule yet: the old one stays in force until the team takes the new one
+        format!(
+            "{said}; the {from} rule stays until then — `vibememory rule remove {id} --level {from}` after it is \
+             accepted",
+            from = from.as_str()
+        )
+    } else {
+        std::fs::remove_file(&source).map_err(|error| format!("{}: {error}", source.display()))?;
+        said
+    };
+    Ok(if dropped.is_empty() {
+        said
+    } else {
+        format!(
+            "{said} ({} dropped: the {} level has no such flag)",
+            dropped.join(", "),
+            to.as_str()
+        )
+    })
+}
+
+/// `rule history <id>`: every version of the rule in force, from the store's git, oldest first.
+fn history(context: &Context, id: &str) -> Result<Vec<String>, String> {
+    let resolved = context.in_force();
+    let rule = resolved
+        .rules
+        .iter()
+        .find(|in_force| in_force.rule.id.as_str() == id)
+        .map(|in_force| &in_force.rule)
+        .ok_or_else(|| format!("no rule {id} is in force here"))?;
+    let (root, relative) = match rule.level {
+        Level::Personal => (
+            context.personal.clone(),
+            format!("{PERSONAL_RULES}/{id}.md"),
+        ),
+        Level::Team => (context.store.clone(), format!("{TEAM_RULES}/{id}.md")),
+        Level::Project => (
+            context.store.clone(),
+            format!(
+                "projects/{}/{PROJECT_RULES}/{id}.md",
+                context.project.as_deref().unwrap_or_default()
+            ),
+        ),
+    };
+    let log = vibememory_cli::git::run_with_timeout(
+        vibememory_cli::git::command(
+            &root,
+            &[
+                "log",
+                "--reverse",
+                "--format=%h %ad %s",
+                "--date=short",
+                "--",
+                &relative,
+            ],
+        ),
+        std::time::Duration::from_secs(20),
+    )?
+    .unwrap_or_default();
+    let mut lines: Vec<String> = log
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if lines.is_empty() {
+        lines.push("not committed yet: the engine's next run commits it".to_owned());
+    }
+    lines.push(format!(
+        "now: {} — {} bytes, {} level",
+        rule.title,
+        rule.body.len(),
+        rule.level.as_str()
+    ));
+    Ok(lines)
 }
 
 fn list(context: &Context) -> ExitCode {
@@ -342,6 +497,14 @@ pub fn skill(layout: &Layout, args: &[String]) -> ExitCode {
         Ok(context) => context,
         Err(error) => return fail(&error),
     };
+    for line in skill_lines(&context) {
+        println!("{line}");
+    }
+    ExitCode::SUCCESS
+}
+
+/// One line a skill, by level: what an agent gets, what it ignores, and a team's skill that runs code.
+fn skill_lines(context: &Context) -> Vec<String> {
     let mut dirs = vec![("personal", context.personal.join(PERSONAL_SKILLS))];
     if context.team.is_some() {
         dirs.push(("team", context.store.join(TEAM_SKILLS)));
@@ -349,9 +512,14 @@ pub fn skill(layout: &Layout, args: &[String]) -> ExitCode {
     if let Some(project) = &context.project {
         dirs.push((
             "project",
-            context.store.join("projects").join(project).join("skills"),
+            context
+                .store
+                .join("projects")
+                .join(project)
+                .join(PROJECT_SKILLS),
         ));
     }
+    let mut lines = Vec::new();
     for (level, dir) in dirs {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
@@ -366,20 +534,108 @@ pub fn skill(layout: &Layout, args: &[String]) -> ExitCode {
             let checked = std::fs::read_to_string(dir.join(&name).join(SKILL_FILE))
                 .map_err(|error| error.to_string())
                 .and_then(|text| parse_skill(&name, &text).map_err(|error| error.to_string()));
-            match checked {
+            lines.push(match checked {
                 Ok(manifest) => {
-                    let only = if manifest.claude_only.is_empty() {
-                        String::new()
+                    let mut marks = Vec::new();
+                    if !manifest.claude_only.is_empty() {
+                        marks.push(format!(
+                            "other agents ignore {}",
+                            manifest.claude_only.join(", ")
+                        ));
+                    }
+                    // a script is code an agent runs, not text it reads: a team's is somebody else's code
+                    if dir.join(&name).join(SKILL_SCRIPTS).is_dir() {
+                        marks.push(if level == "team" {
+                            "runs the team's scripts".to_owned()
+                        } else {
+                            "runs scripts".to_owned()
+                        });
+                    }
+                    if marks.is_empty() {
+                        format!("{level:<9} {name}")
                     } else {
-                        format!(" [Claude Code only: {}]", manifest.claude_only.join(", "))
-                    };
-                    println!("{level:<9} {name}{only}");
+                        format!("{level:<9} {name} [{}]", marks.join("; "))
+                    }
                 }
-                Err(error) => println!("{level:<9} {name} — not given to the agents: {error}"),
-            }
+                Err(error) => format!("{level:<9} {name} — not given to the agents: {error}"),
+            });
         }
     }
-    ExitCode::SUCCESS
+    lines
+}
+
+/// `vibememory rules status [dir]`: each agent's copy of the person's rules against the store, the rules in force
+/// here, a team's rules that wait to be shown — shown by this and in force from the engine's next run — and the
+/// skills with what an agent ignores in them.
+fn status(layout: &Layout, dir: Option<&str>) -> Result<Vec<String>, String> {
+    let context = context(layout, dir)?;
+    let settings = vibememory_cli::config::RulesConfig::of_engine(&layout.engine_dir);
+    let agents =
+        vibememory_cli::rules::Agents::of(&layout.config_dir, layout.home.as_deref(), &settings);
+    let mut lines = vec!["agents".to_owned()];
+    for state in vibememory_cli::rules::agent_states(&context.personal, &agents) {
+        let stand = if state.behind.is_empty() {
+            "in step".to_owned()
+        } else {
+            format!(
+                "{} behind the store ({}): the engine's next run writes them",
+                state.behind.len(),
+                state.behind.join(", ")
+            )
+        };
+        lines.push(format!(
+            "  {:<17} {} — {} bytes, {stand}",
+            state.agent,
+            state.path.display(),
+            state.bytes
+        ));
+    }
+    for path in &agents.released.files {
+        lines.push(format!("  off in rules.agents: {}", path.display()));
+    }
+    for warning in vibememory_cli::rules::check(&context.personal, &agents) {
+        lines.push(format!("  {warning}"));
+    }
+    let resolved = context.in_force();
+    let count = |level: Level| {
+        resolved
+            .rules
+            .iter()
+            .filter(|rule| rule.rule.level == level)
+            .count()
+    };
+    lines.push(format!(
+        "here: {} rule(s) in force — {} personal, {} team, {} project",
+        resolved.rules.len(),
+        count(Level::Personal),
+        count(Level::Team),
+        count(Level::Project)
+    ));
+    for (absolute, _) in &resolved.conflicts {
+        lines.push(format!(
+            "  conflict {}: the person's absolute rule and the team's enforced one differ — both are in force",
+            absolute.id
+        ));
+    }
+    if let Some(team) = &context.team {
+        let held = vibememory_cli::rules_shown::team_rules(&context.store, true);
+        if !held.waiting.is_empty() {
+            lines.push(format!("team {team}, not shown before:"));
+            lines.extend(
+                vibememory_cli::rules_shown::lines(&held.waiting)
+                    .into_iter()
+                    .map(|line| format!("  {line}")),
+            );
+            vibememory_cli::rules_shown::mark_shown(&context.store)?;
+            lines.push("  shown now: in force from the engine's next run".to_owned());
+        }
+    }
+    let skills = skill_lines(&context);
+    if !skills.is_empty() {
+        lines.push("skills".to_owned());
+        lines.extend(skills.into_iter().map(|line| format!("  {line}")));
+    }
+    Ok(lines)
 }
 
 /// `vibememory rules …`.
@@ -410,6 +666,10 @@ pub fn rules(layout: &Layout, args: &[String]) -> ExitCode {
             )
         }
         Some("lint") => lint(layout),
+        Some("status") => said(
+            status(layout, args.get(1).map(String::as_str)).map(|lines| lines.join("\n")),
+            "rules status",
+        ),
         Some("split") => {
             let apply = args.iter().any(|arg| arg == "--apply");
             // the sections the owner chose to become skills: a skill is loaded on demand, a rule always
@@ -458,6 +718,22 @@ fn sync(layout: &Layout, args: &[String]) -> ExitCode {
     let mode = asked
         .unwrap_or_else(|| rules_sync::mode_of(&context.store.join("projects").join(&project)));
     let judged = rules_sync::judge_project(&root, &histories);
+    let in_force = context.in_force();
+    let ids: Vec<&str> = in_force
+        .rules
+        .iter()
+        .map(|rule| rule.rule.id.as_str())
+        .collect();
+    let learned = rules_sync::learned(&context.store, &project, &ids);
+    if !learned.is_empty() {
+        println!("learned in sessions — feedback memories that could be the project's rules:");
+        for lesson in &learned {
+            println!(
+                "  {} — {}: `vibememory rule add --level project --id {} --title …` with the rule on stdin",
+                lesson.id, lesson.description, lesson.id
+            );
+        }
+    }
     let any = print_findings(&judged);
     if !any {
         println!("the project has no rule files of its own");
@@ -542,13 +818,14 @@ fn print_findings(judged: &[rules_sync::Judged]) -> bool {
 }
 
 fn lint(layout: &Layout) -> ExitCode {
+    let limit = vibememory_cli::config::RulesConfig::of_engine(&layout.engine_dir).long_rule_bytes;
     let (rules, problems) = read_rules(&layout.store().join(PERSONAL_RULES));
     for problem in problems {
         println!("broken    {problem}");
     }
     let mut long = 0;
     for rule in rules.values() {
-        if rule.body.len() > RULE_LIMIT {
+        if rule.body.len() > limit {
             long += 1;
             println!(
                 "long      {} — {} bytes: a procedure, better a skill with a line here pointing at it",
@@ -558,10 +835,7 @@ fn lint(layout: &Layout) -> ExitCode {
         }
     }
     if long == 0 {
-        println!(
-            "{} rule(s), none longer than {RULE_LIMIT} bytes",
-            rules.len()
-        );
+        println!("{} rule(s), none longer than {limit} bytes", rules.len());
     }
     ExitCode::SUCCESS
 }
@@ -680,6 +954,7 @@ fn cuts(text: &str) -> (String, Vec<Cut>) {
 /// `vibememory rules split [--apply]`: the owner's `CLAUDE.md` cut into rules at its `##` sections, a long one into a
 /// skill with a pointing rule. Without `--apply` only the plan is printed, for the owner to read first.
 fn split(layout: &Layout, apply: bool, skills: &[String]) -> ExitCode {
+    let limit = vibememory_cli::config::RulesConfig::of_engine(&layout.engine_dir).long_rule_bytes;
     let path = layout.store().join("config").join("CLAUDE.md");
     let Ok(text) = std::fs::read_to_string(&path) else {
         return fail(&format!("{}: not there", path.display()));
@@ -698,7 +973,7 @@ fn split(layout: &Layout, apply: bool, skills: &[String]) -> ExitCode {
     for cut in &cuts {
         let shape = if cut.skill {
             "rule + skill"
-        } else if cut.body.len() > RULE_LIMIT && !cut.absolute {
+        } else if cut.body.len() > limit && !cut.absolute {
             "rule (long: a skill candidate)"
         } else {
             "rule"

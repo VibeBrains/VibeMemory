@@ -64,7 +64,8 @@ Subject и body — по-русски.
 | `paths` | нет | глобы файлов, о которых правило; пусто — всегда. Claude Code грузит такое правило только при работе с этими файлами |
 
 Текст — после шапки: одна мысль на строку, что делать и почему.
-Правило длиннее 2 КБ — процедура: вынести в навык, в правиле оставить строку-указатель.
+Правило длиннее порога (`rules.longRuleBytes` в `config.json`, по умолчанию 2048 байт) — процедура: вынести в навык,
+в правиле оставить строку-указатель.
 Токен `vmt_…` в правиле не пропускается: правила уезжают на все машины.
 Неизвестные ключи шапки сохраняются как есть.
 
@@ -96,7 +97,7 @@ description: Как выкатить сервис на хост: сборка, �
 | Claude Code | `~/.claude/rules/vm-<id>.md`; в проекте `.claude/rules/vm-<id>.md` | `~/.claude/skills/`; в проекте `.claude/skills/` |
 | DeepSeek Harness | `~/.dsh/AGENTS.md` — `CLAUDE.md` и правила с метками; в проекте `AGENTS.local.md` | `~/.agents/skills/`; в проекте `.agents/skills/` |
 | Codex | `~/.codex/AGENTS.md` | `~/.codex/skills/` |
-| Любой MCP-агент | `rules_get` | `skill_get` |
+| Любой MCP-агент | `instructions` при знакомстве — правила `absolute` и `enforced`; `rules_get`; resources `vibememory://rules/<id>` | `skill_get`; resources `vibememory://skills/<name>`; prompts по имени навыка |
 
 Проектные файлы лежат под `.git/info/exclude` — git проекта их не видит.
 Правило в собранном файле обёрнуто метками `<!-- vibememory:rule <id>@<версия> -->` … `<!-- /vibememory:rule -->`:
@@ -107,17 +108,40 @@ description: Как выкатить сервис на хост: сборка, �
 ```bash
 vibememory rule list [каталог]                       # правила в силе: уровень, флаги, что перекрыто
 vibememory rule show <id> [каталог]
+vibememory rule history <id> [каталог]                # коммиты правила в git стора и его нынешний вид
 vibememory rule add --level <уровень> --title "…" [--id <id>] [--absolute] [--enforced] [--path <глоб>] < текст
+vibememory rule move <id> --level <откуда> --to <куда> [каталог]
 vibememory rule remove <id> --level <уровень> [каталог]
 vibememory rule accept <id> [каталог]                 # принять предложение участника команды
 vibememory skill list [каталог]
 vibememory rules sync [каталог] [--apply] [--mode advise|merge|override]
 vibememory rules mode <каталог> advise|merge|override
+vibememory rules status [каталог]                     # копии у агентов, правила в силе, командные до показа, навыки
 vibememory rules lint
 vibememory rules split [--apply] [--skills <id>,…]    # CLAUDE.md — в личные правила по разделам ##
 ```
 
-Сервер памяти: `rules_get`, `rule_save`, `skill_get`, `skill_save`.
+`rule add --level team` пишет не в `rules/` команды, а предложение `proposals/rules/<id>.<ник>.md`: правила команды
+хост принимает только от владельца и админов, они и принимают предложение `rule accept`.
+`rule move` снимает флаг, которого у нового уровня нет (`absolute` — только `personal`, `enforced` — только `team`), и
+называет его. Перенос в `team` — предложение: прежнее правило остаётся в силе, пока предложение не примут.
+
+Сервер памяти: инструменты `rules_get`, `rule_save`, `skill_get`, `skill_save` и ресурсы MCP — `vibememory://rules/<id>`
+для каждого правила в силе и `vibememory://skills/<name>` для каждого навыка (`resources/list`, `resources/read`).
+Каждый навык — ещё и prompt с его именем (`prompts/list`, `prompts/get`) и необязательным аргументом `task`.
+
+Командное правило, пришедшее с пуллом, действует после показа: `SessionStart` в проекте команды или `rules status`
+говорят, что пришло и от кого, и правило ложится со следующим запуском движка. Изменённое до показа остаётся в
+показанном виде, `enforced` включённый без показа — тоже изменение; убранное командой уходит сразу.
+
+Раздел `rules` в `config.json`:
+
+```json
+"rules": { "longRuleBytes": 2048, "agents": ["dsh", "codex"] }
+```
+
+`agents` — каким агентам кроме Claude Code раскладывать правила и навыки; нет ключа — всем, что есть на машине.
+Агент вне списка получает свой файл обратно: части движка уходят, строки человека остаются.
 
 ## 8. Сравнение с файлами проекта
 
@@ -135,6 +159,9 @@ vibememory rules split [--apply] [--skills <id>,…]    # CLAUDE.md — в ли�
 слившееся; `override` кладёт правило в силе поверх каждого совпавшего блока, версию проекта — в карантин.
 Блоки «только в проекте» не трогаются ни в одном режиме.
 
+Ещё `rules sync` называет уроки сессий — воспоминания проекта с `type: feedback`, у которых нет правила с тем же `id`.
+Это правила по сути: поднять такое — `rule add --level project --id <id воспоминания>`. Воспоминание остаётся.
+
 ## Фикстуры
 
 `fixtures/rules/rulesScenarios.json` — данные теста `crates/vibememory-core/tests/rules_fixtures.rs`. Разделы:
@@ -151,6 +178,8 @@ vibememory rules split [--apply] [--skills <id>,…]    # CLAUDE.md — в ли�
   старой к новой) и решения по блокам (`heading`, `rule`, `guessed`, `state`, для `stale` — `behind`, для `custom` —
   `clean` и `merged`)
 - `similar` — заголовок и текст нового правила, известные `[id, заголовок, текст]` и какие `id` найдены
+- `shown` — командные правила в сторе (`current`) и показанные на машине (`shown`): что раскладывается (`laid` —
+  `[id, текст]`) и что ждёт показа (`unseen` — `[id, new|changed]`)
 
 Новый кейс: добавить в нужный раздел и прогнать `cargo test -p vibememory-core --test rules_fixtures`.
 Проверка, что кейс держит: сломать в коде то, что он проверяет, — тест обязан упасть.

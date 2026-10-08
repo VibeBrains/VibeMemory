@@ -428,3 +428,46 @@ pub fn notice(
         )
     })
 }
+
+/// A lesson a project's memory holds as `feedback`: a correction learned in a session, a rule in all but name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Learned {
+    /// The memory's id, a ready rule id.
+    pub id: String,
+    /// Its one line.
+    pub description: String,
+}
+
+/// The project's `feedback` memories that still hold and that no rule carries by their id: what `rules sync` offers
+/// to raise into rules. The memories stay as they are.
+#[must_use]
+pub fn learned(store: &Path, project: &str, rule_ids: &[&str]) -> Vec<Learned> {
+    let dir = store
+        .join("projects")
+        .join(project)
+        .join(crate::memory::MEMORY_DIR_NAME);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut learned: Vec<Learned> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let bytes = std::fs::read(&path).ok()?;
+            vibememory_core::memory::markdown::parse_document(&path.display().to_string(), &bytes)
+                .ok()
+        })
+        .map(|document| document.record)
+        .filter(|record| {
+            record.kind == vibememory_core::memory::record::RecordKind::Feedback
+                && record.status == vibememory_core::memory::record::RecordStatus::Active
+                && !rule_ids.contains(&record.id.as_str())
+        })
+        .map(|record| Learned {
+            id: record.id.as_str().to_owned(),
+            description: record.description,
+        })
+        .collect();
+    learned.sort_by(|a, b| a.id.cmp(&b.id));
+    learned
+}

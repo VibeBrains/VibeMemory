@@ -78,9 +78,58 @@ pub struct RawConfig {
     pub max_deletions_per_tick: Option<usize>,
     /// The owner's rules for team stores, by id — the team's slug.
     pub stores: BTreeMap<String, StoreRules>,
+    /// How the person's rules and skills are handled: thresholds, and which agents get them.
+    pub rules: RulesConfig,
     /// `nameOverrides` and `ignoreCwd`, validated by the core.
     #[serde(flatten)]
     pub naming: RawNamingConfig,
+}
+
+/// The agents besides Claude Code the engine writes rules and skills for, by the name `rules.agents` takes.
+pub const RULES_AGENTS: &[&str] = &["dsh", "codex"];
+
+/// The size of a rule, in bytes, past which it is a procedure: a skill, with a line in the rule pointing at it.
+pub const DEFAULT_LONG_RULE_BYTES: usize = 2048;
+
+/// The `rules` section of `config.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+pub struct RulesConfig {
+    /// A rule longer than this is named by `rules lint` and `doctor` as a procedure better kept as a skill.
+    pub long_rule_bytes: usize,
+    /// The agents besides Claude Code that get the person's rules and skills, from [`RULES_AGENTS`]; absent is every
+    /// one that lives on this machine. A person who does not want `~/.codex/AGENTS.md` written leaves `codex` out.
+    pub agents: Option<Vec<String>>,
+}
+
+impl Default for RulesConfig {
+    fn default() -> Self {
+        Self {
+            long_rule_bytes: DEFAULT_LONG_RULE_BYTES,
+            agents: None,
+        }
+    }
+}
+
+impl RulesConfig {
+    /// Whether the person lets the engine write rules for an agent of [`RULES_AGENTS`].
+    #[must_use]
+    pub fn allows(&self, agent: &str) -> bool {
+        self.agents
+            .as_ref()
+            .is_none_or(|agents| agents.iter().any(|name| name == agent))
+    }
+
+    /// The section of the engine's `config.json`, or its defaults when the file cannot be read: rules are written
+    /// by the tick, which must not stop over a section it can do without.
+    #[must_use]
+    pub fn of_engine(engine_dir: &std::path::Path) -> Self {
+        std::fs::read_to_string(engine_dir.join("config.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<RawConfig>(&text).ok())
+            .map(|raw| raw.rules)
+            .unwrap_or_default()
+    }
 }
 
 /// Why a configuration cannot be used. The engine refuses to start rather than run on half of it.
@@ -107,6 +156,16 @@ pub enum ConfigError {
     /// The naming rules did not validate.
     #[error(transparent)]
     Naming(#[from] NamingError),
+    /// `rules.agents` names an agent the engine does not write rules for.
+    #[error(
+        "config.json: rules.agents has {name:?}; the agents are {known} (Claude Code always gets its rules)"
+    )]
+    UnknownAgent {
+        /// What was written.
+        name: String,
+        /// The agents the engine knows, as `rules.agents` names them.
+        known: String,
+    },
 }
 
 /// A configuration that has been read and checked.
@@ -133,6 +192,8 @@ pub struct Config {
     pub max_deletions_per_tick: usize,
     /// Which store a working directory belongs to, compiled from `stores.<id>.cwd`.
     pub routes: StoreRoutes,
+    /// How the person's rules and skills are handled.
+    pub rules: RulesConfig,
 }
 
 impl Config {
@@ -180,6 +241,18 @@ impl Config {
                 field: "signingIdentity",
             });
         }
+        if let Some(name) = raw
+            .rules
+            .agents
+            .iter()
+            .flatten()
+            .find(|name| !RULES_AGENTS.contains(&name.as_str()))
+        {
+            return Err(ConfigError::UnknownAgent {
+                name: name.clone(),
+                known: RULES_AGENTS.join(", "),
+            });
+        }
         let routes = StoreRoutes::compile(
             &raw.stores
                 .iter()
@@ -207,6 +280,7 @@ impl Config {
                 .max_deletions_per_tick
                 .unwrap_or(crate::guard::DEFAULT_MAX_DELETIONS_PER_TICK),
             routes,
+            rules: raw.rules,
         })
     }
 

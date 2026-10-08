@@ -1,7 +1,7 @@
 //! JSON-RPC over stdio, which is all MCP is on the wire.
 //!
-//! Written by hand rather than taken from a library: the surface is three methods, and the
-//! project's rule is zero runtime dependencies on the target machine. Answering is pure — a
+//! Written by hand rather than taken from a library: the surface is a handful of methods — tools,
+//! resources, prompts — and the project's rule is zero runtime dependencies on the target machine. Answering is pure — a
 //! request and a [`Memories`] go in, a response comes out — and [`serve_lines`] runs it over any
 //! pair of streams, so the whole protocol is tested without a store or a pipe.
 
@@ -89,7 +89,7 @@ pub fn handle(
         "initialize" => {
             let mut result = json!({
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": { "tools": {} },
+                "capabilities": { "tools": {}, "resources": {}, "prompts": {} },
                 "serverInfo": { "name": "vibememory", "version": env!("CARGO_PKG_VERSION") },
             });
             // The agent learns the name the store gave its folder: without it a model asked to
@@ -109,6 +109,9 @@ pub fn handle(
                  files itself; rule_save and skill_save write one at the level the person named. {}",
                 crate::rule_tools::LEVELS
             );
+            if let Some(held) = crate::rule_tools::held(caller, memories) {
+                let _ = write!(instructions, "\n\n{held}");
+            }
             if let Some(fields) = result.as_object_mut() {
                 fields.insert("instructions".to_owned(), json!(instructions));
             }
@@ -132,6 +135,43 @@ pub fn handle(
                 // would hide the reason from the model, which is the one that has to act on it.
                 Ok(value) => Response::ok(id, tool_content(&value, false)),
                 Err(problem) => Response::ok(id, tool_content(&json!({ "error": problem }), true)),
+            }
+        }
+        "resources/list" => Response::ok(
+            id,
+            json!({ "resources": crate::rule_tools::resources(caller, memories) }),
+        ),
+        "resources/read" => {
+            let uri = request
+                .params
+                .get("uri")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match crate::rule_tools::read_resource(uri, caller, memories) {
+                Ok(contents) => Response::ok(id, json!({ "contents": contents })),
+                // the spec's code for a resource that is not there
+                Err(problem) => Response::failed(id, -32002, &problem),
+            }
+        }
+        "prompts/list" => Response::ok(
+            id,
+            json!({ "prompts": crate::rule_tools::prompts(caller, memories) }),
+        ),
+        "prompts/get" => {
+            let name = request
+                .params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let arguments = request
+                .params
+                .get("arguments")
+                .cloned()
+                .unwrap_or(json!({}));
+            match crate::rule_tools::prompt(name, &arguments, caller, memories) {
+                Ok(prompt) => Response::ok(id, prompt),
+                // the spec's code for parameters that name nothing
+                Err(problem) => Response::failed(id, -32602, &problem),
             }
         }
         "ping" => Response::ok(id, json!({})),
