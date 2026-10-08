@@ -6,9 +6,9 @@
 //! would be one more thing to install and one more thing to die without a witness. What decides is
 //! in `vibememory_core::agent_watch`; here are the files and the wrapper's process.
 //!
-//! An agent the engine knows by a preset — `DeepSeek` Harness, `--preset dsh` — needs no wrapper:
-//! the tick reads its log itself (`vibememory_core::dsh`) and places the session as `session put`
-//! would.
+//! An agent the engine knows by a preset — `DeepSeek` Harness, `--preset dsh`, and Codex, `--preset
+//! codex` — needs no wrapper: the tick reads its log itself (`vibememory_core::dsh`,
+//! `vibememory_core::codex`) and places the session as `session put` would.
 //!
 //! Everything lives on this machine: the directory and the wrapper are this machine's, and a team
 //! store has no business knowing where an agent keeps its logs here.
@@ -21,7 +21,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use vibememory_core::naming::slug::is_slug;
-use vibememory_core::{agent_watch, dsh};
+use vibememory_core::{agent_watch, codex, dsh};
 
 use crate::config::Config;
 use crate::install::Layout;
@@ -62,17 +62,20 @@ pub const AGENT_VAR: &str = "VIBEMEMORY_AGENT";
 pub enum Preset {
     /// `DeepSeek` Harness: `~/.dsh/sessions/<directory>/<session>/session.v4.jsonl.zstd`.
     Dsh,
+    /// Codex: `~/.codex/sessions/<year>/<month>/<day>/rollout-<time>-<id>.jsonl`.
+    Codex,
 }
 
 impl Preset {
     /// Every preset the engine knows, in the order `doctor` lists them.
-    pub const ALL: &[Self] = &[Self::Dsh];
+    pub const ALL: &[Self] = &[Self::Dsh, Self::Codex];
 
     /// The name `--preset` takes.
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Dsh => "dsh",
+            Self::Codex => "codex",
         }
     }
 
@@ -82,6 +85,7 @@ impl Preset {
     pub const fn agent(self) -> &'static str {
         match self {
             Self::Dsh => "dsh-desktop",
+            Self::Codex => "codex",
         }
     }
 
@@ -90,13 +94,17 @@ impl Preset {
     pub const fn title(self) -> &'static str {
         match self {
             Self::Dsh => "DeepSeek Harness",
+            Self::Codex => "Codex",
         }
     }
 
     /// The preset of a name.
     #[must_use]
     pub fn of(name: &str) -> Option<Self> {
-        (name == Self::Dsh.name()).then_some(Self::Dsh)
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|preset| preset.name() == name)
     }
 
     /// The agent's own directory under the home directory: its presence says the agent lives on
@@ -105,6 +113,7 @@ impl Preset {
     pub fn home(self, home: &Path) -> PathBuf {
         match self {
             Self::Dsh => home.join(".dsh"),
+            Self::Codex => home.join(".codex"),
         }
     }
 
@@ -112,7 +121,7 @@ impl Preset {
     #[must_use]
     pub fn default_dir(self, home: &Path) -> PathBuf {
         match self {
-            Self::Dsh => self.home(home).join("sessions"),
+            Self::Dsh | Self::Codex => self.home(home).join("sessions"),
         }
     }
 
@@ -120,11 +129,10 @@ impl Preset {
     /// temporary file — is neither handed over nor taken as a sign of life.
     #[must_use]
     pub fn is_log(self, path: &Path) -> bool {
+        let name = path.file_name().and_then(|name| name.to_str());
         match self {
-            Self::Dsh => path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(vibememory_core::dsh::is_log_name),
+            Self::Dsh => name.is_some_and(dsh::is_log_name),
+            Self::Codex => name.is_some_and(codex::is_log_name),
         }
     }
 }
@@ -633,6 +641,11 @@ fn read_log(
             }
             Err(problem) => return Err(Missed::Log(failure(describe_dsh(&problem)))),
         },
+        Preset::Codex => match codex::convert(&raw) {
+            Ok(session) => session,
+            Err(codex::Problem::Empty) => return Ok(()),
+            Err(problem) => return Err(Missed::Log(failure(describe_codex(&problem)))),
+        },
     };
     crate::foreign_session::hand_over(
         layout,
@@ -664,6 +677,18 @@ fn describe_dsh(problem: &dsh::Problem) -> String {
             dsh::LOG_VERSION
         ),
         dsh::Problem::Record { line } => format!("line {line} is not JSON: the log is damaged"),
+    }
+}
+
+/// Why a log of Codex gives no session, in words.
+fn describe_codex(problem: &codex::Problem) -> String {
+    match problem {
+        codex::Problem::Empty => "holds nothing yet".to_owned(),
+        codex::Problem::NotText => "is not UTF-8 text".to_owned(),
+        codex::Problem::NoHeader => {
+            "has no session_meta record holding the session's id and directory".to_owned()
+        }
+        codex::Problem::Record { line } => format!("line {line} is not JSON: the log is damaged"),
     }
 }
 

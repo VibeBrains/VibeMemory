@@ -89,7 +89,11 @@ pub fn handle(
         "initialize" => {
             let mut result = json!({
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": { "tools": {}, "resources": {}, "prompts": {} },
+                "capabilities": {
+                    "tools": {},
+                    "resources": { "listChanged": true },
+                    "prompts": { "listChanged": true },
+                },
                 "serverInfo": { "name": "vibememory", "version": env!("CARGO_PKG_VERSION") },
             });
             // The agent learns the name the store gave its folder: without it a model asked to
@@ -109,8 +113,8 @@ pub fn handle(
                  files itself; rule_save and skill_save write one at the level the person named. {}",
                 crate::rule_tools::LEVELS
             );
-            if let Some(held) = crate::rule_tools::held(caller, memories) {
-                let _ = write!(instructions, "\n\n{held}");
+            if let Some(rules) = crate::rule_tools::introduction(caller, memories) {
+                let _ = write!(instructions, "\n\n{rules}");
             }
             if let Some(fields) = result.as_object_mut() {
                 fields.insert("instructions".to_owned(), json!(instructions));
@@ -289,4 +293,133 @@ pub fn serve_checked_lines<Rights>(
         }
     }
     Ok(())
+}
+
+/// How often a session's lists of resources and prompts are looked at again: a rule or a skill changed by the tick
+/// or another agent reaches a long session within this, without a restart.
+pub const LIST_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long the watcher sleeps between looks at whether the session ended.
+const WATCH_STEP: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// What a session's lists were when last looked at: the resources and the prompts, as their JSON.
+#[derive(Debug, Clone, Default)]
+pub struct Lists {
+    resources: Option<String>,
+    prompts: Option<String>,
+}
+
+/// The `list_changed` notifications a session is owed since the last look: none on the first look, which only
+/// notes what the lists are.
+#[must_use]
+pub fn list_changes(
+    lists: &mut Lists,
+    caller: &crate::tools::Caller<'_>,
+    memories: &dyn Memories,
+) -> Vec<String> {
+    let resources = Value::Array(crate::rule_tools::resources(caller, memories)).to_string();
+    let prompts = Value::Array(crate::rule_tools::prompts(caller, memories)).to_string();
+    let mut owed = Vec::new();
+    for (last, now, method) in [
+        (
+            &mut lists.resources,
+            resources,
+            "notifications/resources/list_changed",
+        ),
+        (
+            &mut lists.prompts,
+            prompts,
+            "notifications/prompts/list_changed",
+        ),
+    ] {
+        if last.as_ref().is_some_and(|last| *last != now) {
+            owed.push(json!({ "jsonrpc": "2.0", "method": method }).to_string());
+        }
+        *last = Some(now);
+    }
+    owed
+}
+
+/// A writer that hands a whole line to the shared output at `flush`: the answers and the watcher's notifications
+/// share stdout, and a line cut in two by the other would break the protocol.
+struct LineGate<'a, W: std::io::Write> {
+    shared: &'a std::sync::Mutex<W>,
+    pending: Vec<u8>,
+}
+
+impl<W: std::io::Write> std::io::Write for LineGate<'_, W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.pending.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        let mut output = self
+            .shared
+            .lock()
+            .map_err(|_| std::io::Error::other("the output's lock is poisoned"))?;
+        output.write_all(&self.pending)?;
+        self.pending.clear();
+        output.flush()
+    }
+}
+
+/// Serves MCP over a stream of lines like [`serve_lines`], and tells the client when the resources or the prompts
+/// change: every `every`, once the client said it is initialized.
+///
+/// # Errors
+///
+/// Input that cannot be read.
+pub fn serve_watched_lines(
+    input: impl std::io::BufRead,
+    output: impl std::io::Write + Send,
+    caller: &crate::tools::Caller<'_>,
+    memories: &(dyn Memories + Sync),
+    every: std::time::Duration,
+) -> Result<(), String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let shared = std::sync::Mutex::new(output);
+    let done = AtomicBool::new(false);
+    let initialized = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut lists = Lists::default();
+            while !done.load(Ordering::Relaxed) {
+                let started = std::time::Instant::now();
+                while started.elapsed() < every && !done.load(Ordering::Relaxed) {
+                    std::thread::sleep(WATCH_STEP);
+                }
+                if done.load(Ordering::Relaxed) || !initialized.load(Ordering::Relaxed) {
+                    continue;
+                }
+                for line in list_changes(&mut lists, caller, memories) {
+                    let Ok(mut output) = shared.lock() else {
+                        return;
+                    };
+                    if writeln!(output, "{line}")
+                        .and_then(|()| output.flush())
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+        });
+        let served = serve_checked_lines(
+            input,
+            LineGate {
+                shared: &shared,
+                pending: Vec::new(),
+            },
+            &mut || Ok(()),
+            &|(), request| handle(request, caller, memories),
+            &mut |request, _| {
+                if request.method == "notifications/initialized" {
+                    initialized.store(true, Ordering::Relaxed);
+                }
+            },
+        );
+        done.store(true, Ordering::Relaxed);
+        served
+    })
 }

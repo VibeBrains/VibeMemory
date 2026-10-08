@@ -22,6 +22,8 @@ use vibememory_core::rules::rule::{normalize_body, version_of};
 use vibememory_core::rules::skill::{SKILL_FILE, parse_skill};
 use vibememory_core::rules::{Level, Rule};
 
+use crate::agents::Preset;
+
 /// The person's rules, relative to the personal store: beside `CLAUDE.md` and the skills, which travel the same way.
 pub const PERSONAL_RULES: &str = "config/rules";
 /// The person's skills, relative to the personal store.
@@ -44,6 +46,12 @@ pub const CLAUDE_SYNCED: &str = "synced";
 pub const PROPOSALS: &str = "proposals";
 /// The single file DSH reads in a project beside its own instructions.
 pub const PROJECT_AGENTS_FILE: &str = "AGENTS.local.md";
+/// The file Codex reads in a directory instead of its `AGENTS.md`: the engine writes the project's `AGENTS.md` into
+/// it whole, then the rules. Codex takes one file a directory — the override, else `AGENTS.md`, else a fallback name
+/// — so no other name reaches it beside a project's own (measured with `codex debug prompt-input`, 0.145, 2026-10-08).
+pub const CODEX_PROJECT_FILE: &str = "AGENTS.override.md";
+/// A project's own instructions, the base of the file Codex reads.
+pub const PROJECT_OWN_FILE: &str = "AGENTS.md";
 
 /// What one run did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -234,6 +242,8 @@ pub struct Agents {
     pub skill_dirs: Vec<PathBuf>,
     /// Whether DSH lives here: a project then also gets `AGENTS.local.md` and `.agents/skills`.
     pub dsh: bool,
+    /// Whether Codex lives here: a project then also gets `AGENTS.override.md` and `.agents/skills`.
+    pub codex: bool,
     /// Agents that live here and that `rules.agents` leaves out: their assembled file and skill links are given
     /// back — the engine's part taken out, the person's own text left.
     pub released: Released,
@@ -260,30 +270,25 @@ impl Agents {
         let mut assembled = Vec::new();
         let mut skill_dirs = Vec::new();
         let mut released = Released::default();
-        let mut dsh = false;
+        let (mut dsh, mut codex) = (false, false);
         if let Some(home) = home {
-            let dsh_home = crate::agents::Preset::Dsh.home(home);
             // DSH reads `~/.agents/skills` as the root agents share (read off its bundle, 2026-10-07)
             let found = [
+                (Preset::Dsh, DSH_NAME, home.join(".agents").join("skills")),
                 (
-                    "dsh",
-                    DSH_NAME,
-                    dsh_home,
-                    home.join(".agents").join("skills"),
-                ),
-                (
-                    "codex",
+                    Preset::Codex,
                     CODEX_NAME,
-                    home.join(".codex"),
-                    home.join(".codex").join("skills"),
+                    Preset::Codex.home(home).join("skills"),
                 ),
             ];
-            for (key, name, agent_home, skills) in found {
+            for (preset, name, skills) in found {
+                let agent_home = preset.home(home);
                 if !agent_home.is_dir() {
                     continue;
                 }
-                if settings.allows(key) {
-                    dsh |= key == "dsh";
+                if settings.allows(preset.name()) {
+                    dsh |= preset == Preset::Dsh;
+                    codex |= preset == Preset::Codex;
                     assembled.push((name, agent_home.join("AGENTS.md")));
                     skill_dirs.push(skills);
                 } else {
@@ -297,9 +302,29 @@ impl Agents {
             assembled,
             skill_dirs,
             dsh,
+            codex,
             released,
         }
     }
+}
+
+/// Whether an agent reads the rules the engine writes into its own files on this machine: Claude Code always, DSH
+/// and Codex when they live here and `rules.agents` lets them have the rules. An agent that does not reads them only
+/// as the memory server gives them.
+#[must_use]
+pub fn reads_rule_files(
+    agent: &str,
+    home: Option<&Path>,
+    settings: &crate::config::RulesConfig,
+) -> bool {
+    if agent == crate::mcp_config::Client::ClaudeCode.agent() {
+        return true;
+    }
+    home.is_some_and(|home| {
+        [Preset::Dsh, Preset::Codex].into_iter().any(|preset| {
+            preset.agent() == agent && preset.home(home).is_dir() && settings.allows(preset.name())
+        })
+    })
 }
 
 /// The owner's `CLAUDE.md` as the store holds it: the base of every assembled file.
@@ -369,9 +394,13 @@ fn take_edits(
                     base.changed = true;
                     report.taken.push("base".to_owned());
                 } else {
-                    match quarantine("CLAUDE.md", &text) {
+                    let name = base
+                        .path
+                        .file_name()
+                        .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+                    match quarantine(&name, &text) {
                         Ok(()) => report.conflicts.push("base".to_owned()),
-                        Err(error) => report.problems.push(format!("CLAUDE.md: {error}")),
+                        Err(error) => report.problems.push(format!("{name}: {error}")),
                     }
                 }
             }
@@ -500,16 +529,7 @@ pub fn project_personal(
             continue;
         };
         let pairs: Vec<(&Rule, &[Level])> = rules.iter().map(|rule| (*rule, &[][..])).collect();
-        let mut text = assembly::assemble(base.text.as_deref(), &pairs);
-        for own in outside {
-            text.push('\n');
-            text.push_str(&own);
-        }
-        match write_if_changed(path, &text) {
-            Ok(true) => report.written.push(path.display().to_string()),
-            Ok(false) => {}
-            Err(error) => report.problems.push(error),
-        }
+        write_assembled(path, base.text.as_deref(), &pairs, &outside, &mut report);
     }
     for (path, outside) in released {
         give_back(path, &outside, &mut report);
@@ -538,6 +558,26 @@ fn take_released<'a>(
         }
     }
     released
+}
+
+/// An assembled file written: the base when there is one, the rules, then the person's own text.
+fn write_assembled(
+    path: &Path,
+    base: Option<&str>,
+    rules: &[(&Rule, &[Level])],
+    own: &[String],
+    report: &mut Projected,
+) {
+    let mut text = assembly::assemble(base, rules);
+    for piece in own {
+        text.push('\n');
+        text.push_str(piece);
+    }
+    match write_if_changed(path, &text) {
+        Ok(true) => report.written.push(path.display().to_string()),
+        Ok(false) => {}
+        Err(error) => report.problems.push(error),
+    }
 }
 
 /// An agent's file given back: only the person's own text stays, and a file that held nothing else goes.
@@ -805,44 +845,16 @@ pub fn project_projects(run: &ProjectsRun<'_>) -> Projected {
 
         // edits: a project rule's into the store; a team rule changes through the team's owner or admins
         let mut changed = Vec::new();
+        let mut outsides = Outsides::new();
+        let mut edits = ProjectEdits {
+            team_rules: &team_rules,
+            project_rules: &mut project_rules,
+            changed: &mut changed,
+            quarantine: &mut quarantine,
+            report: &mut report,
+        };
         for cwd in &dirs {
-            let mut files = engine_files(&cwd.join(".claude").join("rules"));
-            files.push(cwd.join(PROJECT_AGENTS_FILE));
-            for path in files {
-                let Some(pieces) = pieces_of(&path, &mut report) else {
-                    continue;
-                };
-                let (team_pieces, project_pieces): (Vec<Piece>, Vec<Piece>) = pieces.into_iter().partition(|piece| {
-                    matches!(piece, Piece::Rule { id, .. } if team_rules.contains_key(id) && !project_rules.contains_key(id))
-                });
-                let _ = take_edits(
-                    project_pieces,
-                    &mut project_rules,
-                    &mut changed,
-                    None,
-                    &mut quarantine,
-                    &mut report,
-                );
-                for piece in team_pieces {
-                    if let Piece::Rule {
-                        id,
-                        from,
-                        title,
-                        body,
-                    } = piece
-                        && version_of(&title, &body) != from
-                    {
-                        let text = format!("## {title}\n\n{body}");
-                        if quarantine(&format!("team-rule-{id}"), &text).is_ok() {
-                            report.problems.push(format!(
-                                "team rule {id} was changed in {}: a team's rule changes through its owner or \
-                                 admins — the edit is in the quarantine, propose it with `vibememory rule add --level team`",
-                                path.display()
-                            ));
-                        }
-                    }
-                }
-            }
+            edits.take_dir(cwd, &mut outsides);
         }
         for id in &changed {
             if let Some(rule) = project_rules.get(id)
@@ -862,11 +874,117 @@ pub fn project_projects(run: &ProjectsRun<'_>) -> Projected {
             .map(|rule| (&rule.rule, rule.replaces.as_slice()))
             .collect();
         for cwd in &dirs {
-            write_project(cwd, &in_force, &skills, store, agents, &mut report);
+            write_project(
+                &ProjectDir {
+                    cwd,
+                    rules: &in_force,
+                    skills: &skills,
+                    outsides: &outsides,
+                },
+                store,
+                agents,
+                &mut report,
+            );
         }
         apply_mode(run, &project, &dirs, &mut quarantine, &mut report);
     }
     report
+}
+
+/// The person's own text in a project's assembled files, by file: kept when the engine writes them again.
+type Outsides = BTreeMap<PathBuf, Vec<String>>;
+
+/// Whether a file is one the engine wrote.
+fn is_engine_file(path: &Path) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|text| assembly::written_by_engine(&text))
+}
+
+/// What a project's files take edits into.
+struct ProjectEdits<'a, 'q> {
+    team_rules: &'a BTreeMap<String, Rule>,
+    project_rules: &'a mut BTreeMap<String, Rule>,
+    changed: &'a mut Vec<String>,
+    quarantine: &'a mut (dyn FnMut(&str, &str) -> Result<(), String> + 'q),
+    report: &'a mut Projected,
+}
+
+impl ProjectEdits<'_, '_> {
+    /// Takes the edits of one working directory's files; the person's own text of the assembled ones goes into
+    /// `outsides`. An edit of the project's own part of the file Codex reads goes back into its `AGENTS.md`.
+    fn take_dir(&mut self, cwd: &Path, outsides: &mut Outsides) {
+        for path in engine_files(&cwd.join(".claude").join("rules")) {
+            if let Some(pieces) = pieces_of(&path, self.report) {
+                let _ = self.take(&path, pieces, None);
+            }
+        }
+        let local = cwd.join(PROJECT_AGENTS_FILE);
+        if let Some(pieces) = pieces_of(&local, self.report) {
+            let outside = self.take(&local, pieces, None);
+            outsides.insert(local, outside);
+        }
+        let codex_file = cwd.join(CODEX_PROJECT_FILE);
+        if !is_engine_file(&codex_file) {
+            return;
+        }
+        let Some(pieces) = pieces_of(&codex_file, self.report) else {
+            return;
+        };
+        let own = cwd.join(PROJECT_OWN_FILE);
+        let mut base = Base {
+            text: std::fs::read_to_string(&own).ok(),
+            path: own,
+            changed: false,
+        };
+        let outside = self.take(&codex_file, pieces, Some(&mut base));
+        if base.changed
+            && let Some(text) = &base.text
+        {
+            match write_if_changed(&base.path, text) {
+                Ok(_) => self.report.written.push(base.path.display().to_string()),
+                Err(error) => self.report.problems.push(error),
+            }
+        }
+        outsides.insert(codex_file, outside);
+    }
+
+    /// Takes one file's edits: a project rule's into the store, a team rule's into the quarantine — a team's rule
+    /// changes through its owner or admins. Gives back the person's own text of the file.
+    fn take(&mut self, path: &Path, pieces: Vec<Piece>, base: Option<&mut Base>) -> Vec<String> {
+        let team_rules = self.team_rules;
+        let project_rules = &*self.project_rules;
+        let (team_pieces, project_pieces): (Vec<Piece>, Vec<Piece>) =
+            pieces.into_iter().partition(|piece| {
+                matches!(piece, Piece::Rule { id, .. } if team_rules.contains_key(id) && !project_rules.contains_key(id))
+            });
+        let outside = take_edits(
+            project_pieces,
+            self.project_rules,
+            self.changed,
+            base,
+            self.quarantine,
+            self.report,
+        );
+        for piece in team_pieces {
+            if let Piece::Rule {
+                id,
+                from,
+                title,
+                body,
+            } = piece
+                && version_of(&title, &body) != from
+            {
+                let text = format!("## {title}\n\n{body}");
+                if (self.quarantine)(&format!("team-rule-{id}"), &text).is_ok() {
+                    self.report.problems.push(format!(
+                        "team rule {id} was changed in {}: a team's rule changes through its owner or admins — the \
+                         edit is in the quarantine, propose it with `vibememory rule add --level team`",
+                        path.display()
+                    ));
+                }
+            }
+        }
+        outside
+    }
 }
 
 /// A project's own rule files in the mode the person chose for it; `advise` leaves them to `rules sync`.
@@ -902,36 +1020,66 @@ fn apply_mode(
     }
 }
 
-/// One working directory: the rule files, `AGENTS.local.md` when DSH lives here, the skill links, and git told to
-/// ignore all of them.
-fn write_project(
-    cwd: &Path,
-    rules: &[(&Rule, &[Level])],
-    skills: &BTreeMap<String, PathBuf>,
-    store: &Path,
-    agents: &Agents,
-    report: &mut Projected,
-) {
+/// One working directory and what goes into it.
+struct ProjectDir<'a> {
+    cwd: &'a Path,
+    rules: &'a [(&'a Rule, &'a [Level])],
+    skills: &'a BTreeMap<String, PathBuf>,
+    outsides: &'a Outsides,
+}
+
+/// One working directory: the rule files, `AGENTS.local.md` when DSH lives here, `AGENTS.override.md` when Codex
+/// does, the skill links, and git told to ignore all of them.
+fn write_project(dir: &ProjectDir<'_>, store: &Path, agents: &Agents, report: &mut Projected) {
+    let ProjectDir {
+        cwd,
+        rules,
+        skills,
+        outsides,
+    } = *dir;
     let claude_rules = cwd.join(".claude").join("rules");
     if !rules.is_empty() || !engine_files(&claude_rules).is_empty() {
         write_rule_files(&claude_rules, rules, report);
     }
-    let agents_file = cwd.join(PROJECT_AGENTS_FILE);
-    if agents.dsh && !rules.is_empty() {
-        match write_if_changed(&agents_file, &assembly::assemble(None, rules)) {
-            Ok(true) => report.written.push(agents_file.display().to_string()),
-            Ok(false) => {}
-            Err(error) => report.problems.push(error),
+    let own = |path: &Path| outsides.get(path).cloned().unwrap_or_default();
+    // a file whose markers were cut is named when its edits are taken, and left as it is: rewriting it would lose
+    // what the person wrote
+    let cut = |path: &Path| path.exists() && !outsides.contains_key(path);
+    let local = cwd.join(PROJECT_AGENTS_FILE);
+    if !cut(&local) {
+        if agents.dsh && !rules.is_empty() {
+            write_assembled(&local, None, rules, &own(&local), report);
+        } else if is_engine_file(&local) {
+            give_back(&local, &own(&local), report);
         }
-    } else if std::fs::read_to_string(&agents_file)
-        .is_ok_and(|text| assembly::written_by_engine(&text))
-    {
-        // the engine's own file, and nothing to say in it any more
-        let _ = std::fs::remove_file(&agents_file);
     }
+    let codex_file = cwd.join(CODEX_PROJECT_FILE);
+    if codex_file.exists() && !is_engine_file(&codex_file) {
+        if agents.codex && !rules.is_empty() {
+            report.warnings.push(format!(
+                "{}: the person's own file — Codex reads it instead of AGENTS.md, and the project's rules do not \
+                 reach Codex through it",
+                codex_file.display()
+            ));
+        }
+    } else if !cut(&codex_file) {
+        if agents.codex && !rules.is_empty() {
+            let base = std::fs::read_to_string(cwd.join(PROJECT_OWN_FILE)).ok();
+            write_assembled(
+                &codex_file,
+                base.as_deref(),
+                rules,
+                &own(&codex_file),
+                report,
+            );
+        } else if codex_file.exists() {
+            give_back(&codex_file, &own(&codex_file), report);
+        }
+    }
+    // Codex reads a project's `.agents/skills` as DSH does (measured with `codex debug prompt-input`)
     let mut skill_dirs = vec![cwd.join(".claude").join("skills")];
     let shared = cwd.join(".agents").join("skills");
-    if agents.dsh {
+    if agents.dsh || agents.codex {
         skill_dirs.push(shared);
     } else {
         // no agent here reads it any more: the engine's links go, the person's own skills stay
@@ -948,6 +1096,7 @@ fn write_project(
     let mut ignored = vec![
         format!("/.claude/rules/{FILE_PREFIX}*.md"),
         format!("/{PROJECT_AGENTS_FILE}"),
+        format!("/{CODEX_PROJECT_FILE}"),
     ];
     for name in skills.keys() {
         ignored.push(format!("/.claude/skills/{name}"));

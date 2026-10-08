@@ -1,0 +1,159 @@
+{
+  "description": "Logs of Codex (rollout-*.jsonl) in the shape of real ones — field names and record order read off live logs of 2026-07, texts are synthetic — and the session the engine makes of each. Format: docs/manuals/foreignSessionSpec.md",
+  "cases": [
+    {
+      "id": "dialogue",
+      "note": "Реплики человека и агента берутся из event_msg; те же слова в response_item и служебные события пропускаются",
+      "log": "{\"timestamp\": \"2026-07-21T07:02:29.598Z\", \"type\": \"session_meta\", \"payload\": {\"id\": \"019f837b-d4da-7492-8a41-111111111111\", \"forked_from_id\": null, \"timestamp\": \"2026-07-21T07:02:29.598Z\", \"cwd\": \"/work/Promed\", \"originator\": \"codex_vscode\", \"cli_version\": \"0.120.0\", \"source\": \"vscode\", \"model_provider\": \"openai\", \"base_instructions\": {\"text\": \"You are Codex.\"}}}\n{\"timestamp\": \"2026-07-21T07:02:30.500Z\", \"type\": \"response_item\", \"payload\": {\"type\": \"message\", \"role\": \"developer\", \"content\": [{\"type\": \"input_text\", \"text\": \"<permissions instructions>\"}]}}\n{\"timestamp\": \"2026-07-21T07:02:30.000Z\", \"type\": \"event_msg\", \"payload\": {\"type\": \"task_started\", \"turn_id\": \"t1\", \"started_at\": 1, \"model_context_window\": 258400, \"collaboration_mode_kind\": \"default\"}}\n{\"timestamp\": \"2026-07-21T07:02:31.100Z\", \"type\": \"response_item\", \"payload\": {\"type\": \"message\", \"role\": \"user\", \"content\": [{\"type\": \"input_text\", \"text\": \"list the files\"}]}}\n{\"timestamp\": \"2026-07-21T07:02:31.100Z\", \"type\": \"event_msg\", \"payload\": {\"type\": \"user_message\", \"message\": \"list the files\", \"images\": [], \"local_images\": [], \"text_elements\": []}}\n{\"timestamp\": \"2026-07-21T07:02:32.200Z\", \"type\": \"response_item\", \"payload\": {\"type\": \"message\", \"role\": \"assistant\", \"content\": [{\"type\": \"output_text\", \"text\": \"here they are\"}]}}\n{\"timestamp\": \"2026-07-21T07:02:32.200Z\", \"type\": \"event_msg\", \"payload\": {\"type\": \"agent_message\", \"message\": \"here they are\", \"phase\": null, \"memory_citation\": null}}\n{\"timestamp\": \"2026-07-21T07:02:33.000Z\", \"type\": \"event_msg\", \"payload\": {\"type\": \"token_count\", \"info\": null, \"rate_limits\": null}}\n",
+      "expect": {
+        "session": "019f837b-d4da-7492-8a41-111111111111",
+        "cwd": "/work/Promed",
+        "lines": [
+          {
+            "type": "user",
+            "timestamp": "2026-07-21T07:02:31.100Z",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "list the files"
+                }
+              ]
+            },
+            "uuid": "019f837b-d4da-7492-8a41-111111111111-4"
+          },
+          {
+            "type": "assistant",
+            "timestamp": "2026-07-21T07:02:32.200Z",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "here they are"
+                }
+              ]
+            },
+            "uuid": "019f837b-d4da-7492-8a41-111111111111-6"
+          }
+        ]
+      }
+    },
+    {
+      "id": "forkedKeepsItsOwnHeader",
+      "note": "Ответвлённая сессия несёт за своим заголовком заголовок родителя: id и каталог — из первого",
+      "log": "{\"timestamp\": \"2026-07-21T07:02:29.598Z\", \"type\": \"session_meta\", \"payload\": {\"id\": \"019f837b-d4da-7492-8a41-111111111111\", \"forked_from_id\": \"019f837b-0000-7000-8000-222222222222\", \"timestamp\": \"2026-07-21T07:02:29.598Z\", \"cwd\": \"/work/Promed\", \"originator\": \"codex_vscode\", \"cli_version\": \"0.120.0\", \"source\": \"vscode\", \"model_provider\": \"openai\", \"base_instructions\": {\"text\": \"You are Codex.\"}}}\n{\"timestamp\": \"2026-07-21T07:02:29.598Z\", \"type\": \"session_meta\", \"payload\": {\"id\": \"019f837b-0000-7000-8000-222222222222\", \"forked_from_id\": null, \"timestamp\": \"2026-07-21T07:02:29.598Z\", \"cwd\": \"/work/Other\", \"originator\": \"codex_vscode\", \"cli_version\": \"0.120.0\", \"source\": \"vscode\", \"model_provider\": \"openai\", \"base_instructions\": {\"text\": \"You are Codex.\"}}}\n{\"timestamp\": \"2026-07-21T07:02:31.100Z\", \"type\": \"event_msg\", \"payload\": {\"type\": \"user_message\", \"message\": \"from the parent\", \"images\": [], \"local_images\": [], \"text_elements\": []}}\n{\"timestamp\": \"2026-07-21T07:02:32.200Z\", \"type\": \"event_msg\", \"payload\": {\"type\": \"agent_message\", \"message\": \"answer of the parent\", \"phase\": null, \"memory_citation\": null}}\n",
+      "expect": {
+        "session": "019f837b-d4da-7492-8a41-111111111111",
+        "cwd": "/work/Promed",
+        "lines": [
+          {
+            "type": "user",
+            "timestamp": "2026-07-21T07:02:31.100Z",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "from the parent"
+                }
+              ]
+            },
+            "uuid": "019f837b-d4da-7492-8a41-111111111111-2"
+          },
+          {
+            "type": "assistant",
+            "timestamp": "2026-07-21T07:02:32.200Z",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "answer of the parent"
+                }
+              ]
+            },
+            "uuid": "019f837b-d4da-7492-8a41-111111111111-3"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cutLastLine",
+      "note": "Оборванная последняя строка живого лога отбрасывается, следующий взгляд возьмёт её целиком",
+      "log": "{\"timestamp\": \"2026-07-21T07:02:29.598Z\", \"type\": \"session_meta\", \"payload\": {\"id\": \"019f837b-d4da-7492-8a41-111111111111\", \"forked_from_id\": null, \"timestamp\": \"2026-07-21T07:02:29.598Z\", \"cwd\": \"/work/Promed\", \"originator\": \"codex_vscode\", \"cli_version\": \"0.120.0\", \"source\": \"vscode\", \"model_provider\": \"openai\", \"base_instructions\": {\"text\": \"You are Codex.\"}}}\n{\"timestamp\": \"2026-07-21T07:02:31.100Z\", \"type\": \"event_msg\", \"payload\": {\"type\": \"user_message\", \"message\": \"first\", \"images\": [], \"local_images\": [], \"text_elements\": []}}\n{\"timestamp\": \"2026-07-21T07:02:32.200Z\"",
+      "expect": {
+        "session": "019f837b-d4da-7492-8a41-111111111111",
+        "cwd": "/work/Promed",
+        "lines": [
+          {
+            "type": "user",
+            "timestamp": "2026-07-21T07:02:31.100Z",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "first"
+                }
+              ]
+            },
+            "uuid": "019f837b-d4da-7492-8a41-111111111111-1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "headerOnly",
+      "note": "Только заголовок — сессия только началась, отдавать нечего",
+      "log": "{\"timestamp\": \"2026-07-21T07:02:29.598Z\", \"type\": \"session_meta\", \"payload\": {\"id\": \"019f837b-d4da-7492-8a41-111111111111\", \"forked_from_id\": null, \"timestamp\": \"2026-07-21T07:02:29.598Z\", \"cwd\": \"/work/Promed\", \"originator\": \"codex_vscode\", \"cli_version\": \"0.120.0\", \"source\": \"vscode\", \"model_provider\": \"openai\", \"base_instructions\": {\"text\": \"You are Codex.\"}}}\n",
+      "expect": {
+        "problem": "empty"
+      }
+    },
+    {
+      "id": "nothing",
+      "note": "Пустой файл",
+      "log": "",
+      "expect": {
+        "problem": "empty"
+      }
+    },
+    {
+      "id": "noHeader",
+      "note": "Без session_meta нет ни id, ни каталога",
+      "log": "{\"timestamp\": \"2026-07-21T07:02:31.100Z\", \"type\": \"event_msg\", \"payload\": {\"type\": \"user_message\", \"message\": \"orphan\", \"images\": [], \"local_images\": [], \"text_elements\": []}}\n",
+      "expect": {
+        "problem": "noHeader"
+      }
+    },
+    {
+      "id": "damaged",
+      "note": "Не-JSON в середине — лог повреждён",
+      "log": "{\"timestamp\": \"2026-07-21T07:02:29.598Z\", \"type\": \"session_meta\", \"payload\": {\"id\": \"019f837b-d4da-7492-8a41-111111111111\", \"forked_from_id\": null, \"timestamp\": \"2026-07-21T07:02:29.598Z\", \"cwd\": \"/work/Promed\", \"originator\": \"codex_vscode\", \"cli_version\": \"0.120.0\", \"source\": \"vscode\", \"model_provider\": \"openai\", \"base_instructions\": {\"text\": \"You are Codex.\"}}}\n{not json\n{\"timestamp\": \"2026-07-21T07:02:31.100Z\", \"type\": \"event_msg\", \"payload\": {\"type\": \"user_message\", \"message\": \"after\", \"images\": [], \"local_images\": [], \"text_elements\": []}}\n",
+      "expect": {
+        "problem": "record",
+        "line": 2
+      }
+    }
+  ],
+  "logNames": [
+    {
+      "name": "rollout-2026-07-21T10-02-38-019f837b-d4da-7492-8a41-8fb7bb072aca.jsonl",
+      "expect": true
+    },
+    {
+      "name": "rollout-.jsonl",
+      "expect": false
+    },
+    {
+      "name": "session_index.jsonl",
+      "expect": false
+    },
+    {
+      "name": "rollout-x.jsonl.tmp",
+      "expect": false
+    }
+  ]
+}

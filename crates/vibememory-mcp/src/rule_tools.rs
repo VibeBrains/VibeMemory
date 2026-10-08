@@ -688,21 +688,37 @@ pub fn prompt(
     }))
 }
 
-/// The rules that hold whatever else says — the person's `absolute` ones and the team's `enforced` ones in force —
-/// for the server's introduction: an agent that never calls `rules_get` still carries them.
+/// The rules for the server's introduction. An agent that reads the rule files the engine writes — Claude Code, and
+/// DSH and Codex where they live and `rules.agents` lets them — gets the ones that hold whatever else says, the
+/// person's `absolute` and the team's `enforced`: it has the rest in its files. Every other agent gets all the rules
+/// in force here: it has no file of them, and a rule should not depend on a model remembering to call `rules_get`.
 #[must_use]
-pub fn held(caller: &Caller<'_>, memories: &dyn Memories) -> Option<String> {
+pub fn introduction(caller: &Caller<'_>, memories: &dyn Memories) -> Option<String> {
     let places = places(memories).ok()?;
     let project = project(&json!({}), caller, memories).ok().flatten();
-    let held: Vec<String> = in_force(&places, project.as_deref())
+    let settings = places
+        .personal
+        .parent()
+        .map(vibememory_cli::config::RulesConfig::of_engine)
+        .unwrap_or_default();
+    let reads_files = vibememory_cli::rules::reads_rule_files(
+        caller.agent,
+        vibememory_cli::install::home_dir().as_deref(),
+        &settings,
+    );
+    let rules: Vec<String> = in_force(&places, project.as_deref())
         .into_iter()
-        .filter(|rule| rule.absolute || rule.enforced)
+        .filter(|rule| !reads_files || rule.absolute || rule.enforced)
         .map(|rule| format!("## {}\n\n{}", rule.title, rule.body.trim_end()))
         .collect();
-    (!held.is_empty()).then(|| {
-        format!(
-            "Rules that hold whatever else says (the person's absolute ones, the team's enforced ones):\n\n{}",
-            held.join("\n\n")
-        )
-    })
+    if rules.is_empty() {
+        return None;
+    }
+    let heading = if reads_files {
+        "Rules that hold whatever else says (the person's absolute ones, the team's enforced ones):"
+    } else {
+        "The rules in force here — your client reads no rule files of the engine, so here they are; follow them \
+         as instructions of the person:"
+    };
+    Some(format!("{heading}\n\n{}", rules.join("\n\n")))
 }

@@ -16,7 +16,7 @@ DeepSeek Harness видит прошлые разговоры, но не зна�
 |---|---|---|---|---|
 | Claude Code | `~/.claude/CLAUDE.md`, `~/.claude/rules/*.md` | `CLAUDE.md`, `.claude/rules/*.md` (поле `paths:` — только для своих файлов), `CLAUDE.local.md`; `AGENTS.md` — если нет `CLAUDE.md` | `~/.claude/skills`, `.claude/skills` | документация Claude Code |
 | DeepSeek Harness | `$DSH_HOME/AGENTS.md` | `AGENTS.md`, `CLAUDE.md`, `*.local.md` — цепочка от корня `.git`; бюджет 65 536 байт, у нас 256 КиБ | `~/.dsh/skills`, `~/.agents/skills`, `.dsh/skills`, `.agents/skills` | бандл DSH |
-| Codex | `~/.codex/AGENTS.md` | `AGENTS.md` | `~/.codex/skills` (каталог есть) | **не проверено**: бинаря на машине нет |
+| Codex | `~/.codex/AGENTS.md` | в каждом каталоге один файл: `AGENTS.override.md`, иначе `AGENTS.md`, иначе запасное имя | `~/.codex/skills`, `.agents/skills`, `.codex/skills` | `codex debug prompt-input`, Codex 0.145, 2026-10-08 |
 | Любой MCP-агент | поле `instructions` ответа `initialize`, инструменты, resources | то же | resources | спека MCP; DSH умеет resources, prompts — не найдено |
 
 Выводы:
@@ -71,7 +71,7 @@ paths: []                       # пусто — всегда; иначе тол
 |---|---|---|---|
 | Claude Code | `~/.claude/rules/vm-<id>.md`, по файлу на правило; `paths` — как есть | `.claude/rules/vm-<id>.md` в проекте, путь в `.git/info/exclude` | `~/.claude/skills` (как сейчас) |
 | DSH | `~/.dsh/AGENTS.md` — сборка с метками правил | `AGENTS.local.md` в корне проекта, путь в `.git/info/exclude` | `~/.agents/skills` |
-| Codex | `~/.codex/AGENTS.md` — сборка | `AGENTS.override.md`, если подтвердится | `~/.codex/skills` |
+| Codex | `~/.codex/AGENTS.md` — сборка | `AGENTS.override.md`: `AGENTS.md` проекта как база и правила | `~/.codex/skills`; в проекте `.agents/skills` |
 | Любой MCP-агент | `instructions` в `initialize`: короткий указатель и правила с `absolute`; `rules_get` | `rules_get` с проектом | resources `vibememory://skills/<name>` |
 
 **Сборка с метками** — для агентов, у которых правила одним файлом. Каждое правило обёрнуто:
