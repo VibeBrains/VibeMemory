@@ -391,14 +391,14 @@ fn remote_for_directory(
 }
 
 /// Reads requests until stdin closes.
-fn serve(memories: &dyn Memories, caller: &Caller<'_>) -> ExitCode {
+fn serve(memories: &(dyn Memories + Sync), caller: &Caller<'_>) -> ExitCode {
     let stdin = std::io::stdin();
-    match protocol::serve_lines(
+    match protocol::serve_watched_lines(
         stdin.lock(),
         std::io::stdout(),
         caller,
         memories,
-        &mut |_, _| {},
+        protocol::LIST_WATCH_INTERVAL,
     ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(problem) => {

@@ -504,3 +504,131 @@ fn a_teams_rule_goes_out_once_shown_and_a_change_keeps_the_shown_text_until_then
     projects(&m, Some("acme"));
     assert!(!file.exists(), "a rule the team took away goes at once");
 }
+
+#[test]
+fn codex_reads_the_projects_own_instructions_and_its_rules_from_one_file() {
+    let m = machine("rules-codex-project", true);
+    fs::remove_dir_all(m.home.join(".dsh")).unwrap();
+    let cwd = fs::canonicalize(m.home.parent().unwrap())
+        .unwrap()
+        .join("work");
+    fs::create_dir_all(&cwd).unwrap();
+    git(&cwd, &["init", "--quiet"]);
+    project_store(&m, &cwd);
+    fs::write(cwd.join("AGENTS.md"), "Own instructions.\n").unwrap();
+    let rules = m.store.join("projects/app/rules");
+    fs::create_dir_all(&rules).unwrap();
+    fs::write(
+        rules.join("tests.md"),
+        rule("tests", "Тесты", "project", "bun test.\n"),
+    )
+    .unwrap();
+    let skill = m.store.join("projects/app/skills/deploy");
+    fs::create_dir_all(&skill).unwrap();
+    fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: deploy\ndescription: How to deploy.\n---\nSteps.\n",
+    )
+    .unwrap();
+
+    let done = projects(&m, None);
+    assert!(done.problems.is_empty(), "{:?}", done.problems);
+    let codex = cwd.join("AGENTS.override.md");
+    let written = fs::read_to_string(&codex).unwrap();
+    assert!(
+        written.contains("Own instructions.") && written.contains("bun test."),
+        "the project's own file and its rules in the one Codex reads: {written}"
+    );
+    assert!(
+        !cwd.join("AGENTS.local.md").exists(),
+        "no DSH here, no file of its"
+    );
+    assert!(
+        fs::read_link(cwd.join(".agents/skills/deploy")).is_ok(),
+        "Codex reads the project's .agents/skills"
+    );
+    let exclude = fs::read_to_string(cwd.join(".git/info/exclude")).unwrap();
+    assert!(exclude.contains("/AGENTS.override.md"), "{exclude}");
+
+    // the project's own part edited where Codex reads it goes back into AGENTS.md, and the person's line stays
+    fs::write(
+        &codex,
+        format!(
+            "{}\nMy own line.\n",
+            written.replace("Own instructions.", "Own instructions, edited.")
+        ),
+    )
+    .unwrap();
+    let done = projects(&m, None);
+    assert!(done.problems.is_empty(), "{:?}", done.problems);
+    assert_eq!(
+        fs::read_to_string(cwd.join("AGENTS.md")).unwrap(),
+        "Own instructions, edited.\n"
+    );
+    let written = fs::read_to_string(&codex).unwrap();
+    assert!(
+        written.contains("Own instructions, edited.") && written.contains("My own line."),
+        "{written}"
+    );
+
+    // no rules any more: the engine's file goes, the person's line stays
+    fs::remove_file(rules.join("tests.md")).unwrap();
+    fs::remove_dir_all(m.store.join("projects/app/skills")).unwrap();
+    projects(&m, None);
+    assert_eq!(fs::read_to_string(&codex).unwrap().trim(), "My own line.");
+}
+
+#[test]
+fn a_persons_own_project_files_are_kept() {
+    let m = machine("rules-own-project-files", true);
+    let cwd = fs::canonicalize(m.home.parent().unwrap())
+        .unwrap()
+        .join("work");
+    fs::create_dir_all(&cwd).unwrap();
+    git(&cwd, &["init", "--quiet"]);
+    project_store(&m, &cwd);
+    fs::write(cwd.join("AGENTS.local.md"), "My local notes.\n").unwrap();
+    fs::write(cwd.join("AGENTS.override.md"), "My override.\n").unwrap();
+    let rules = m.store.join("projects/app/rules");
+    fs::create_dir_all(&rules).unwrap();
+    fs::write(
+        rules.join("tests.md"),
+        rule("tests", "Тесты", "project", "bun test.\n"),
+    )
+    .unwrap();
+
+    let done = projects(&m, None);
+    let local = fs::read_to_string(cwd.join("AGENTS.local.md")).unwrap();
+    assert!(
+        local.contains("My local notes.") && local.contains("bun test."),
+        "the person's text beside the rules: {local}"
+    );
+    assert_eq!(
+        fs::read_to_string(cwd.join("AGENTS.override.md")).unwrap(),
+        "My override.\n",
+        "a person's own override is not the engine's to write"
+    );
+    assert!(
+        done.warnings
+            .iter()
+            .any(|warning| warning.contains("AGENTS.override.md")),
+        "{:?}",
+        done.warnings
+    );
+
+    // a file whose markers were cut by hand is named and left as it is
+    let cut = "<!-- vibememory:rule tests@0000 -->\n## Тесты\n\nhalf of a rule\n";
+    fs::write(cwd.join("AGENTS.local.md"), cut).unwrap();
+    let done = projects(&m, None);
+    assert_eq!(
+        fs::read_to_string(cwd.join("AGENTS.local.md")).unwrap(),
+        cut
+    );
+    assert!(
+        done.problems
+            .iter()
+            .any(|problem| problem.contains("AGENTS.local.md")),
+        "{:?}",
+        done.problems
+    );
+}

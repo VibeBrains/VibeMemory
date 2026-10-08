@@ -1665,7 +1665,7 @@ fn session_command(args: &[String]) -> ExitCode {
                          --from <file.jsonl> [--end]\n       \
                          vibememory session agent add --agent <name> --dir <log-dir> --run \
                          <wrapper> [--backfill]\n       \
-                         vibememory session agent add --agent <name> --preset dsh [--dir <log-dir>] \
+                         vibememory session agent add --agent <name> --preset dsh|codex [--dir <log-dir>] \
                          [--backfill]\n       \
                          vibememory session agent remove --agent <name>\n       \
                          vibememory session agent decline --agent <name>\n       \
@@ -2122,8 +2122,13 @@ fn session_agent_add(layout: &Layout, flags: &AgentFlags, usage: &str) -> ExitCo
         Some((_, Some(preset))) => Some(preset),
         Some((name, None)) => {
             eprintln!(
-                "session agent add: no preset {}; the engine knows dsh",
-                vibememory_core::terminal::printable(name)
+                "session agent add: no preset {}; the engine knows {}",
+                vibememory_core::terminal::printable(name),
+                Preset::ALL
+                    .iter()
+                    .map(|preset| preset.name())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
             return ExitCode::from(2);
         }

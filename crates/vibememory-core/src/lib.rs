@@ -7,6 +7,7 @@
 
 pub mod agent_watch;
 pub mod claim;
+pub mod codex;
 pub mod desktop;
 pub mod dsh;
 pub mod export;

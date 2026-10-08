@@ -284,10 +284,11 @@ fn skills_are_prompts_one_a_name_and_the_level_above_wins() {
 }
 
 #[test]
-fn the_rules_that_hold_whatever_else_says_are_in_the_introduction() {
+fn an_agent_without_rule_files_is_introduced_to_every_rule_and_one_with_them_to_what_holds() {
     let temp = Temp::new("held");
     let store = temp.personal();
-    let caller = Caller::member_of_team(AGENT, "bob", None);
+    let reads_files = Caller::member_of_team("claude-code", "bob", None);
+    let reads_none = Caller::member_of_team("cursor", "bob", None);
     call(
         "rule_save",
         json!({ "level": "personal", "id": "tone", "title": "Tone", "body": "Direct." }),
@@ -295,7 +296,12 @@ fn the_rules_that_hold_whatever_else_says_are_in_the_introduction() {
         &store,
     )
     .unwrap();
-    assert!(vibememory_mcp::rule_tools::held(&caller, &store).is_none());
+    assert!(
+        vibememory_mcp::rule_tools::introduction(&reads_files, &store).is_none(),
+        "Claude Code has the rule in its files"
+    );
+    let all = vibememory_mcp::rule_tools::introduction(&reads_none, &store).unwrap();
+    assert!(all.contains("## Tone\n\nDirect."), "{all}");
     call(
         "rule_save",
         json!({ "level": "personal", "id": "attribution", "title": "Attribution", "body": "None in commits.", "absolute": true }),
@@ -303,7 +309,7 @@ fn the_rules_that_hold_whatever_else_says_are_in_the_introduction() {
         &store,
     )
     .unwrap();
-    let held = vibememory_mcp::rule_tools::held(&caller, &store).unwrap();
+    let held = vibememory_mcp::rule_tools::introduction(&reads_files, &store).unwrap();
     assert!(
         held.contains("## Attribution\n\nNone in commits."),
         "{held}"
@@ -339,17 +345,133 @@ fn a_teams_rule_is_not_in_force_until_the_person_is_told() {
         answer["teamRulesNotShown"]["rules"][0]["change"], "new",
         "{answer}"
     );
-    let caller = Caller::member_of_team(AGENT, "bob", Some("api"));
-    assert!(vibememory_mcp::rule_tools::held(&caller, &store).is_none());
+    let caller = Caller::member_of_team("claude-code", "bob", Some("api"));
+    assert!(vibememory_mcp::rule_tools::introduction(&caller, &store).is_none());
 
     vibememory_cli::rules_shown::mark_shown(&team_store).unwrap();
     let answer = call("rules_get", json!({}), Some("api"), &store).unwrap();
     assert!(ids(&answer).contains(&"review".to_owned()), "{answer}");
     assert!(answer.get("teamRulesNotShown").is_none(), "{answer}");
     assert!(
-        vibememory_mcp::rule_tools::held(&caller, &store)
+        vibememory_mcp::rule_tools::introduction(&caller, &store)
             .unwrap()
             .contains("Every change is reviewed."),
         "an enforced team rule holds once shown"
+    );
+}
+
+#[test]
+fn a_changed_skill_or_rule_is_announced_once_after_the_first_look() {
+    let temp = Temp::new("list-changes");
+    let store = temp.personal();
+    let caller = Caller::member_of_team(AGENT, "bob", None);
+    let mut lists = vibememory_mcp::protocol::Lists::default();
+    assert!(vibememory_mcp::protocol::list_changes(&mut lists, &caller, &store).is_empty());
+    call("skill_save", json!({ "level": "personal", "name": "deploy", "content": "---\nname: deploy\ndescription: How to deploy.\n---\nSteps.\n" }), None, &store).unwrap();
+    let owed = vibememory_mcp::protocol::list_changes(&mut lists, &caller, &store);
+    assert_eq!(owed.len(), 2, "{owed:?}");
+    assert!(owed[0].contains("notifications/resources/list_changed"));
+    assert!(owed[1].contains("notifications/prompts/list_changed"));
+    assert!(vibememory_mcp::protocol::list_changes(&mut lists, &caller, &store).is_empty());
+    call(
+        "rule_save",
+        json!({ "level": "personal", "id": "tone", "title": "Tone", "body": "Direct." }),
+        None,
+        &store,
+    )
+    .unwrap();
+    let owed = vibememory_mcp::protocol::list_changes(&mut lists, &caller, &store);
+    assert_eq!(
+        owed.len(),
+        1,
+        "a rule is a resource, not a prompt: {owed:?}"
+    );
+}
+
+/// Input that gives its lines, then does `meanwhile` and waits before it ends: a session that stays open while
+/// something changes.
+struct OpenSession<F: FnMut()> {
+    lines: std::io::Cursor<Vec<u8>>,
+    meanwhile: Option<F>,
+}
+
+impl<F: FnMut()> std::io::Read for OpenSession<F> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.lines.read(buffer)?;
+        if read == 0
+            && let Some(mut meanwhile) = self.meanwhile.take()
+        {
+            // the watcher looks every 100 ms: a second before is its first look, a second and a half after its next
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            meanwhile();
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+        }
+        Ok(read)
+    }
+}
+
+#[derive(Clone, Default)]
+struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_long_session_hears_that_the_skills_changed() {
+    use std::io::Read as _;
+    let temp = Temp::new("watched");
+    let store = temp.personal();
+    let caller = Caller::member_of_team(AGENT, "bob", None);
+    let skills = temp.0.join("engine/store/config/skills/deploy");
+    let input = OpenSession {
+        lines: std::io::Cursor::new(
+            b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}\n\
+              {\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n"
+                .to_vec(),
+        ),
+        meanwhile: Some(|| {
+            fs::create_dir_all(&skills).unwrap();
+            fs::write(
+                skills.join("SKILL.md"),
+                "---\nname: deploy\ndescription: How to deploy.\n---\nSteps.\n",
+            )
+            .unwrap();
+        }),
+    };
+    let output = Captured::default();
+    vibememory_mcp::protocol::serve_watched_lines(
+        std::io::BufReader::new(input),
+        output.clone(),
+        &caller,
+        &store,
+        std::time::Duration::from_millis(100),
+    )
+    .unwrap();
+    let mut text = String::new();
+    std::io::Cursor::new(output.0.lock().unwrap().clone())
+        .read_to_string(&mut text)
+        .unwrap();
+    let lines: Vec<Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap_or_else(|_| panic!("a whole line: {line}")))
+        .collect();
+    assert_eq!(lines[0]["id"], 1, "{text}");
+    assert_eq!(
+        lines[0]["result"]["capabilities"]["prompts"]["listChanged"], true,
+        "{text}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["method"] == "notifications/prompts/list_changed"),
+        "{text}"
     );
 }

@@ -96,8 +96,8 @@ description: Как выкатить сервис на хост: сборка, �
 |---|---|---|
 | Claude Code | `~/.claude/rules/vm-<id>.md`; в проекте `.claude/rules/vm-<id>.md` | `~/.claude/skills/`; в проекте `.claude/skills/` |
 | DeepSeek Harness | `~/.dsh/AGENTS.md` — `CLAUDE.md` и правила с метками; в проекте `AGENTS.local.md` | `~/.agents/skills/`; в проекте `.agents/skills/` |
-| Codex | `~/.codex/AGENTS.md` | `~/.codex/skills/` |
-| Любой MCP-агент | `instructions` при знакомстве — правила `absolute` и `enforced`; `rules_get`; resources `vibememory://rules/<id>` | `skill_get`; resources `vibememory://skills/<name>`; prompts по имени навыка |
+| Codex | `~/.codex/AGENTS.md`; в проекте `AGENTS.override.md` — `AGENTS.md` проекта и правила | `~/.codex/skills/`; в проекте `.agents/skills/` |
+| Любой MCP-агент | `instructions` при знакомстве — все правила в силе, а агенту с нашими файлами только `absolute` и `enforced`; `rules_get`; resources `vibememory://rules/<id>` | `skill_get`; resources `vibememory://skills/<name>`; prompts по имени навыка |
 
 Проектные файлы лежат под `.git/info/exclude` — git проекта их не видит.
 Правило в собранном файле обёрнуто метками `<!-- vibememory:rule <id>@<версия> -->` … `<!-- /vibememory:rule -->`:

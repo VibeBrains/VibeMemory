@@ -73,7 +73,7 @@ impl Client {
             Self::ClaudeCode => "claude-code",
             Self::ClaudeDesktop => "claude-desktop",
             // the ChatGPT app starts the servers of Codex's file, so it signs as Codex
-            Self::Codex | Self::ChatGpt => "codex",
+            Self::Codex | Self::ChatGpt => crate::agents::Preset::Codex.agent(),
             Self::Gemini => "gemini",
             Self::Cursor => "cursor",
             // one name for one agent: the preset that reads its logs is where it is written down
@@ -319,6 +319,14 @@ fn codex(machine: &Machine) -> Vec<String> {
         ),
         String::new(),
         "Then: a new session; the app — Settings → MCP servers → Restart.".to_owned(),
+        "Its sessions stay on this machine until the engine reads its logs — this line is the switch,"
+            .to_owned(),
+        "from now on, or with the past as well:".to_owned(),
+        String::new(),
+        format!(
+            "  vibememory session agent add --agent {agent} --preset {} [--backfill]",
+            crate::agents::Preset::Codex.name()
+        ),
     ]
 }
 
@@ -390,7 +398,8 @@ fn dsh(machine: &Machine) -> Vec<String> {
         "project it opens. The first row lets DSH read the shared instructions the engine keeps in"
             .to_owned(),
         format!(
-            "{} beside a project's own: by default it fits 65,536 bytes and drops the broader file whole.",
+            "{} beside a project's own: by default it fits {DSH_DEFAULT_BUDGET} bytes and drops the broader file \
+             whole.",
             home_path(machine, &[".dsh", "AGENTS.md"])
         ),
         "Then restart DSH: a new session does not read the profile again.".to_owned(),
@@ -399,8 +408,9 @@ fn dsh(machine: &Machine) -> Vec<String> {
         "from now on, or with the past as well:".to_owned(),
         String::new(),
         format!(
-            "  vibememory session agent add --agent {} --preset dsh [--backfill]",
-            Client::Dsh.agent()
+            "  vibememory session agent add --agent {} --preset {} [--backfill]",
+            Client::Dsh.agent(),
+            crate::agents::Preset::Dsh.name()
         ),
     ];
     if let Some(dir) = &machine.engine_dir {
