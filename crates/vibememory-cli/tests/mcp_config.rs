@@ -7,7 +7,9 @@
     clippy::indexing_slicing
 )]
 
-use vibememory_cli::mcp_config::{CLIENTS, Client, DSH_INSTRUCTIONS_BUDGET, Machine, instructions};
+use vibememory_cli::mcp_config::{
+    CLIENTS, Client, DSH_INSTRUCTIONS_BUDGET, Machine, budget_in, instructions,
+};
 use vibememory_core::naming::slug::is_slug;
 
 fn mac() -> Machine {
@@ -110,6 +112,16 @@ fn each_client_gets_its_own_format_and_agent() {
             "- id: agent-instructions\n  name: \"@deepseek-ai/dsh-agent-instructions\"\n  config:\n    maxBytes: {DSH_INSTRUCTIONS_BUDGET}\n"
         )),
         "the shared instructions fit beside a project's own: {dsh}"
+    );
+    assert_eq!(
+        budget_in(&dsh),
+        Some(DSH_INSTRUCTIONS_BUDGET),
+        "what the engine prints is what it reads back from a profile"
+    );
+    assert_eq!(
+        budget_in(&dsh.replace("agent-instructions", "other")),
+        None,
+        "maxBytes of another plugin is not the instructions' budget"
     );
     let chatgpt = instructions(Client::ChatGpt, &machine);
     assert!(chatgpt.contains("in the browser cannot"));

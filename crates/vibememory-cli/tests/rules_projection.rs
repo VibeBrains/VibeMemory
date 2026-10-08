@@ -419,6 +419,7 @@ fn a_member_cannot_change_a_team_rule_from_a_project_file() {
     fs::create_dir_all(m.store.join("rules")).unwrap();
     let stored = m.store.join("rules/style.md");
     fs::write(&stored, rule("style", "Стиль", "team", "Как у команды.\n")).unwrap();
+    vibememory_cli::rules_shown::mark_shown(&m.store).unwrap();
     projects(&m, Some("acme"));
     let file = cwd.join(".claude/rules/vm-style.md");
     fs::write(
@@ -445,8 +446,61 @@ fn a_member_cannot_change_a_team_rule_from_a_project_file() {
     assert!(
         done.problems
             .iter()
-            .any(|problem| problem.contains("rule propose")),
+            .any(|problem| problem.contains("rule add --level team")),
         "{:?}",
         done.problems
     );
+}
+
+#[test]
+fn a_teams_rule_goes_out_once_shown_and_a_change_keeps_the_shown_text_until_then() {
+    let m = machine("rules-team-shown", false);
+    let cwd = fs::canonicalize(m.home.parent().unwrap())
+        .unwrap()
+        .join("work");
+    fs::create_dir_all(&cwd).unwrap();
+    project_store(&m, &cwd);
+    fs::create_dir_all(m.store.join("rules")).unwrap();
+    let stored = m.store.join("rules/review.md");
+    fs::write(&stored, rule("review", "Ревью", "team", "Через ревью.\n")).unwrap();
+    let file = cwd.join(".claude/rules/vm-review.md");
+
+    projects(&m, Some("acme"));
+    assert!(
+        !file.exists(),
+        "a rule nobody was told about does not go out"
+    );
+    let note =
+        vibememory_cli::rules_shown::notice(&m.store, "acme").expect("the session hears of it");
+    assert!(note.contains("new review — Ревью"), "{note}");
+    assert!(
+        vibememory_cli::rules_shown::notice(&m.store, "acme").is_none(),
+        "told once"
+    );
+    projects(&m, Some("acme"));
+    assert!(fs::read_to_string(&file).unwrap().contains("Через ревью."));
+
+    fs::write(
+        &stored,
+        "---\nid: review\ntitle: Ревью\nlevel: team\nenforced: true\n---\nЧерез два ревью.\n",
+    )
+    .unwrap();
+    projects(&m, Some("acme"));
+    let laid = fs::read_to_string(&file).unwrap();
+    assert!(
+        laid.contains("Через ревью.") && !laid.contains("два"),
+        "the shown text stays until the change is told: {laid}"
+    );
+    let note = vibememory_cli::rules_shown::notice(&m.store, "acme").unwrap();
+    assert!(note.contains("changed review — Ревью [enforced]"), "{note}");
+    projects(&m, Some("acme"));
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("Через два ревью.")
+    );
+
+    fs::remove_file(&stored).unwrap();
+    projects(&m, Some("acme"));
+    assert!(!file.exists(), "a rule the team took away goes at once");
 }

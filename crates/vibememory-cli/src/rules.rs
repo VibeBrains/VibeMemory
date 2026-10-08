@@ -97,7 +97,8 @@ pub fn read_rules(dir: &Path) -> (BTreeMap<String, Rule>, Vec<String>) {
     (rules, problems)
 }
 
-/// What is wrong with the person's rule and skill files, read without writing anything: what `doctor` says.
+/// What is wrong with the person's rule and skill files, read without writing anything: what `doctor` says. An
+/// assembled file over DSH's budget is named too: DSH drops it whole and says nothing.
 #[must_use]
 pub fn check(store: &Path, agents: &Agents) -> Vec<String> {
     let (_, mut warnings) = read_rules(&store.join(PERSONAL_RULES));
@@ -107,7 +108,85 @@ pub fn check(store: &Path, agents: &Agents) -> Vec<String> {
     for dir in &agents.skill_dirs {
         warnings.extend(own_skills(dir, &skills, store));
     }
+    for (name, path) in &agents.assembled {
+        let Some(dsh_home) = path.parent().filter(|_| *name == DSH_NAME) else {
+            continue;
+        };
+        let budget = crate::mcp_config::dsh_budget(dsh_home);
+        let size = std::fs::metadata(path).map_or(0, |metadata| metadata.len());
+        if usize::try_from(size).is_ok_and(|size| size > budget) {
+            warnings.push(format!(
+                "{}: {size} bytes, over DSH's budget of {budget} for instruction files — DSH drops the whole file; \
+                 `vibememory mcp-config dsh` gives the line that raises it, `vibememory rules lint` the rules to make \
+                 skills",
+                path.display()
+            ));
+        }
+    }
     warnings
+}
+
+/// How an agent's copy of the person's rules stands against the store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentState {
+    /// The agent, as a person names it.
+    pub agent: &'static str,
+    /// Its rules directory or its assembled file.
+    pub path: PathBuf,
+    /// What the engine wrote there, in bytes.
+    pub bytes: u64,
+    /// Rules the copy does not hold as the store does: missing, of another version, or gone from the store. The
+    /// engine's next run writes them.
+    pub behind: Vec<String>,
+}
+
+/// Each agent's copy of the person's rules against the store, read without writing: what `rules status` says.
+#[must_use]
+pub fn agent_states(store: &Path, agents: &Agents) -> Vec<AgentState> {
+    let (canon, _) = read_rules(&store.join(PERSONAL_RULES));
+    let marked = |pieces: Vec<Piece>, found: &mut BTreeMap<String, String>| {
+        for piece in pieces {
+            if let Piece::Rule { id, from, .. } = piece {
+                found.insert(id, from);
+            }
+        }
+    };
+    let behind = |found: &BTreeMap<String, String>| -> Vec<String> {
+        let mut ids: Vec<String> = canon
+            .values()
+            .filter(|rule| found.get(rule.id.as_str()) != Some(&rule.version()))
+            .map(|rule| rule.id.as_str().to_owned())
+            .chain(found.keys().filter(|id| !canon.contains_key(*id)).cloned())
+            .collect();
+        ids.sort();
+        ids
+    };
+    let mut states = Vec::new();
+    let mut found = BTreeMap::new();
+    let mut bytes = 0;
+    for path in engine_files(&agents.claude_rules) {
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        bytes += text.len() as u64;
+        marked(assembly::disassemble(&text).unwrap_or_default(), &mut found);
+    }
+    states.push(AgentState {
+        agent: CLAUDE_NAME,
+        path: agents.claude_rules.clone(),
+        bytes,
+        behind: behind(&found),
+    });
+    for (name, path) in &agents.assembled {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        let mut found = BTreeMap::new();
+        marked(assembly::disassemble(&text).unwrap_or_default(), &mut found);
+        states.push(AgentState {
+            agent: name,
+            path: path.clone(),
+            bytes: text.len() as u64,
+            behind: behind(&found),
+        });
+    }
+    states
 }
 
 /// Writes a rule into its directory as `<id>.md`, through a temporary name: an agent may read it meanwhile.
@@ -134,6 +213,13 @@ fn write_if_changed(path: &Path, text: &str) -> Result<bool, String> {
     std::fs::rename(&temporary, path).map_err(|error| format!("{}: {error}", path.display()))?;
     Ok(true)
 }
+
+/// Claude Code, as a person names it.
+pub const CLAUDE_NAME: &str = "Claude Code";
+/// DSH, as a person names it.
+pub const DSH_NAME: &str = "DeepSeek Harness";
+/// Codex, as a person names it.
+pub const CODEX_NAME: &str = "Codex";
 
 /// Where this machine's agents read the person's rules and skills.
 #[derive(Debug, Clone)]
@@ -181,13 +267,13 @@ impl Agents {
             let found = [
                 (
                     "dsh",
-                    "DeepSeek Harness",
+                    DSH_NAME,
                     dsh_home,
                     home.join(".agents").join("skills"),
                 ),
                 (
                     "codex",
-                    "Codex",
+                    CODEX_NAME,
                     home.join(".codex"),
                     home.join(".codex").join("skills"),
                 ),
@@ -689,12 +775,17 @@ pub fn project_projects(run: &ProjectsRun<'_>) -> Projected {
         stamp,
     } = run;
     let mut report = Projected::default();
-    let (team_rules, problems) = if team.is_some() {
-        read_rules(&store.join(TEAM_RULES))
+    // a team's rules go out as the person was shown them: a new one waits for `SessionStart` or `rules status`
+    let team_rules: BTreeMap<String, Rule> = if team.is_some() {
+        let held = crate::rules_shown::team_rules(store, false);
+        report.warnings.extend(held.warnings);
+        held.laid
+            .into_iter()
+            .map(|rule| (rule.id.as_str().to_owned(), rule))
+            .collect()
     } else {
-        (BTreeMap::new(), Vec::new())
+        BTreeMap::new()
     };
-    report.warnings.extend(problems);
     let team_skills = if team.is_some() {
         skills_of(&store.join(TEAM_SKILLS), &mut report)
     } else {
@@ -745,7 +836,7 @@ pub fn project_projects(run: &ProjectsRun<'_>) -> Projected {
                         if quarantine(&format!("team-rule-{id}"), &text).is_ok() {
                             report.problems.push(format!(
                                 "team rule {id} was changed in {}: a team's rule changes through its owner or \
-                                 admins — the edit is in the quarantine, propose it with `vibememory rule propose`",
+                                 admins — the edit is in the quarantine, propose it with `vibememory rule add --level team`",
                                 path.display()
                             ));
                         }
@@ -787,7 +878,6 @@ fn apply_mode(
     report: &mut Projected,
 ) {
     let project_dir = run.store.join("projects").join(project);
-    // the project's own rule files, in the mode the person chose for it; `advise` leaves them to `rules sync`
     let mode = crate::rules_sync::mode_of(&project_dir);
     if mode != crate::rules_sync::Mode::Advise {
         let histories = crate::rules_sync::histories(

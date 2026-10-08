@@ -181,9 +181,9 @@ fn a_flag_the_new_level_has_not_is_dropped_and_said() {
     assert!(!moved.contains("absolute"), "{moved}");
 }
 
-#[test]
-fn a_teams_rule_from_a_terminal_is_a_proposal_signed_by_the_member() {
-    let m = machine("rule-command-team");
+/// A machine whose project `app` belongs to team `syncteam`, connected as member `alice`; the team's clone is returned.
+fn team_machine(label: &str) -> (Machine, PathBuf) {
+    let m = machine(label);
     let work = dir(&m.work).to_owned();
     fs::write(
         m.temp.path().join("engine/config.json"),
@@ -205,6 +205,13 @@ fn a_teams_rule_from_a_terminal_is_a_proposal_signed_by_the_member() {
     let team = m.temp.dir("engine/stores/syncteam/store");
     git_repo_with_commit(&team);
     fs::create_dir_all(team.join("projects/app")).unwrap();
+    (m, team)
+}
+
+#[test]
+fn a_teams_rule_from_a_terminal_is_a_proposal_signed_by_the_member() {
+    let (m, team) = team_machine("rule-command-team");
+    let work = dir(&m.work).to_owned();
 
     let (ok, said) = engine(
         &m,
@@ -243,4 +250,99 @@ fn a_teams_rule_from_a_terminal_is_a_proposal_signed_by_the_member() {
     assert!(ok && said.contains("stays until then"), "{said}");
     assert!(team.join("proposals/rules/style.alice.md").is_file());
     assert!(m.store.join("config/rules/style.md").is_file());
+}
+
+#[test]
+fn status_tells_each_agents_copy_the_rules_here_and_a_teams_rule_once() {
+    let (m, team) = team_machine("rule-command-status");
+    let work = dir(&m.work).to_owned();
+    let (ok, said) = engine(
+        &m,
+        &[
+            "rule", "add", "--level", "personal", "--id", "tests", "--title", "Tests", &work,
+        ],
+        "Run cargo test.\n",
+    );
+    assert!(ok, "{said}");
+    fs::create_dir_all(team.join("rules")).unwrap();
+    fs::write(
+        team.join("rules/review.md"),
+        "---\nid: review\ntitle: Review\nlevel: team\nenforced: true\n---\nEvery change is reviewed.\n",
+    )
+    .unwrap();
+
+    let (ok, said) = engine(&m, &["rules", "status", &work], "");
+    assert!(ok, "{said}");
+    assert!(
+        said.contains("Claude Code") && said.contains("1 behind the store (tests)"),
+        "nothing laid out yet, and the tick writes it: {said}"
+    );
+    assert!(
+        said.contains("here: 1 rule(s) in force — 1 personal, 0 team, 0 project"),
+        "a team rule not shown is not in force: {said}"
+    );
+    assert!(
+        said.contains("team syncteam, not shown before:")
+            && said.contains("new review — Review [enforced]")
+            && said.contains("shown now"),
+        "{said}"
+    );
+    let (ok, said) = engine(&m, &["rules", "status", &work], "");
+    assert!(
+        ok && !said.contains("not shown before"),
+        "told once: {said}"
+    );
+    assert!(said.contains("1 team"), "{said}");
+}
+
+#[test]
+fn sync_offers_the_lessons_of_sessions_as_rules() {
+    let m = machine("rule-command-learned");
+    let memory = m.store.join("projects/app/memory");
+    fs::create_dir_all(&memory).unwrap();
+    let document = |name: &str, kind: &str| {
+        format!(
+            "---\nname: {name}\ndescription: one line about {name}\nmetadata:\n  type: {kind}\n  project: app\n  \
+             agent: claude-code\n---\n\nThe lesson.\n"
+        )
+    };
+    fs::write(
+        memory.join("short-commits.md"),
+        document("short-commits", "feedback"),
+    )
+    .unwrap();
+    fs::write(
+        memory.join("store-naming.md"),
+        document("store-naming", "project"),
+    )
+    .unwrap();
+    let (ok, said) = engine(&m, &["rules", "sync", dir(&m.work)], "");
+    assert!(ok, "{said}");
+    assert!(
+        said.contains("short-commits — one line about short-commits"),
+        "{said}"
+    );
+    assert!(!said.contains("store-naming"), "only feedback: {said}");
+
+    let (ok, said) = engine(
+        &m,
+        &[
+            "rule",
+            "add",
+            "--level",
+            "project",
+            "--id",
+            "short-commits",
+            "--title",
+            "Short commits",
+            dir(&m.work),
+        ],
+        "Keep commits short.\n",
+    );
+    assert!(ok, "{said}");
+    let (_, said) = engine(&m, &["rules", "sync", dir(&m.work)], "");
+    assert!(
+        !said.contains("learned in sessions"),
+        "raised already: {said}"
+    );
 }

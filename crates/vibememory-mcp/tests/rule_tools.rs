@@ -243,3 +243,113 @@ fn rules_and_skills_are_resources_for_an_agent_without_their_directories() {
             .unwrap_err();
     assert!(missing.contains("no rule none"), "{missing}");
 }
+
+#[test]
+fn skills_are_prompts_one_a_name_and_the_level_above_wins() {
+    let temp = Temp::new("prompts");
+    let store = temp.personal();
+    let skill = |level: &str, project: Option<&str>, steps: &str| {
+        call(
+            "skill_save",
+            json!({ "level": level, "name": "deploy", "content": format!("---\nname: deploy\ndescription: How to deploy.\n---\n{steps}\n") }),
+            project,
+            &store,
+        )
+        .unwrap();
+    };
+    skill("personal", None, "Steps of the person.");
+    skill("project", Some("app"), "Steps of the project.");
+    let caller = Caller::member_of_team(AGENT, "bob", Some("app"));
+    let listed = vibememory_mcp::rule_tools::prompts(&caller, &store);
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0]["name"], "deploy");
+    let resources = vibememory_mcp::rule_tools::resources(&caller, &store);
+    assert_eq!(resources.len(), 1, "one resource a skill: {resources:?}");
+
+    let prompt = vibememory_mcp::rule_tools::prompt(
+        "deploy",
+        &json!({ "task": "staging" }),
+        &caller,
+        &store,
+    )
+    .unwrap();
+    let text = prompt["messages"][0]["content"]["text"].as_str().unwrap();
+    assert!(
+        text.contains("Steps of the project.") && text.ends_with("The task: staging"),
+        "{text}"
+    );
+    let missing =
+        vibememory_mcp::rule_tools::prompt("none", &json!({}), &caller, &store).unwrap_err();
+    assert!(missing.contains("no skill none"), "{missing}");
+}
+
+#[test]
+fn the_rules_that_hold_whatever_else_says_are_in_the_introduction() {
+    let temp = Temp::new("held");
+    let store = temp.personal();
+    let caller = Caller::member_of_team(AGENT, "bob", None);
+    call(
+        "rule_save",
+        json!({ "level": "personal", "id": "tone", "title": "Tone", "body": "Direct." }),
+        None,
+        &store,
+    )
+    .unwrap();
+    assert!(vibememory_mcp::rule_tools::held(&caller, &store).is_none());
+    call(
+        "rule_save",
+        json!({ "level": "personal", "id": "attribution", "title": "Attribution", "body": "None in commits.", "absolute": true }),
+        None,
+        &store,
+    )
+    .unwrap();
+    let held = vibememory_mcp::rule_tools::held(&caller, &store).unwrap();
+    assert!(
+        held.contains("## Attribution\n\nNone in commits."),
+        "{held}"
+    );
+    assert!(
+        !held.contains("Direct."),
+        "only what holds whatever else says: {held}"
+    );
+}
+
+#[test]
+fn a_teams_rule_is_not_in_force_until_the_person_is_told() {
+    let temp = Temp::new("shown");
+    let team_store = temp.0.join("engine/stores/acme/store");
+    fs::create_dir_all(team_store.join("rules")).unwrap();
+    fs::write(
+        team_store.join("rules/review.md"),
+        "---\nid: review\ntitle: Review\nlevel: team\nenforced: true\n---\nEvery change is reviewed.\n",
+    )
+    .unwrap();
+    let store = temp.team();
+    let ids = |answer: &Value| -> Vec<String> {
+        answer["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|rule| rule["id"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let answer = call("rules_get", json!({}), Some("api"), &store).unwrap();
+    assert!(!ids(&answer).contains(&"review".to_owned()), "{answer}");
+    assert_eq!(
+        answer["teamRulesNotShown"]["rules"][0]["change"], "new",
+        "{answer}"
+    );
+    let caller = Caller::member_of_team(AGENT, "bob", Some("api"));
+    assert!(vibememory_mcp::rule_tools::held(&caller, &store).is_none());
+
+    vibememory_cli::rules_shown::mark_shown(&team_store).unwrap();
+    let answer = call("rules_get", json!({}), Some("api"), &store).unwrap();
+    assert!(ids(&answer).contains(&"review".to_owned()), "{answer}");
+    assert!(answer.get("teamRulesNotShown").is_none(), "{answer}");
+    assert!(
+        vibememory_mcp::rule_tools::held(&caller, &store)
+            .unwrap()
+            .contains("Every change is reviewed."),
+        "an enforced team rule holds once shown"
+    );
+}
