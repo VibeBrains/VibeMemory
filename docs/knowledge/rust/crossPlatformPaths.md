@@ -87,6 +87,10 @@ serde 1.0.229 и clippy 1.97.1. Проверено scratch-сборками (ч�
   `#![allow(clippy::disallowed_methods, clippy::disallowed_types, clippy::disallowed_macros)]`.
   Grep по `std::fs` обходится `use std::{fs, env};`, а голый список `std::fs::*` — методами
   `Path` (ревью 2026-09-02).
+  Платформенные пути в списке (`std::os::unix::*`, `std::os::windows::*`) под чужой целью не существуют, и clippy
+  печатает на каждый «does not refer to a reachable function» — не ошибку, но шум, в котором тонет настоящее.
+  Такой записи — `allow-invalid = true`; запрет при этом действует под своей целью. Без записей `std::os::windows`
+  ядро под Windows могло делать симлинки мимо гейта (2026-10-08).
 - `.gitattributes`: `* text=auto eol=lf` даёт одинаковый `cargo fmt --check` на Mac и Windows;
   `fixtures/** -text` хранит фикстуры байт-в-байт (оборванные строки, CRLF внутри).
 - `rust-toolchain.toml` с точным `channel` — единственный источник версии компилятора;

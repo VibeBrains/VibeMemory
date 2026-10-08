@@ -207,3 +207,39 @@ fn skills_are_checked_saved_and_listed() {
     let one = call("skill_get", json!({ "name": "deploy" }), None, &store).unwrap();
     assert!(one["content"].as_str().unwrap().contains("Steps."));
 }
+
+#[test]
+fn rules_and_skills_are_resources_for_an_agent_without_their_directories() {
+    let temp = Temp::new("resources");
+    let store = temp.personal();
+    call(
+        "rule_save",
+        json!({ "level": "personal", "id": "tone", "title": "Tone", "body": "Direct." }),
+        None,
+        &store,
+    )
+    .unwrap();
+    call("skill_save", json!({ "level": "personal", "name": "deploy", "content": "---\nname: deploy\ndescription: How to deploy.\n---\nSteps.\n" }), None, &store).unwrap();
+    let caller = Caller::member_of_team(AGENT, "bob", None);
+    let listed = vibememory_mcp::rule_tools::resources(&caller, &store);
+    let uris: Vec<&str> = listed
+        .iter()
+        .filter_map(|resource| resource["uri"].as_str())
+        .collect();
+    assert_eq!(
+        uris,
+        vec!["vibememory://rules/tone", "vibememory://skills/deploy"]
+    );
+    let rule =
+        vibememory_mcp::rule_tools::read_resource("vibememory://rules/tone", &caller, &store)
+            .unwrap();
+    assert_eq!(rule[0]["text"], "## Tone\n\nDirect.\n");
+    let skill =
+        vibememory_mcp::rule_tools::read_resource("vibememory://skills/deploy", &caller, &store)
+            .unwrap();
+    assert!(skill[0]["text"].as_str().unwrap().contains("Steps."));
+    let missing =
+        vibememory_mcp::rule_tools::read_resource("vibememory://rules/none", &caller, &store)
+            .unwrap_err();
+    assert!(missing.contains("no rule none"), "{missing}");
+}

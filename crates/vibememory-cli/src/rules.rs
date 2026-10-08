@@ -54,8 +54,12 @@ pub struct Projected {
     pub taken: Vec<String>,
     /// Rules changed in an agent's file and in the store both: the agent's version is in the quarantine.
     pub conflicts: Vec<String>,
-    /// What could not be done, said for a person.
+    /// What could not be done in this run, said for a person.
     pub problems: Vec<String>,
+    /// What is wrong with the files themselves — a rule that does not read, a skill an agent would refuse, a skill of
+    /// the person's own under a stored name: the same every run until a person changes the file, so `doctor` says it
+    /// and the tick does not repeat it every two minutes.
+    pub warnings: Vec<String>,
 }
 
 /// The rules of a directory, by id, and what is wrong with the files that are not rules.
@@ -91,6 +95,19 @@ pub fn read_rules(dir: &Path) -> (BTreeMap<String, Rule>, Vec<String>) {
         }
     }
     (rules, problems)
+}
+
+/// What is wrong with the person's rule and skill files, read without writing anything: what `doctor` says.
+#[must_use]
+pub fn check(store: &Path, agents: &Agents) -> Vec<String> {
+    let (_, mut warnings) = read_rules(&store.join(PERSONAL_RULES));
+    let mut report = Projected::default();
+    let skills = skills_of(&store.join(PERSONAL_SKILLS), &mut report);
+    warnings.extend(report.warnings);
+    for dir in &agents.skill_dirs {
+        warnings.extend(own_skills(dir, &skills, store));
+    }
+    warnings
 }
 
 /// Writes a rule into its directory as `<id>.md`, through a temporary name: an agent may read it meanwhile.
@@ -131,28 +148,62 @@ pub struct Agents {
     pub skill_dirs: Vec<PathBuf>,
     /// Whether DSH lives here: a project then also gets `AGENTS.local.md` and `.agents/skills`.
     pub dsh: bool,
+    /// Agents that live here and that `rules.agents` leaves out: their assembled file and skill links are given
+    /// back — the engine's part taken out, the person's own text left.
+    pub released: Released,
+}
+
+/// What the engine gives back of the agents the person left out of `rules.agents`.
+#[derive(Debug, Clone, Default)]
+pub struct Released {
+    /// Their assembled files.
+    pub files: Vec<PathBuf>,
+    /// Their skill directories.
+    pub skill_dirs: Vec<PathBuf>,
 }
 
 impl Agents {
-    /// The agents of a machine whose Claude Code configuration is `config_dir` and whose home is `home`; without a
-    /// home only Claude Code is known.
+    /// The agents of a machine whose Claude Code configuration is `config_dir` and whose home is `home`, as far as
+    /// the person's `rules.agents` lets them have the rules; without a home only Claude Code is known.
     #[must_use]
-    pub fn of(config_dir: &Path, home: Option<&Path>) -> Self {
+    pub fn of(
+        config_dir: &Path,
+        home: Option<&Path>,
+        settings: &crate::config::RulesConfig,
+    ) -> Self {
         let mut assembled = Vec::new();
         let mut skill_dirs = Vec::new();
+        let mut released = Released::default();
         let mut dsh = false;
         if let Some(home) = home {
             let dsh_home = crate::agents::Preset::Dsh.home(home);
-            if dsh_home.is_dir() {
-                dsh = true;
-                assembled.push(("DeepSeek Harness", dsh_home.join("AGENTS.md")));
-                // DSH reads `~/.agents/skills` as the root agents share (read off its bundle, 2026-10-07)
-                skill_dirs.push(home.join(".agents").join("skills"));
-            }
-            let codex = home.join(".codex");
-            if codex.is_dir() {
-                assembled.push(("Codex", codex.join("AGENTS.md")));
-                skill_dirs.push(codex.join("skills"));
+            // DSH reads `~/.agents/skills` as the root agents share (read off its bundle, 2026-10-07)
+            let found = [
+                (
+                    "dsh",
+                    "DeepSeek Harness",
+                    dsh_home,
+                    home.join(".agents").join("skills"),
+                ),
+                (
+                    "codex",
+                    "Codex",
+                    home.join(".codex"),
+                    home.join(".codex").join("skills"),
+                ),
+            ];
+            for (key, name, agent_home, skills) in found {
+                if !agent_home.is_dir() {
+                    continue;
+                }
+                if settings.allows(key) {
+                    dsh |= key == "dsh";
+                    assembled.push((name, agent_home.join("AGENTS.md")));
+                    skill_dirs.push(skills);
+                } else {
+                    released.files.push(agent_home.join("AGENTS.md"));
+                    released.skill_dirs.push(skills);
+                }
             }
         }
         Self {
@@ -160,6 +211,7 @@ impl Agents {
             assembled,
             skill_dirs,
             dsh,
+            released,
         }
     }
 }
@@ -283,7 +335,7 @@ pub fn project_personal(
     let mut report = Projected::default();
     let rules_dir = store.join(PERSONAL_RULES);
     let (mut canon, problems) = read_rules(&rules_dir);
-    report.problems.extend(problems);
+    report.warnings.extend(problems);
     let base_path = store.join("config").join("CLAUDE.md");
     let mut base = Base {
         text: std::fs::read_to_string(&base_path).ok(),
@@ -325,6 +377,14 @@ pub fn project_personal(
             )
         }));
     }
+    let released = take_released(
+        agents,
+        &mut canon,
+        &mut changed,
+        &mut base,
+        &mut quarantine,
+        &mut report,
+    );
     for id in &changed {
         if let Some(rule) = canon.get(id)
             && let Err(error) = write_rule(&rules_dir, rule)
@@ -365,11 +425,59 @@ pub fn project_personal(
             Err(error) => report.problems.push(error),
         }
     }
-    let skills = skills_of(&store.join(PERSONAL_SKILLS), &mut report);
-    for dir in &agents.skill_dirs {
-        link_skills(dir, &skills, store, &mut report);
+    for (path, outside) in released {
+        give_back(path, &outside, &mut report);
     }
+    link_personal_skills(store, agents, &mut report);
     report
+}
+
+/// The files of agents left out of `rules.agents` that the engine wrote: their edits are taken in like any agent's,
+/// and what comes back is the person's own text of each, to keep when the file is given back.
+fn take_released<'a>(
+    agents: &'a Agents,
+    canon: &mut BTreeMap<String, Rule>,
+    changed: &mut Vec<String>,
+    base: &mut Base,
+    quarantine: &mut dyn FnMut(&str, &str) -> Result<(), String>,
+    report: &mut Projected,
+) -> Vec<(&'a Path, Vec<String>)> {
+    let mut released = Vec::new();
+    for path in &agents.released.files {
+        if std::fs::read_to_string(path).is_ok_and(|text| assembly::written_by_engine(&text))
+            && let Some(pieces) = pieces_of(path, report)
+        {
+            let outside = take_edits(pieces, canon, changed, Some(base), quarantine, report);
+            released.push((path.as_path(), outside));
+        }
+    }
+    released
+}
+
+/// An agent's file given back: only the person's own text stays, and a file that held nothing else goes.
+fn give_back(path: &Path, outside: &[String], report: &mut Projected) {
+    let result = if outside.is_empty() {
+        std::fs::remove_file(path).map_err(|error| format!("{}: {error}", path.display()))
+    } else {
+        write_if_changed(path, &outside.join("\n")).map(|_| ())
+    };
+    match result {
+        Ok(()) => report.written.push(path.display().to_string()),
+        Err(error) => report.problems.push(error),
+    }
+}
+
+/// The person's skills linked for the agents that get them, and the engine's links taken from those left out.
+fn link_personal_skills(store: &Path, agents: &Agents, report: &mut Projected) {
+    let skills = skills_of(&store.join(PERSONAL_SKILLS), report);
+    for dir in &agents.skill_dirs {
+        link_skills(dir, &skills, store, report);
+    }
+    for dir in &agents.released.skill_dirs {
+        if !agents.skill_dirs.contains(dir) {
+            unlink_skills(dir, &BTreeMap::new(), store, report);
+        }
+    }
 }
 
 /// The files the engine wrote into a rules directory: `vm-*.md` that start with its header line.
@@ -440,7 +548,7 @@ fn skills_of(dir: &Path, report: &mut Projected) -> BTreeMap<String, PathBuf> {
             Ok(_) => {
                 skills.insert(name, path);
             }
-            Err(error) => report.problems.push(format!("skill {name}: {error}")),
+            Err(error) => report.warnings.push(format!("skill {name}: {error}")),
         }
     }
     skills
@@ -458,10 +566,49 @@ fn link_skills(
         report.problems.push(format!("{}: {error}", dir.display()));
         return;
     }
-    let ours = |path: &Path| -> bool {
-        std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_symlink())
-            && std::fs::read_link(path).is_ok_and(|target| target.starts_with(store))
-    };
+    unlink_skills(dir, skills, store, report);
+    report.warnings.extend(own_skills(dir, skills, store));
+    for (name, target) in skills {
+        let link = dir.join(name);
+        if std::fs::symlink_metadata(&link).is_ok() {
+            continue;
+        }
+        match crate::dir_link::create(target, &link) {
+            Ok(()) => report.written.push(link.display().to_string()),
+            Err(error) => report.problems.push(format!("{}: {error}", link.display())),
+        }
+    }
+}
+
+/// The stored skills a skill of the person's own stands in place of in an agent's directory: left as it is, and said.
+fn own_skills(dir: &Path, skills: &BTreeMap<String, PathBuf>, store: &Path) -> Vec<String> {
+    skills
+        .keys()
+        .map(|name| (name, dir.join(name)))
+        .filter(|(_, link)| std::fs::symlink_metadata(link).is_ok() && !is_engine_link(link, store))
+        .map(|(name, link)| {
+            format!(
+                "{}: a skill of the person's own by this name is there; the stored {name} is not linked over it",
+                link.display()
+            )
+        })
+        .collect()
+}
+
+/// Whether a path is a link the engine made: one into the store.
+fn is_engine_link(path: &Path, store: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_symlink())
+        && std::fs::read_link(path).is_ok_and(|target| target.starts_with(store))
+}
+
+/// Removes the engine's links in an agent's skills directory that do not lead to `skills` as they are now.
+fn unlink_skills(
+    dir: &Path,
+    skills: &BTreeMap<String, PathBuf>,
+    store: &Path,
+    report: &mut Projected,
+) {
+    let ours = |path: &Path| is_engine_link(path, store);
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
@@ -476,22 +623,6 @@ fn link_skills(
                     Err(error) => report.problems.push(error),
                 }
             }
-        }
-    }
-    for (name, target) in skills {
-        let link = dir.join(name);
-        if std::fs::symlink_metadata(&link).is_ok() {
-            if !ours(&link) {
-                report.problems.push(format!(
-                    "{}: a skill of the person's own by this name is there; the stored {name} is not linked over it",
-                    link.display()
-                ));
-            }
-            continue;
-        }
-        match crate::dir_link::create(target, &link) {
-            Ok(()) => report.written.push(link.display().to_string()),
-            Err(error) => report.problems.push(format!("{}: {error}", link.display())),
         }
     }
 }
@@ -563,7 +694,7 @@ pub fn project_projects(run: &ProjectsRun<'_>) -> Projected {
     } else {
         (BTreeMap::new(), Vec::new())
     };
-    report.problems.extend(problems);
+    report.warnings.extend(problems);
     let team_skills = if team.is_some() {
         skills_of(&store.join(TEAM_SKILLS), &mut report)
     } else {
@@ -577,7 +708,7 @@ pub fn project_projects(run: &ProjectsRun<'_>) -> Projected {
         let project_dir = store.join("projects").join(&project);
         let rules_dir = project_dir.join(PROJECT_RULES);
         let (mut project_rules, problems) = read_rules(&rules_dir);
-        report.problems.extend(problems);
+        report.warnings.extend(problems);
         let mut skills = team_skills.clone();
         skills.extend(skills_of(&project_dir.join(PROJECT_SKILLS), &mut report));
 
@@ -709,8 +840,12 @@ fn write_project(
         let _ = std::fs::remove_file(&agents_file);
     }
     let mut skill_dirs = vec![cwd.join(".claude").join("skills")];
+    let shared = cwd.join(".agents").join("skills");
     if agents.dsh {
-        skill_dirs.push(cwd.join(".agents").join("skills"));
+        skill_dirs.push(shared);
+    } else {
+        // no agent here reads it any more: the engine's links go, the person's own skills stay
+        unlink_skills(&shared, &BTreeMap::new(), store, report);
     }
     for dir in &skill_dirs {
         if !skills.is_empty() || dir.is_dir() {

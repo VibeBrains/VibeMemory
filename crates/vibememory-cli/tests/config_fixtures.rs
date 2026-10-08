@@ -68,6 +68,7 @@ fn code(error: &ConfigError) -> &'static str {
         ConfigError::Missing { .. } => "missing",
         ConfigError::RelativeRoot { .. } => "relativeRoot",
         ConfigError::Naming(_) => "naming",
+        ConfigError::UnknownAgent { .. } => "unknownAgent",
     }
 }
 

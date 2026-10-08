@@ -495,3 +495,108 @@ fn skill_save(arguments: &Value, caller: &Caller<'_>, memories: &dyn Memories) -
     answer.insert("level".to_owned(), json!(level.as_str()));
     Ok(Value::Object(answer))
 }
+
+/// The scheme of the resources this server gives: a rule in force, a skill.
+pub const SCHEME: &str = "vibememory://";
+
+/// The rules in force and the skills, as MCP resources: an agent whose client reads resources — DSH does — gets them
+/// without a directory of its own. Nothing on the host, which keeps no files of a machine.
+#[must_use]
+pub fn resources(caller: &Caller<'_>, memories: &dyn Memories) -> Vec<Value> {
+    let Ok(places) = places(memories) else {
+        return Vec::new();
+    };
+    let project = project(&json!({}), caller, memories).ok().flatten();
+    let mut found: Vec<Value> = in_force(&places, project.as_deref())
+        .into_iter()
+        .map(|rule| {
+            json!({
+                "uri": format!("{SCHEME}rules/{}", rule.id),
+                "name": rule.id.as_str(),
+                "title": rule.title,
+                "description": format!("A {} rule, always in force", rule.level.as_str()),
+                "mimeType": "text/markdown",
+            })
+        })
+        .collect();
+    for (level, dir) in skill_dirs(&places, project.as_deref()) {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if let Ok(manifest) = std::fs::read_to_string(entry.path().join(SKILL_FILE))
+                .map_err(|error| error.to_string())
+                .and_then(|text| parse_skill(&name, &text).map_err(|error| error.to_string()))
+            {
+                found.push(json!({
+                    "uri": format!("{SCHEME}skills/{name}"),
+                    "name": manifest.name,
+                    "description": format!("A {} skill: {}", level.as_str(), manifest.description),
+                    "mimeType": "text/markdown",
+                }));
+            }
+        }
+    }
+    found
+}
+
+/// One resource's contents.
+///
+/// # Errors
+///
+/// A sentence naming what is not there.
+pub fn read_resource(
+    uri: &str,
+    caller: &Caller<'_>,
+    memories: &dyn Memories,
+) -> Result<Vec<Value>, String> {
+    let places = places(memories)?;
+    let project = project(&json!({}), caller, memories).ok().flatten();
+    let text = if let Some(id) = uri.strip_prefix(&format!("{SCHEME}rules/")) {
+        in_force(&places, project.as_deref())
+            .into_iter()
+            .find(|rule| rule.id.as_str() == id)
+            .map(|rule| format!("## {}\n\n{}", rule.title, rule.body))
+            .ok_or_else(|| format!("no rule {id} is in force here"))?
+    } else if let Some(name) = uri.strip_prefix(&format!("{SCHEME}skills/")) {
+        skill_dirs(&places, project.as_deref())
+            .iter()
+            .rev()
+            .find_map(|(_, dir)| std::fs::read_to_string(dir.join(name).join(SKILL_FILE)).ok())
+            .ok_or_else(|| format!("no skill {name}"))?
+    } else {
+        return Err(format!(
+            "no resource {uri}: this server gives {SCHEME}rules/<id> and {SCHEME}skills/<name>"
+        ));
+    };
+    Ok(vec![
+        json!({ "uri": uri, "mimeType": "text/markdown", "text": text }),
+    ])
+}
+
+/// The rules in force for a project: the person's, the team's, the project's, stacked.
+fn in_force(places: &Places, project: Option<&str>) -> Vec<Rule> {
+    let personal = rules_in(&places.personal.join(PERSONAL_RULES));
+    let team = if places.team {
+        rules_in(&places.store.join(TEAM_RULES))
+    } else {
+        Vec::new()
+    };
+    let own = project
+        .map(|project| {
+            rules_in(
+                &places
+                    .store
+                    .join("projects")
+                    .join(project)
+                    .join(PROJECT_RULES),
+            )
+        })
+        .unwrap_or_default();
+    resolve(&personal, &team, &own)
+        .rules
+        .into_iter()
+        .map(|in_force| in_force.rule)
+        .collect()
+}

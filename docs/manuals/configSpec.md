@@ -30,7 +30,8 @@
     "/Volumes/Storage/Projects/VibeCode/VibeSweep": "VibeSweep",
     "/Volumes/Storage/Projects/VibeCode/VibeSweep/**": "VibeSweep"
   },
-  "ignoreCwd": ["/"]
+  "ignoreCwd": ["/"],
+  "rules": { "longRuleBytes": 2048 }
 }
 ```
 
@@ -210,3 +211,24 @@ Git-remote стора: `ssh://git@host/vibememory/store.git` или любая �
 Состояние стора команды живёт отдельно от личного: клон — `~/.vibememory/stores/<id>/store`,
 рядом — `store.json`, ключ, `known_hosts`, свои `tick-state.json`, карантин и заметки. Пауза одной
 команды не останавливает ни другую, ни личный стор.
+
+## `rules` — объект, необязателен
+
+Как движок обходится с вашими правилами и навыками.
+
+```json
+"rules": {
+  "longRuleBytes": 2048,
+  "agents": ["dsh", "codex"]
+}
+```
+
+- `longRuleBytes` — число, по умолчанию `2048`. Правило длиннее этого — процедура: его называют
+  `vibememory rules lint` и `doctor` как кандидата в навык.
+- `agents` — массив из `"dsh"` (DeepSeek Harness) и `"codex"`, по умолчанию — все, что есть на машине.
+  Каким агентам кроме Claude Code раскладывать правила и навыки: Claude Code получает их всегда.
+  Агент, оставленный за списком, получает свой `AGENTS.md` обратно: части движка из него уходят,
+  ваши строки вне меток остаются, а файл, где были только части движка, удаляется вместе со
+  ссылками на навыки. Пустой массив — правила только у Claude Code.
+  Имя вне списка — ошибка загрузки `unknownAgent`: опечатка в `dsh` иначе молча оставила бы агента
+  без правил.

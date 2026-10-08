@@ -89,7 +89,7 @@ pub fn handle(
         "initialize" => {
             let mut result = json!({
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": { "tools": {} },
+                "capabilities": { "tools": {}, "resources": {} },
                 "serverInfo": { "name": "vibememory", "version": env!("CARGO_PKG_VERSION") },
             });
             // The agent learns the name the store gave its folder: without it a model asked to
@@ -132,6 +132,22 @@ pub fn handle(
                 // would hide the reason from the model, which is the one that has to act on it.
                 Ok(value) => Response::ok(id, tool_content(&value, false)),
                 Err(problem) => Response::ok(id, tool_content(&json!({ "error": problem }), true)),
+            }
+        }
+        "resources/list" => Response::ok(
+            id,
+            json!({ "resources": crate::rule_tools::resources(caller, memories) }),
+        ),
+        "resources/read" => {
+            let uri = request
+                .params
+                .get("uri")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match crate::rule_tools::read_resource(uri, caller, memories) {
+                Ok(contents) => Response::ok(id, json!({ "contents": contents })),
+                // the spec's code for a resource that is not there
+                Err(problem) => Response::failed(id, -32002, &problem),
             }
         }
         "ping" => Response::ok(id, json!({})),

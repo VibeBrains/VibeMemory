@@ -231,7 +231,7 @@ fn an_unknown_method_is_a_protocol_error_but_a_refused_tool_is_not() {
     let fake = memories();
 
     let request =
-        protocol::parse(r#"{"jsonrpc":"2.0","id":3,"method":"resources/list"}"#).expect("parse");
+        protocol::parse(r#"{"jsonrpc":"2.0","id":3,"method":"prompts/list"}"#).expect("parse");
     let value = serde_json::to_value(protocol::handle(&request, &CALLER, &fake).expect("answer"))
         .expect("encode");
     assert_eq!(value["error"]["code"], -32601, "{value}");

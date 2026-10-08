@@ -300,14 +300,16 @@ fn teams_json(teams: &[vibememory_cli::team_connect::TeamFacts]) -> serde_json::
 /// refuse. Not a failure: a broken rule file is skipped, the others still reach the agents.
 fn print_rules(layout: &Layout) {
     let store = layout.store();
-    let (rules, problems) =
+    let settings = vibememory_cli::config::RulesConfig::of_engine(&layout.engine_dir);
+    let (rules, _) =
         vibememory_cli::rules::read_rules(&store.join(vibememory_cli::rules::PERSONAL_RULES));
-    let agents = vibememory_cli::rules::Agents::of(&layout.config_dir, layout.home.as_deref());
+    let agents =
+        vibememory_cli::rules::Agents::of(&layout.config_dir, layout.home.as_deref(), &settings);
     let mut names = vec!["Claude Code"];
     names.extend(agents.assembled.iter().map(|(agent, _)| *agent));
     let long = rules
         .values()
-        .filter(|rule| rule.body.len() > rules_command::RULE_LIMIT)
+        .filter(|rule| rule.body.len() > settings.long_rule_bytes)
         .count();
     println!(
         "rules    {} personal rule(s) for {}{}",
@@ -319,8 +321,8 @@ fn print_rules(layout: &Layout) {
             String::new()
         }
     );
-    for problem in problems {
-        println!("         {problem}");
+    for warning in vibememory_cli::rules::check(&store, &agents) {
+        println!("         {warning}");
     }
 }
 

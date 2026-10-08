@@ -65,7 +65,11 @@ fn rule(id: &str, title: &str, level: &str, body: &str) -> String {
 }
 
 fn agents(m: &Machine) -> Agents {
-    Agents::of(&m.config_dir, Some(&m.home))
+    Agents::of(
+        &m.config_dir,
+        Some(&m.home),
+        &vibememory_cli::config::RulesConfig::default(),
+    )
 }
 
 fn personal(m: &Machine) -> Projected {
@@ -231,18 +235,73 @@ fn skills_are_linked_for_the_agents_and_one_an_agent_would_refuse_is_named() {
             .is_symlink()
     );
     assert!(
-        done.problems
+        done.warnings
             .iter()
-            .any(|problem| problem.starts_with("skill Bad_Name")),
-        "{:?}",
-        done.problems
+            .any(|warning| warning.starts_with("skill Bad_Name")),
+        "a skill an agent would refuse is said by doctor, not repeated by every tick: {:?}",
+        done.warnings
     );
+    assert!(done.problems.is_empty(), "{:?}", done.problems);
+    let said = vibememory_cli::rules::check(&m.store, &agents(&m));
+    for name in ["skill Bad_Name", shared.join("notes").to_str().unwrap()] {
+        assert!(
+            said.iter().any(|warning| warning.starts_with(name)),
+            "doctor says {name}: {said:?}"
+        );
+    }
 
     fs::remove_dir_all(skills.join("watch")).unwrap();
     personal(&m);
     assert!(
         fs::symlink_metadata(shared.join("watch")).is_err(),
         "a link to a removed skill goes"
+    );
+}
+
+#[test]
+fn an_agent_left_out_of_rules_agents_gets_its_files_back_without_the_engines_part() {
+    let m = machine("rules-released", true);
+    fs::write(
+        m.store.join("config/rules/commits.md"),
+        rule("commits", "Коммиты", "personal", "По-русски.\n"),
+    )
+    .unwrap();
+    fs::create_dir_all(m.store.join("config/skills/watch")).unwrap();
+    fs::write(
+        m.store.join("config/skills/watch/SKILL.md"),
+        "---\nname: watch\ndescription: Смотрит видео.\n---\n",
+    )
+    .unwrap();
+    personal(&m);
+    let codex = m.home.join(".codex/AGENTS.md");
+    let written = fs::read_to_string(&codex).unwrap();
+    fs::write(&codex, format!("{written}\nСвоя строка для Codex.\n")).unwrap();
+    assert!(fs::read_link(m.home.join(".codex/skills/watch")).is_ok());
+
+    let settings: vibememory_cli::config::RulesConfig =
+        serde_json::from_str(r#"{"agents": ["dsh"]}"#).unwrap();
+    let agents = Agents::of(&m.config_dir, Some(&m.home), &settings);
+    let done = project_personal(&m.store, &m.engine, &agents, STAMP);
+    assert!(done.problems.is_empty(), "{:?}", done.problems);
+    assert_eq!(
+        fs::read_to_string(&codex).unwrap().trim(),
+        "Своя строка для Codex.",
+        "the person's own line stays, the engine's header, base and rules go"
+    );
+    assert!(fs::symlink_metadata(m.home.join(".codex/skills/watch")).is_err());
+    assert!(
+        fs::read_to_string(m.home.join(".dsh/AGENTS.md"))
+            .unwrap()
+            .contains("По-русски."),
+        "the agent still in the list keeps its rules"
+    );
+
+    fs::write(&codex, written).unwrap();
+    let done = project_personal(&m.store, &m.engine, &agents, STAMP);
+    assert!(done.problems.is_empty(), "{:?}", done.problems);
+    assert!(
+        !codex.exists(),
+        "a file that held only the engine's part goes whole"
     );
 }
 
