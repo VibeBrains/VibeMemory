@@ -198,3 +198,54 @@ fn the_command_names_what_it_needs() {
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("--from <file.jsonl>"));
 }
+
+#[test]
+#[cfg(unix)]
+fn a_folder_reached_through_a_symlink_names_the_project_it_points_at() {
+    let machine = machine("put-symlink");
+    let base = fs::canonicalize(machine.temp.path()).unwrap();
+    let real = base.join("disk/Promed");
+    fs::create_dir_all(&real).unwrap();
+    git_repo_with_commit(&real);
+    std::os::unix::fs::symlink(base.join("disk"), base.join("link")).unwrap();
+    let linked = base.join("link/Promed").display().to_string();
+    let text = case("dshConvertedSession");
+    let placed = vibememory_cli::foreign_session::hand_over(
+        &machine.layout,
+        &machine.config,
+        &vibememory_cli::foreign_session::Handed {
+            agent: "codex",
+            session: SESSION,
+            cwd: &linked,
+            origin: "rollout.jsonl",
+            bytes: text.as_bytes(),
+            ended: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(placed.project, "Promed");
+}
+
+#[test]
+fn a_session_of_a_removed_folder_says_so_and_not_that_git_failed() {
+    let machine = machine("put-gone");
+    let gone = format!("{}/gone/digest-13", machine.work);
+    let text = case("dshConvertedSession");
+    let refused = vibememory_cli::foreign_session::hand_over(
+        &machine.layout,
+        &machine.config,
+        &vibememory_cli::foreign_session::Handed {
+            agent: "codex",
+            session: SESSION,
+            cwd: &gone,
+            origin: "rollout.jsonl",
+            bytes: text.as_bytes(),
+            ended: false,
+        },
+    )
+    .unwrap_err();
+    assert!(
+        refused.ends_with(vibememory_cli::foreign_session::FOLDER_GONE),
+        "{refused}"
+    );
+}

@@ -175,7 +175,17 @@ pub struct Handed<'a> {
 /// As [`put`].
 pub fn hand_over(layout: &Layout, config: &Config, handed: &Handed<'_>) -> Result<Placed, String> {
     let syntax = crate::hook::session_start::host_syntax();
-    let cwd = vibememory_core::naming::canonical_cwd(handed.cwd, syntax);
+    // A folder reached through a symlink is the folder it points at: git answers about the real path, our walk for
+    // `.git` follows the path as written, and the naming rules refuse when the two differ. A shell resolves the link
+    // for a hook; an agent's log keeps the path as the person opened it (`~/Projects` linked to another disk).
+    let real = match std::fs::canonicalize(handed.cwd) {
+        Ok(real) => real.display().to_string(),
+        Err(_) if !Path::new(handed.cwd).exists() => {
+            return Err(format!("{}: {FOLDER_GONE}", handed.cwd));
+        }
+        Err(_) => handed.cwd.to_owned(),
+    };
+    let cwd = vibememory_core::naming::canonical_cwd(&real, syntax);
     let stamp = crate::clock::now();
     let placed = put(
         layout,
@@ -204,6 +214,10 @@ pub fn hand_over(layout: &Layout, config: &Config, handed: &Handed<'_>) -> Resul
     );
     Ok(placed)
 }
+
+/// Why a session waits that cannot be placed because its folder was removed: it goes with its next write, and
+/// `doctor` counts such sessions in one line instead of naming each.
+pub const FOLDER_GONE: &str = "its project folder is no longer on this machine";
 
 /// Writes the file whole or not at all. The copy is made outside the clone and renamed in: the tick
 /// commits whatever it finds under `projects/`, and a half-written file must never be among it.

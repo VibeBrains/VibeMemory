@@ -3132,11 +3132,24 @@ fn print_watched_agents(layout: &Layout) -> usize {
         // Set aside, not failing: the agent's other sessions go on, and a session whose project
         // directory is gone is no fault of the integration — but it is a session that does not
         // reach the history, and that is said.
-        for skipped in &watched.skipped {
+        // sessions of folders removed since — an agent's scratch directories — are counted, not listed one a line
+        let (gone, other): (Vec<_>, Vec<_>) = watched.skipped.iter().partition(|skipped| {
+            skipped
+                .outcome
+                .ends_with(vibememory_cli::foreign_session::FOLDER_GONE)
+        });
+        for skipped in other {
             println!(
                 "         not delivered: {} \u{2014} {}",
                 vibememory_core::terminal::printable(&skipped.log),
                 skipped.outcome
+            );
+        }
+        if !gone.is_empty() {
+            println!(
+                "         not delivered: {} session(s) whose project folders are no longer on this machine \u{2014} \
+                 they go if the folder comes back and the session is written again",
+                gone.len()
             );
         }
         if watched.silent {
