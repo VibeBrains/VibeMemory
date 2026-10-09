@@ -33,7 +33,8 @@ ssh-сеанс; повторный запуск безопасен и печат
 
 На хосте, по шагам:
 
-- Postgres 17 из PGDG, только `localhost`, `shared_buffers = 64MB`, `max_connections = 20`
+- Postgres 17 из PGDG, только `localhost`, `shared_buffers = 64MB`, `max_connections = 30` — под пулы двух
+  кабинетов, этого и кабинета заказов владельца (раздел ниже); скрипт — единственный, кто пишет эти настройки
 - `.env` кабинета — `/home/vmcab/cabinet/.env`, 0600, `vmcab`; секреты (`BETTER_AUTH_SECRET`,
   пароль базы, `OPENAPI_CREDENTIALS`) генерируются на хосте один раз и не печатаются
 - Роль `vmcab` — владелец базы `cabinet`; учётка и роль `vmdump` — `pg_read_all_data` и вход по
@@ -47,7 +48,8 @@ ssh-сеанс; повторный запуск безопасен и печат
 - Зависимости только production, затем `prisma migrate deploy`
 - Импорт владельца из `/srv/vibememory/access/access.json` — снимка, на котором хост уже работает
 - Юнит `vibememory-cabinet` на `127.0.0.1:3000` — и скрипт проверяет, что порт слушает только
-  loopback, джейл fail2ban `vibememory-cabinet`, журнал не больше 200 МБ, в конце Caddy из
+  loopback, джейл fail2ban `vibememory-cabinet`, журнал не больше 200 МБ и не дольше 30 дней (столько политика
+  кабинета заказов обещает хранить журналы с IP-адресами), в конце Caddy из
   [шаблона](../../infra/Caddyfile.tmpl) — все сайты хоста, один файл
 
 Джейл считает строки, которые кабинет пишет в stderr отдельно от JSON-журнала:
@@ -393,6 +395,27 @@ ssh vibememory "sudo -u vmgit rm -rf /srv/vibememory/teams/<слаг>.deleted-<�
 
 Лендинг владельца `borodatych.ru` (репозиторий `Borodatych.ru`) — тот же сниппет `familySite`, каталог `/srv/borodatych/site`.
 Его кабинет заказов `app.borodatych.ru` (репозиторий `BorodatychCabinet`) — своя служба на порту 3001, Caddy только проксирует.
+
+## Кабинет заказов владельца: app.borodatych.ru
+
+Второй кабинет на хосте — кабинет заказов владельца, репозиторий `BorodatychCabinet`.
+Выкладывает его `infra/hostCabinet.sh` того репозитория, порядок первой выкладки — его `docs/manuals/deploy.md`.
+
+- **Служба** `borodatych-cabinet` на `127.0.0.1:3001`, учётка `borocab`: без sudo, вне групп `vibememory` и
+  `vmaccess`, чужие домашние каталоги и `/srv/vibememory` юниту не видны
+- **База** `borodatych` в том же кластере Postgres 17, роль `borocab`; подключение у `PUBLIC` снято.
+  Пулы кабинета заданы в его `.env` поменьше (4 + 2 + 1 и LISTEN), `max_connections` ставит только `hostCabinet.sh`
+  этого репозитория, скрипт кабинета заказов лишь проверяет, что места хватает
+- **Бэкап** — `./infra/ownerCabinetBackup.sh`, его зовёт выкладка кабинета заказов: `vmdump` получает право
+  подключения к `borodatych`, юнит `borodatych-dump` снимает зашифрованный дамп перед каждым бэкапом,
+  drop-in бэкапа ждёт его и называет файл в `BORODATYCH_DUMP`. Скрипт не пишет ничего из того, что ставят
+  `hostCabinet.sh` и `backupSetup.sh`, а проверяет: старый `cabinetDump.sh` или скрипт бэкапа без этой базы —
+  отказ со словами, какой скрипт запустить
+- **Caddy** — тот же `caddyApply.sh`, выкладка кабинета заказов зовёт его по пути
+- **Журнал** — общий: срок 30 дней ставит `hostCabinet.sh` этого репозитория, кабинет заказов проверяет его
+
+Порядок, когда меняется что-то общее: сначала `./infra/hostCabinet.sh` и `./infra/backupSetup.sh` здесь, потом
+выкладка кабинета заказов.
 
 ## Локальная среда тестов
 

@@ -1458,6 +1458,12 @@
   проверяется `access check` до записи. Клиент: `connect --key-request` и `connect --grant` — грант того же вида, что
   ответ кабинета. README, LICENSE, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, QR. [мануал](manuals/selfHosting.md),
   [knowledge](knowledge/design/openSource.md).
+- [x] **Кабинет заказов владельца на общем хосте** — ✅ (2026-10-09, next) база `borodatych` — в ночном бэкапе:
+  `cabinetDump.sh <база>`, таблица баз в `hostBackup.sh`, `backupSetup.sh` проверяет каждый дамп, новый
+  `infra/ownerCabinetBackup.sh` ставит юнит `borodatych-dump` и drop-in и сразу снимает дамп. `max_connections` 20 → 30
+  под пулы двух кабинетов, журнал не дольше 30 дней — оба пишет только `hostCabinet.sh`. Служба `borodatych-cabinet`
+  на 3001 под `borocab` выкладывается из `BorodatychCabinet`. На хост не выкатывалось ⚠ перепроверить.
+  [мануал](manuals/cabinetSetup.md), [knowledge](knowledge/design/secondCabinet.md).
 - [x] **borodatych.ru и app.borodatych.ru на общем хосте** — ✅ (2026-10-09, next) лендинг владельца — сниппет
   `familySite`, каталог `/srv/borodatych/site`; кабинет заказов — прокси на `127.0.0.1:3001`; домены и порт — в
   `caddyApply.sh`. На хост не выкатывалось: ждёт службы кабинета. [мануал](manuals/cabinetSetup.md).
