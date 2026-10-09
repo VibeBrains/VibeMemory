@@ -213,18 +213,20 @@ for file in "$check"/backup/*.bundle.age; do
     fail "из $(basename "${file%.age}") не клонируется стор"
   opened=$((opened + 1))
 done
-# The cabinet's dump is opened too, and its table of contents read: a dump that decrypts but does
-# not restore is no backup. The plaintext stays in the temporary directory the trap removes.
-dumped="дампа базы кабинета нет (кабинета на хосте нет)"
-if [ -f "$check/backup/cabinet.pgdump.age" ]; then
-  age -d -i "$KEY_FILE" -o "$check/cabinet.pgdump" "$check/backup/cabinet.pgdump.age" ||
-    fail "не расшифровался дамп базы кабинета"
+# The databases' dumps are opened too, and their tables of contents read: a dump that decrypts but
+# does not restore is no backup. The plaintext stays in the temporary directory the trap removes.
+dumped=""
+for file in "$check"/backup/*.pgdump.age; do
+  [ -f "$file" ] || continue
+  database="$(basename "$file" .pgdump.age)"
+  age -d -i "$KEY_FILE" -o "$check/$database.pgdump" "$file" || fail "не расшифровался дамп базы $database"
   if command -v pg_restore >/dev/null; then
-    tables=$(pg_restore --list "$check/cabinet.pgdump" | grep -c 'TABLE DATA' || true)
-    [ "$tables" -gt 0 ] || fail "в дампе базы кабинета нет данных таблиц"
-    dumped="дамп базы кабинета читается, таблиц с данными: $tables"
+    tables=$(pg_restore --list "$check/$database.pgdump" | grep -c 'TABLE DATA' || true)
+    [ "$tables" -gt 0 ] || fail "в дампе базы $database нет данных таблиц"
+    dumped="${dumped:+$dumped; }дамп базы $database читается, таблиц с данными: $tables"
   else
-    dumped="дамп базы кабинета расшифрован; pg_restore на этой машине нет, содержимое не проверено"
+    dumped="${dumped:+$dumped; }дамп базы $database расшифрован; pg_restore на этой машине нет, содержимое не проверено"
   fi
-fi
+done
+dumped="${dumped:-дампов баз нет (кабинетов на хосте нет)}"
 say "6/6 Бэкап прошёл; на этой машине расшифровано и склонировано сторов: $opened; $dumped"
