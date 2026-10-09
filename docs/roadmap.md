@@ -1458,6 +1458,9 @@
   проверяется `access check` до записи. Клиент: `connect --key-request` и `connect --grant` — грант того же вида, что
   ответ кабинета. README, LICENSE, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, QR. [мануал](manuals/selfHosting.md),
   [knowledge](knowledge/design/openSource.md).
+- [x] **borodatych.ru и app.borodatych.ru на общем хосте** — ✅ (2026-10-09, next) лендинг владельца — сниппет
+  `familySite`, каталог `/srv/borodatych/site`; кабинет заказов — прокси на `127.0.0.1:3001`; домены и порт — в
+  `caddyApply.sh`. На хост не выкатывалось: ждёт службы кабинета. [мануал](manuals/cabinetSetup.md).
 - [x] **vibeidea.ru на общем хосте** — ✅ (2026-10-07, next) лендинг VibeIDEA рядом с vibeide.ru: оба сайта IDE — один
   сниппет `familySite` в `infra/Caddyfile.tmpl`, домен и каталог `/srv/vibeidea/site` — в `caddyApply.sh`.
   [мануал](manuals/cabinetSetup.md).

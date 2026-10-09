@@ -13,13 +13,18 @@ readonly DEFAULT_APP_DOMAIN=app.vibememory.ru
 readonly DEFAULT_DEMO_DOMAIN=demo.vibememory.ru
 readonly DEFAULT_IDE_DOMAIN=vibeide.ru
 readonly DEFAULT_IDEA_DOMAIN=vibeidea.ru
+readonly DEFAULT_OWNER_DOMAIN=borodatych.ru
+readonly DEFAULT_OWNER_APP_DOMAIN=app.borodatych.ru
 readonly DEFAULT_MCP_PORT=8787
 readonly DEFAULT_CABINET_PORT=3000
+# The owner's order cabinet runs beside the memory cabinet, so it takes the next port
+readonly DEFAULT_OWNER_APP_PORT=3001
 readonly RELEASES=/srv/vibememory/releases
 readonly SITE=/srv/vibememory/site
 readonly DEMO=/srv/vibememory/demo
 readonly IDE_SITE=/srv/vibeide/site
 readonly IDEA_SITE=/srv/vibeidea/site
+readonly OWNER_SITE=/srv/borodatych/site
 # A lost SYN is retried instead of failing the run: the path to the host drops a connection now and
 # then, and every step here is safe to repeat.
 readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=4)
@@ -30,8 +35,11 @@ appDomain="${VIBEMEMORY_APP_DOMAIN:-$DEFAULT_APP_DOMAIN}"
 demoDomain="${VIBEMEMORY_DEMO_DOMAIN:-$DEFAULT_DEMO_DOMAIN}"
 ideDomain="${VIBEIDE_DOMAIN:-$DEFAULT_IDE_DOMAIN}"
 ideaDomain="${VIBEIDEA_DOMAIN:-$DEFAULT_IDEA_DOMAIN}"
+ownerDomain="${OWNER_DOMAIN:-$DEFAULT_OWNER_DOMAIN}"
+ownerAppDomain="${OWNER_APP_DOMAIN:-$DEFAULT_OWNER_APP_DOMAIN}"
 mcpPort="${VIBEMEMORY_MCP_PORT:-$DEFAULT_MCP_PORT}"
 cabinetPort="${VIBEMEMORY_CABINET_PORT:-$DEFAULT_CABINET_PORT}"
+ownerAppPort="${OWNER_APP_PORT:-$DEFAULT_OWNER_APP_PORT}"
 
 fail() { printf 'Ошибка: %s\n' "$*" >&2; exit 1; }
 
@@ -45,18 +53,22 @@ while [ "$#" -gt 0 ]; do
     --idea-domain) ideaDomain="${2:-}"; shift 2 ;;
     --mcp-port) mcpPort="${2:-}"; shift 2 ;;
     --cabinet-port) cabinetPort="${2:-}"; shift 2 ;;
+    --owner-domain) ownerDomain="${2:-}"; shift 2 ;;
+    --owner-app-domain) ownerAppDomain="${2:-}"; shift 2 ;;
+    --owner-app-port) ownerAppPort="${2:-}"; shift 2 ;;
     -h | --help)
-      printf 'Поставить Caddyfile хоста из infra/Caddyfile.tmpl.\n\n  ./infra/caddyApply.sh [--alias vibememory] [--domain %s] [--app-domain %s] [--demo-domain %s] [--ide-domain %s] [--idea-domain %s]\n' \
-        "$DEFAULT_DOMAIN" "$DEFAULT_APP_DOMAIN" "$DEFAULT_DEMO_DOMAIN" "$DEFAULT_IDE_DOMAIN" "$DEFAULT_IDEA_DOMAIN"
+      printf 'Поставить Caddyfile хоста из infra/Caddyfile.tmpl.\n\n  ./infra/caddyApply.sh [--alias vibememory] [--domain %s] [--app-domain %s] [--demo-domain %s] [--ide-domain %s] [--idea-domain %s] [--owner-domain %s] [--owner-app-domain %s]\n' \
+        "$DEFAULT_DOMAIN" "$DEFAULT_APP_DOMAIN" "$DEFAULT_DEMO_DOMAIN" "$DEFAULT_IDE_DOMAIN" "$DEFAULT_IDEA_DOMAIN" \
+        "$DEFAULT_OWNER_DOMAIN" "$DEFAULT_OWNER_APP_DOMAIN"
       exit 0 ;;
     *) fail "неизвестный аргумент $1" ;;
   esac
 done
 
-for name in "$domain" "$appDomain" "$demoDomain" "$ideDomain" "$ideaDomain"; do
+for name in "$domain" "$appDomain" "$demoDomain" "$ideDomain" "$ideaDomain" "$ownerDomain" "$ownerAppDomain"; do
   case "$name" in *[!a-zA-Z0-9.-]*|"") fail "домен $name выглядит не как домен" ;; esac
 done
-for port in "$mcpPort" "$cabinetPort"; do
+for port in "$mcpPort" "$cabinetPort" "$ownerAppPort"; do
   case "$port" in *[!0-9]*|"") fail "порт $port — не число" ;; esac
 done
 [ -f "$TEMPLATE" ] || fail "нет шаблона $TEMPLATE"
@@ -65,6 +77,8 @@ rendered=$(sed -e "s|{{DOMAIN}}|$domain|g" -e "s|{{APP_DOMAIN}}|$appDomain|g" \
   -e "s|{{DEMO_DOMAIN}}|$demoDomain|g" -e "s|{{DEMO}}|$DEMO|g" \
   -e "s|{{IDE_DOMAIN}}|$ideDomain|g" -e "s|{{IDE_SITE}}|$IDE_SITE|g" \
   -e "s|{{IDEA_DOMAIN}}|$ideaDomain|g" -e "s|{{IDEA_SITE}}|$IDEA_SITE|g" \
+  -e "s|{{OWNER_APP_DOMAIN}}|$ownerAppDomain|g" -e "s|{{OWNER_DOMAIN}}|$ownerDomain|g" \
+  -e "s|{{OWNER_SITE}}|$OWNER_SITE|g" -e "s|{{OWNER_APP_PORT}}|$ownerAppPort|g" \
   -e "s|{{MCP_PORT}}|$mcpPort|g" -e "s|{{CABINET_PORT}}|$cabinetPort|g" \
   -e "s|{{RELEASES}}|$RELEASES|g" -e "s|{{SITE}}|$SITE|g" "$TEMPLATE")
 case "$rendered" in *'{{'*) fail "в шаблоне осталась неподставленная переменная" ;; esac
@@ -81,6 +95,7 @@ sudo test -d /srv/vibememory/site || sudo install -d -o root -g root -m 755 /srv
 sudo test -d /srv/vibememory/demo || sudo install -d -o root -g root -m 755 /srv/vibememory/demo
 sudo test -d /srv/vibeide/site || sudo install -d -o root -g root -m 755 /srv/vibeide /srv/vibeide/site
 sudo test -d /srv/vibeidea/site || sudo install -d -o root -g root -m 755 /srv/vibeidea /srv/vibeidea/site
+sudo test -d /srv/borodatych/site || sudo install -d -o root -g root -m 755 /srv/borodatych /srv/borodatych/site
 caddyfile=/etc/caddy/Caddyfile
 if sudo cmp -s "$candidate" "$caddyfile"; then
   echo "Caddy: без изменений ($(systemctl is-active caddy))"

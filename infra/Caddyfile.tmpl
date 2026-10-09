@@ -8,6 +8,8 @@
 # infra/demoDeploy.sh under {{DEMO}}/current.
 # {{IDE_DOMAIN}} and {{IDEA_DOMAIN}} are the VibeIDE and VibeIDEA landings: static builds from the VibeIDE.ru and
 # VibeIDEA.ru repositories. The family's sites live on one host, so this file is theirs too.
+# {{OWNER_DOMAIN}} is the owner's own landing (the Borodatych.ru repository, same shape as the IDE landings), and
+# {{OWNER_APP_DOMAIN}} its order cabinet (the BorodatychCabinet repository), a service of its own on {{OWNER_APP_PORT}}.
 {{DOMAIN}} {
 	handle /mcp {
 		reverse_proxy 127.0.0.1:{{MCP_PORT}}
@@ -71,4 +73,16 @@ www.{{IDE_DOMAIN}} {
 
 www.{{IDEA_DOMAIN}} {
 	redir https://{{IDEA_DOMAIN}}{uri} permanent
+}
+
+{{OWNER_DOMAIN}} {
+	import familySite {{OWNER_SITE}}
+}
+
+www.{{OWNER_DOMAIN}} {
+	redir https://{{OWNER_DOMAIN}}{uri} permanent
+}
+
+{{OWNER_APP_DOMAIN}} {
+	reverse_proxy 127.0.0.1:{{OWNER_APP_PORT}}
 }

@@ -391,6 +391,9 @@ ssh vibememory "sudo -u vmgit rm -rf /srv/vibememory/teams/<слаг>.deleted-<�
 `www.` у обоих доменов перенаправляет на основной адрес.
 Сборку кладёт `deploy.sh` репозитория сайта в `/srv/vibeide/site/<коммит>` и `/srv/vibeidea/site/<коммит>`, по той же схеме с `current`.
 
+Лендинг владельца `borodatych.ru` (репозиторий `Borodatych.ru`) — тот же сниппет `familySite`, каталог `/srv/borodatych/site`.
+Его кабинет заказов `app.borodatych.ru` (репозиторий `BorodatychCabinet`) — своя служба на порту 3001, Caddy только проксирует.
+
 ## Локальная среда тестов
 
 В `cabinet/`: Postgres в Docker — `docker compose up -d db` (порт 5433, базы `cabinet` и
