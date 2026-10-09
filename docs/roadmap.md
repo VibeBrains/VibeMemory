@@ -1461,7 +1461,8 @@
 - [x] **Кабинет заказов владельца на общем хосте** — ✅ (2026-10-09, next) база `borodatych` — в ночном бэкапе:
   `cabinetDump.sh <база>`, таблица баз в `hostBackup.sh`, `backupSetup.sh` проверяет каждый дамп, новый
   `infra/ownerCabinetBackup.sh` ставит юнит `borodatych-dump` и drop-in и сразу снимает дамп. `max_connections` 20 → 30
-  под пулы двух кабинетов, журнал не дольше 30 дней — оба пишет только `hostCabinet.sh`. Служба `borodatych-cabinet`
+  под пулы двух кабинетов, журнал не дольше 30 дней, журнал fail2ban — в journald; всё это пишет только
+  `hostCabinet.sh`. Служба `borodatych-cabinet`
   на 3001 под `borocab` выкладывается из `BorodatychCabinet`. На хост не выкатывалось ⚠ перепроверить.
   [мануал](manuals/cabinetSetup.md), [knowledge](knowledge/design/secondCabinet.md).
 - [x] **borodatych.ru и app.borodatych.ru на общем хосте** — ✅ (2026-10-09, next) лендинг владельца — сниппет
