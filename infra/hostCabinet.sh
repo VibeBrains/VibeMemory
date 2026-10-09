@@ -512,7 +512,7 @@ banaction = nftables-multiport"
 # while Debian's /var/log/fail2ban.log is rotated weekly and kept four weeks more — past the 30 days
 # the order cabinet's policy promises. The setting is the host's, so it is written here too.
 fail2banLog=/etc/fail2ban/fail2ban.d/vibememory.local
-fail2banLogText="[DEFINITION]
+fail2banLogText="[Definition]
 logtarget = SYSTEMD-JOURNAL"
 changed=0
 if [ "$(sudo cat "$filter" 2>/dev/null || true)" != "$filterText" ]; then
