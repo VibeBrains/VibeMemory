@@ -32,12 +32,20 @@ readonly RELEASES_LOCAL=/Volumes/Storage/Caches/VibeMemory/cabinetReleases
 # The Bun the cabinet is built and tested with (package.json devDependencies).
 readonly BUN_VERSION=1.4.0
 readonly PG_VERSION=17
-# Postgres on a 4 GB host shared with the stores: small buffers, and a connection cap the cabinet's
-# pools stay under (DATABASE_POOL_MAX + PGBOSS_POOL_MAX + BACKPLANE_POOL_MAX + LISTEN, plus room for a
-# migration and the nightly dump).
+# Postgres on a 4 GB host shared with the stores: small buffers, and a connection cap the pools of
+# both cabinets stay under. This file is the one writer of these settings: the owner's order cabinet
+# (BorodatychCabinet, app.borodatych.ru) shares the cluster and only checks the cap. Per cabinet,
+# DATABASE_POOL_MAX + PGBOSS_POOL_MAX + BACKPLANE_POOL_MAX + its LISTEN: this one 6 + 3 + 2 + 1 = 12
+# (the defaults), the order cabinet 4 + 2 + 1 + 1 = 8 (set in its .env). Then a migration (2), the two
+# nightly dumps that run side by side (2) and the host's own scripts — hostStats.sh, a host command
+# of a cabinet (2): 26, under 30 minus the superuser's reserve of 3.
 readonly PG_SHARED_BUFFERS=64MB
-readonly PG_MAX_CONNECTIONS=20
+readonly PG_MAX_CONNECTIONS=30
 readonly JOURNAL_MAX_USE=200M
+# The journal keeps the addresses the cabinets log (the jails' lines, the request journal); the order
+# cabinet's personal data policy promises server logs with IP addresses are kept no longer than 30
+# days. The journal is the host's, so the promise is kept here, in its one writer.
+readonly JOURNAL_MAX_RETENTION=30day
 # As the memory server's jail: a person mistyping a password is the likelier ban than an attacker.
 readonly JAIL_MAXRETRY=10
 readonly JAIL_FINDTIME=10m
@@ -133,11 +141,11 @@ ssh -n "${SSH_OPTIONS[@]}" "$sshAlias" "mv -f $(printf '%q' "$(basename "$releas
 ssh "${SSH_OPTIONS[@]}" "$sshAlias" "bash -s -- $(printf '%q ' "$domain" "$appDomain" "$sourceVersion" \
   "$releaseHash" "${ownerEmail:--}" "$BUN_VERSION" "$PG_VERSION" "$PG_SHARED_BUFFERS" \
   "$PG_MAX_CONNECTIONS" "$JOURNAL_MAX_USE" "$JAIL_MAXRETRY" "$JAIL_FINDTIME" "$CABINET_PORT" \
-  "$MCP_PORT")" <<'REMOTE'
+  "$MCP_PORT" "$JOURNAL_MAX_RETENTION")" <<'REMOTE'
 set -euo pipefail
 domain="$1"; appDomain="$2"; sourceVersion="$3"; releaseHash="$4"; ownerEmail="$5"
 bunVersion="$6"; pgVersion="$7"; sharedBuffers="$8"; maxConnections="$9"; journalMaxUse="${10}"
-jailMaxretry="${11}"; jailFindtime="${12}"; cabinetPort="${13}"; mcpPort="${14}"
+jailMaxretry="${11}"; jailFindtime="${12}"; cabinetPort="${13}"; mcpPort="${14}"; journalMaxRetention="${15}"
 [ "$ownerEmail" = - ] && ownerEmail=""
 
 readonly app=/home/vmcab/cabinet
@@ -474,12 +482,13 @@ fi
 # server's jail (hostMcp.sh).
 journald=/etc/systemd/journald.conf.d/vibememory.conf
 journaldText="[Journal]
-SystemMaxUse=$journalMaxUse"
+SystemMaxUse=$journalMaxUse
+MaxRetentionSec=$journalMaxRetention"
 if [ "$(sudo cat "$journald" 2>/dev/null || true)" != "$journaldText" ]; then
   sudo install -d /etc/systemd/journald.conf.d
   printf '%s\n' "$journaldText" | sudo tee "$journald" >/dev/null
   sudo systemctl restart systemd-journald
-  echo "9/9 journald: не больше $journalMaxUse"
+  echo "9/9 journald: не больше $journalMaxUse и не дольше $journalMaxRetention"
 fi
 if ! command -v fail2ban-client >/dev/null && [ ! -x /usr/bin/fail2ban-client ]; then
   echo "9/9 fail2ban не установлен — джейл кабинета пропущен"
