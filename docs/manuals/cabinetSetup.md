@@ -412,7 +412,9 @@ ssh vibememory "sudo -u vmgit rm -rf /srv/vibememory/teams/<слаг>.deleted-<�
   `hostCabinet.sh` и `backupSetup.sh`, а проверяет: старый `cabinetDump.sh` или скрипт бэкапа без этой базы —
   отказ со словами, какой скрипт запустить
 - **Caddy** — тот же `caddyApply.sh`, выкладка кабинета заказов зовёт его по пути
-- **Журнал** — общий: срок 30 дней ставит `hostCabinet.sh` этого репозитория, кабинет заказов проверяет его
+- **Журнал** — общий: срок 30 дней ставит `hostCabinet.sh` этого репозитория, кабинет заказов проверяет его.
+  Свой журнал fail2ban с адресами банов пишет туда же (`logtarget = SYSTEMD-JOURNAL` в
+  `/etc/fail2ban/fail2ban.d/vibememory.local`): файл `/var/log/fail2ban.log` Debian хранит пять недель
 
 Порядок, когда меняется что-то общее: сначала `./infra/hostCabinet.sh` и `./infra/backupSetup.sh` здесь, потом
 выкладка кабинета заказов.

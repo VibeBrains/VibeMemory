@@ -52,8 +52,9 @@ psqlAdmin() { sudo -u postgres psql -qtAX -v ON_ERROR_STOP=1 "$@"; }
 
 # What the memory cabinet's scripts put, checked rather than written: two writers of one file would
 # undo each other.
-id vmdump >/dev/null 2>&1 && sudo test -d "$dumpDir" ||
-  { echo "Ошибка: нет учётки vmdump или каталога дампов — в VibeMemory: ./infra/hostCabinet.sh" >&2; exit 1; }
+if ! id vmdump >/dev/null 2>&1 || ! sudo test -d "$dumpDir"; then
+  echo "Ошибка: нет учётки vmdump или каталога дампов — в VibeMemory: ./infra/hostCabinet.sh" >&2; exit 1
+fi
 sudo grep -q DEFAULT_DATABASE "$dumpScript" 2>/dev/null ||
   { echo "Ошибка: $dumpScript снимает только базу cabinet — в VibeMemory: ./infra/hostCabinet.sh" >&2; exit 1; }
 sudo grep -q "$dumpVariable" "$backupScript" 2>/dev/null ||
@@ -111,7 +112,8 @@ fi
 # One dump now: the night would be the first to find a broken chain otherwise.
 sudo systemctl start "$unitName" ||
   { echo "Ошибка: дамп базы $database не снялся — journalctl -t vibememory-dump" >&2; exit 1; }
-sudo test -s "$dump" && [ -n "$(sudo find "$dump" -mmin -5)" ] ||
-  { echo "Ошибка: после дампа нет свежего $dump" >&2; exit 1; }
+if ! sudo test -s "$dump" || [ -z "$(sudo find "$dump" -mmin -5)" ]; then
+  echo "Ошибка: после дампа нет свежего $dump" >&2; exit 1
+fi
 echo "Бэкап базы $database: дамп снят и зашифрован, $(sudo stat -c %s "$dump") байт"
 REMOTE

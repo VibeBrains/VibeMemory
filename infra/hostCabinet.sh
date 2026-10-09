@@ -508,12 +508,21 @@ port = http,https
 maxretry = $jailMaxretry
 findtime = $jailFindtime
 banaction = nftables-multiport"
+# fail2ban's own log names every banned address; in the journal it lives as long as the journal does,
+# while Debian's /var/log/fail2ban.log is rotated weekly and kept four weeks more — past the 30 days
+# the order cabinet's policy promises. The setting is the host's, so it is written here too.
+fail2banLog=/etc/fail2ban/fail2ban.d/vibememory.local
+fail2banLogText="[DEFINITION]
+logtarget = SYSTEMD-JOURNAL"
 changed=0
 if [ "$(sudo cat "$filter" 2>/dev/null || true)" != "$filterText" ]; then
   printf '%s\n' "$filterText" | sudo tee "$filter" >/dev/null; changed=1
 fi
 if [ "$(sudo cat "$jail" 2>/dev/null || true)" != "$jailText" ]; then
   printf '%s\n' "$jailText" | sudo tee "$jail" >/dev/null; changed=1
+fi
+if [ "$(sudo cat "$fail2banLog" 2>/dev/null || true)" != "$fail2banLogText" ]; then
+  printf '%s\n' "$fail2banLogText" | sudo tee "$fail2banLog" >/dev/null; changed=1
 fi
 if [ "$changed" = 1 ]; then
   # restart, not reload: a reload that changes a jail's action leaves it with none (fail2ban 1.1)
