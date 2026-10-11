@@ -33,14 +33,16 @@ readonly RELEASES_LOCAL=/Volumes/Storage/Caches/VibeMemory/cabinetReleases
 readonly BUN_VERSION=1.4.0
 readonly PG_VERSION=17
 # Postgres on a 4 GB host shared with the stores: small buffers, and a connection cap the pools of
-# both cabinets stay under. This file is the one writer of these settings: the owner's order cabinet
-# (BorodatychCabinet, app.borodatych.ru) shares the cluster and only checks the cap. Per cabinet,
-# DATABASE_POOL_MAX + PGBOSS_POOL_MAX + BACKPLANE_POOL_MAX + its LISTEN: this one 6 + 3 + 2 + 1 = 12
-# (the defaults), the order cabinet 4 + 2 + 1 + 1 = 8 (set in its .env). Then a migration (2), the two
-# nightly dumps that run side by side (2) and the host's own scripts — hostStats.sh, a host command
-# of a cabinet (2): 26, under 30 minus the superuser's reserve of 3.
+# every service stay under. This file is the one writer of these settings: the owner's order cabinet
+# (BorodatychCabinet, app.borodatych.ru) and explainer of terms (BorodatychTerms, terms.borodatych.ru)
+# share the cluster and only check the cap. Per cabinet, DATABASE_POOL_MAX + PGBOSS_POOL_MAX +
+# BACKPLANE_POOL_MAX + its LISTEN: this one 6 + 3 + 2 + 1 = 12 (the defaults), the order cabinet
+# 4 + 2 + 1 + 1 = 8 (set in its .env). The explainer has no queue: DATABASE_POOL_MAX +
+# DATABASE_LOCK_POOL_MAX = 3 + 2 = 5. Then a migration (2), the three nightly dumps that run side by
+# side (3) and the host's own scripts — hostStats.sh, a host command of a service (2): 32, under 40
+# minus the superuser's reserve of 3.
 readonly PG_SHARED_BUFFERS=64MB
-readonly PG_MAX_CONNECTIONS=30
+readonly PG_MAX_CONNECTIONS=40
 readonly JOURNAL_MAX_USE=200M
 # The journal keeps the addresses the cabinets log (the jails' lines, the request journal); the order
 # cabinet's personal data policy promises server logs with IP addresses are kept no longer than 30

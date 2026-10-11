@@ -33,6 +33,7 @@ readonly TAG=vibememory-backup
 readonly DATABASES=(
   "cabinet VIBEMEMORY_DUMP /etc/systemd/system/vibememory-cabinet.service hostCabinet.sh"
   "borodatych BORODATYCH_DUMP /etc/systemd/system/borodatych-cabinet.service ownerCabinetBackup.sh"
+  "borodatych-terms BORODATYCH_TERMS_DUMP /etc/systemd/system/borodatych-terms.service ownerCabinetBackup.sh"
 )
 # The dumps run right before the backup; one older than this is a night that did not dump.
 readonly DUMP_MAX_AGE_MINUTES=60

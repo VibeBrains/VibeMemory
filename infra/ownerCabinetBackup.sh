@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Wires the database of the owner's order cabinet (BorodatychCabinet, app.borodatych.ru) into the
-# host's nightly encrypted backup, the way hostCabinet.sh wires the memory cabinet's: vmdump dumps it
-# through peer authentication and encrypts it for the owner's age key in borodatych-dump.service, and
-# the backup pulls that unit in, waits for it and takes the ciphertext (a drop-in beside its unit).
+# Wires a database of the owner's own services — the order cabinet (BorodatychCabinet, the default) or
+# the explainer of terms (BorodatychTerms, --database and --dump-variable) — into the host's nightly
+# encrypted backup, the way hostCabinet.sh wires the memory cabinet's: vmdump dumps it through peer
+# authentication and encrypts it for the owner's age key in <database>-dump.service, and the backup
+# pulls that unit in, waits for it and takes the ciphertext (a drop-in beside its unit).
 #
-# Runs on the OWNER'S machine; the order cabinet's infra/hostCabinet.sh calls it by path after it has
-# made the database, and it can be run alone. Idempotent: the grant, the unit and the drop-in change
+# Runs on the OWNER'S machine; the service's own infra script calls it by path after it has made the
+# database, and it can be run alone. Idempotent: the grant, the unit and the drop-in change
 # only where they differ. Every run dumps the database once, so a run that passes proves the chain.
 #
 # It writes none of what the memory cabinet's scripts own, and checks it instead: vmdump and
@@ -15,32 +16,40 @@
 set -euo pipefail
 
 readonly DEFAULT_ALIAS=vibememory
-readonly DATABASE=borodatych
+readonly DEFAULT_DATABASE=borodatych
 # The cluster hostCabinet.sh puts and tunes; the dump waits for it, as the memory cabinet's does.
 readonly PG_VERSION=17
 # The backup's variable naming this dump: hostBackup.sh reads it, and fails when the order cabinet's
 # unit is on the host and the variable is not set.
-readonly DUMP_VARIABLE=BORODATYCH_DUMP
+readonly DEFAULT_DUMP_VARIABLE=BORODATYCH_DUMP
 # A lost SYN is retried instead of failing the run: the path to the host drops a connection now and
 # then, and every step here is safe to repeat.
 readonly SSH_OPTIONS=(-o BatchMode=yes -o ConnectTimeout=15 -o ConnectionAttempts=4)
 
 sshAlias="${VIBEMEMORY_SSH_ALIAS:-$DEFAULT_ALIAS}"
+database="$DEFAULT_DATABASE"
+dumpVariable="$DEFAULT_DUMP_VARIABLE"
 
 fail() { printf 'Ошибка: %s\n' "$*" >&2; exit 1; }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --alias) sshAlias="${2:-}"; shift 2 ;;
+    --database) database="${2:-}"; shift 2 ;;
+    --dump-variable) dumpVariable="${2:-}"; shift 2 ;;
     -h | --help)
-      printf 'Подключить базу кабинета заказов (%s) к ночному шифрованному бэкапу хоста.\n\n  ./infra/ownerCabinetBackup.sh [--alias vibememory]\n' "$DATABASE"
+      printf 'Подключить базу сервиса владельца к ночному шифрованному бэкапу хоста.\n\n  ./infra/ownerCabinetBackup.sh [--alias vibememory] [--database %s] [--dump-variable %s]\n' \
+        "$DEFAULT_DATABASE" "$DEFAULT_DUMP_VARIABLE"
       exit 0 ;;
     *) fail "неизвестный аргумент $1 (--help покажет список)" ;;
   esac
 done
+# both go into commands and file names on the host: a plain name and a plain variable, nothing else
+case "$database" in *[!a-z0-9_-]*|-*|"") fail "$database — не имя базы" ;; esac
+case "$dumpVariable" in *[!A-Z0-9_]*|[0-9]*|"") fail "$dumpVariable — не имя переменной" ;; esac
 
 # shellcheck disable=SC2029 # the arguments are quoted for the remote shell on purpose
-ssh "${SSH_OPTIONS[@]}" "$sshAlias" "bash -s -- $(printf '%q ' "$DATABASE" "$DUMP_VARIABLE" "$PG_VERSION")" <<'REMOTE'
+ssh "${SSH_OPTIONS[@]}" "$sshAlias" "bash -s -- $(printf '%q ' "$database" "$dumpVariable" "$PG_VERSION")" <<'REMOTE'
 set -euo pipefail
 database="$1"; dumpVariable="$2"; pgVersion="$3"
 readonly dumpScript=/srv/vibememory/bin/cabinetDump.sh
@@ -60,19 +69,19 @@ sudo grep -q DEFAULT_DATABASE "$dumpScript" 2>/dev/null ||
 sudo grep -q "$dumpVariable" "$backupScript" 2>/dev/null ||
   { echo "Ошибка: скрипт бэкапа на хосте не знает базу $database — в VibeMemory: ./infra/backupSetup.sh" >&2; exit 1; }
 [ -n "$(psqlAdmin -c "select 1 from pg_database where datname = '$database'")" ] ||
-  { echo "Ошибка: базы $database нет — сначала infra/hostCabinet.sh в BorodatychCabinet" >&2; exit 1; }
+  { echo "Ошибка: базы $database нет — сначала скрипт выкладки её сервиса" >&2; exit 1; }
 
 changed=0
 # vmdump reads every database through pg_read_all_data; connecting is granted per database, since
-# the order cabinet's script revokes it from PUBLIC
+# the service's script revokes it from PUBLIC
 if [ "$(psqlAdmin -c "select has_database_privilege('vmdump', '$database', 'connect')")" != t ]; then
-  psqlAdmin -c "grant connect on database $database to vmdump" >/dev/null
+  psqlAdmin -c "grant connect on database \"$database\" to vmdump" >/dev/null
   echo "Бэкап базы $database: vmdump может подключиться"
 fi
 
 unit="/etc/systemd/system/$unitName"
 unitText="[Unit]
-Description=The owner's order cabinet: its database, dumped and encrypted for the nightly backup
+Description=The $database database, dumped and encrypted for the nightly backup
 After=postgresql@$pgVersion-main.service
 Requires=postgresql@$pgVersion-main.service
 

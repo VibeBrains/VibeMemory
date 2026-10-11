@@ -21,8 +21,8 @@ say() { logger -t "$TAG" -- "$*"; }
 fail() { say "failed: $*"; printf 'cabinetDump.sh: %s\n' "$*" >&2; exit 1; }
 
 database="${1:-$DEFAULT_DATABASE}"
-# the name becomes a file name and a connection target: nothing but a plain identifier
-case "$database" in *[!a-z0-9_]*|"") fail "not a database name: $database" ;; esac
+# the name becomes a file name and a connection target: nothing but a plain name, and never an option
+case "$database" in *[!a-z0-9_-]*|-*|"") fail "not a database name: $database" ;; esac
 out="$DUMP_DIR/$database.pgdump.age"
 
 [ -s "$RECIPIENT" ] || fail "no recipient in $RECIPIENT"

@@ -15,10 +15,13 @@ readonly DEFAULT_IDE_DOMAIN=vibeide.ru
 readonly DEFAULT_IDEA_DOMAIN=vibeidea.ru
 readonly DEFAULT_OWNER_DOMAIN=borodatych.ru
 readonly DEFAULT_OWNER_APP_DOMAIN=app.borodatych.ru
+readonly DEFAULT_OWNER_TERMS_DOMAIN=terms.borodatych.ru
 readonly DEFAULT_MCP_PORT=8787
 readonly DEFAULT_CABINET_PORT=3000
 # The owner's order cabinet runs beside the memory cabinet, so it takes the next port
 readonly DEFAULT_OWNER_APP_PORT=3001
+# The owner's explainer of terms is the third service of the kind on the host
+readonly DEFAULT_OWNER_TERMS_PORT=3002
 readonly RELEASES=/srv/vibememory/releases
 readonly SITE=/srv/vibememory/site
 readonly DEMO=/srv/vibememory/demo
@@ -37,9 +40,11 @@ ideDomain="${VIBEIDE_DOMAIN:-$DEFAULT_IDE_DOMAIN}"
 ideaDomain="${VIBEIDEA_DOMAIN:-$DEFAULT_IDEA_DOMAIN}"
 ownerDomain="${OWNER_DOMAIN:-$DEFAULT_OWNER_DOMAIN}"
 ownerAppDomain="${OWNER_APP_DOMAIN:-$DEFAULT_OWNER_APP_DOMAIN}"
+ownerTermsDomain="${OWNER_TERMS_DOMAIN:-$DEFAULT_OWNER_TERMS_DOMAIN}"
 mcpPort="${VIBEMEMORY_MCP_PORT:-$DEFAULT_MCP_PORT}"
 cabinetPort="${VIBEMEMORY_CABINET_PORT:-$DEFAULT_CABINET_PORT}"
 ownerAppPort="${OWNER_APP_PORT:-$DEFAULT_OWNER_APP_PORT}"
+ownerTermsPort="${OWNER_TERMS_PORT:-$DEFAULT_OWNER_TERMS_PORT}"
 
 fail() { printf 'Ошибка: %s\n' "$*" >&2; exit 1; }
 
@@ -56,19 +61,22 @@ while [ "$#" -gt 0 ]; do
     --owner-domain) ownerDomain="${2:-}"; shift 2 ;;
     --owner-app-domain) ownerAppDomain="${2:-}"; shift 2 ;;
     --owner-app-port) ownerAppPort="${2:-}"; shift 2 ;;
+    --owner-terms-domain) ownerTermsDomain="${2:-}"; shift 2 ;;
+    --owner-terms-port) ownerTermsPort="${2:-}"; shift 2 ;;
     -h | --help)
-      printf 'Поставить Caddyfile хоста из infra/Caddyfile.tmpl.\n\n  ./infra/caddyApply.sh [--alias vibememory] [--domain %s] [--app-domain %s] [--demo-domain %s] [--ide-domain %s] [--idea-domain %s] [--owner-domain %s] [--owner-app-domain %s]\n' \
+      printf 'Поставить Caddyfile хоста из infra/Caddyfile.tmpl.\n\n  ./infra/caddyApply.sh [--alias vibememory] [--domain %s] [--app-domain %s] [--demo-domain %s] [--ide-domain %s] [--idea-domain %s] [--owner-domain %s] [--owner-app-domain %s] [--owner-terms-domain %s]\n' \
         "$DEFAULT_DOMAIN" "$DEFAULT_APP_DOMAIN" "$DEFAULT_DEMO_DOMAIN" "$DEFAULT_IDE_DOMAIN" "$DEFAULT_IDEA_DOMAIN" \
-        "$DEFAULT_OWNER_DOMAIN" "$DEFAULT_OWNER_APP_DOMAIN"
+        "$DEFAULT_OWNER_DOMAIN" "$DEFAULT_OWNER_APP_DOMAIN" "$DEFAULT_OWNER_TERMS_DOMAIN"
       exit 0 ;;
     *) fail "неизвестный аргумент $1" ;;
   esac
 done
 
-for name in "$domain" "$appDomain" "$demoDomain" "$ideDomain" "$ideaDomain" "$ownerDomain" "$ownerAppDomain"; do
+for name in "$domain" "$appDomain" "$demoDomain" "$ideDomain" "$ideaDomain" "$ownerDomain" "$ownerAppDomain" \
+  "$ownerTermsDomain"; do
   case "$name" in *[!a-zA-Z0-9.-]*|"") fail "домен $name выглядит не как домен" ;; esac
 done
-for port in "$mcpPort" "$cabinetPort" "$ownerAppPort"; do
+for port in "$mcpPort" "$cabinetPort" "$ownerAppPort" "$ownerTermsPort"; do
   case "$port" in *[!0-9]*|"") fail "порт $port — не число" ;; esac
 done
 [ -f "$TEMPLATE" ] || fail "нет шаблона $TEMPLATE"
@@ -79,6 +87,7 @@ rendered=$(sed -e "s|{{DOMAIN}}|$domain|g" -e "s|{{APP_DOMAIN}}|$appDomain|g" \
   -e "s|{{IDEA_DOMAIN}}|$ideaDomain|g" -e "s|{{IDEA_SITE}}|$IDEA_SITE|g" \
   -e "s|{{OWNER_APP_DOMAIN}}|$ownerAppDomain|g" -e "s|{{OWNER_DOMAIN}}|$ownerDomain|g" \
   -e "s|{{OWNER_SITE}}|$OWNER_SITE|g" -e "s|{{OWNER_APP_PORT}}|$ownerAppPort|g" \
+  -e "s|{{OWNER_TERMS_DOMAIN}}|$ownerTermsDomain|g" -e "s|{{OWNER_TERMS_PORT}}|$ownerTermsPort|g" \
   -e "s|{{MCP_PORT}}|$mcpPort|g" -e "s|{{CABINET_PORT}}|$cabinetPort|g" \
   -e "s|{{RELEASES}}|$RELEASES|g" -e "s|{{SITE}}|$SITE|g" "$TEMPLATE")
 case "$rendered" in *'{{'*) fail "в шаблоне осталась неподставленная переменная" ;; esac
