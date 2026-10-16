@@ -83,12 +83,14 @@ fn annotate(tools: &mut Value) {
 }
 
 /// How the memory is kept, said in the descriptions of the tools an agent has to remember to use:
-/// a decision the next session would otherwise work out again belongs in a record, and a flow left
-/// in the middle leaves a hand-off for whoever continues it.
+/// a decision the next session would otherwise work out again belongs in a record, written as what
+/// was decided and why; a recorded decision is not overridden quietly, and a flow left in the
+/// middle leaves a hand-off for whoever continues it.
 const PROTOCOL: &str = "Kept by a discipline, not only by tools: a decision the next session \
-                        would otherwise work out again belongs in a record, and a flow left in \
-                        the middle leaves a hand-off for whoever continues it — handoff_list \
-                        reads the open ones.";
+                        would otherwise work out again belongs in a record, written as what was \
+                        decided and why. Before doing anything that contradicts a recorded \
+                        decision, quote it and ask the person. A flow left in the middle leaves \
+                        a hand-off for whoever continues it — handoff_list reads the open ones.";
 
 /// The tool list, as `tools/list` reports it.
 #[must_use]
@@ -128,7 +130,9 @@ pub fn catalogue() -> Value {
             "name": "memory_save",
             "description": format!("Remember a new fact. Fails if the identifier is taken — change the \
                             existing one with memory_update instead of writing a second version \
-                            of the same thing. {PROTOCOL}"),
+                            of the same thing. Write a decision as what was decided and why. Never put a key or \
+                            a token into a record — name where it lives, such as the environment \
+                            variable; a record holding one is refused. {PROTOCOL}"),
             "inputSchema": {
                 "type": "object",
                 "properties": {

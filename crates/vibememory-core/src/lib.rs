@@ -21,6 +21,7 @@ pub mod naming;
 pub mod push_refusal;
 pub mod release;
 pub mod rules;
+pub mod secrets;
 pub mod ssh_key;
 pub mod team_store;
 pub mod terminal;

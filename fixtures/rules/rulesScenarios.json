@@ -87,7 +87,7 @@
     {
       "id": "token-in-text",
       "file": "---\nid: a\ntitle: X\nlevel: personal\n---\nТокен: vmt_7q2m9x4a_1111111111111111111111111111111111111111\n",
-      "error": "holds a vibememory token"
+      "error": "holds a secret (VibeMemory agent token"
     },
     {
       "id": "unclosed-frontmatter",

@@ -40,11 +40,11 @@ pub enum RulesError {
     /// Anything else the format refuses, said in words.
     #[error("{0}")]
     Invalid(String),
-    /// The text carries an issued token: it would travel to every machine and every member.
+    /// The text carries a key: it would travel to every machine and every member.
     #[error(
-        "the text holds a vibememory token (vmt_…): take it out — rules and skills travel to every machine"
+        "the text holds a secret ({0}): write where the key lives (the name of the environment variable) instead of its value, and change the key if it has been exposed — rules and skills travel to every machine"
     )]
-    HoldsToken,
+    HoldsSecret(crate::secrets::SecretKind),
     /// An agent's file whose markers were cut by hand.
     #[error("markers: {0}")]
     Markers(String),

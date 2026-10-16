@@ -201,12 +201,12 @@ impl Rule {
         text
     }
 
-    /// The rule's rules: a title and a text, a flag only at the level it belongs to, and no token in it.
+    /// The rule's rules: a title and a text, a flag only at the level it belongs to, and no key in it.
     ///
     /// # Errors
     ///
-    /// [`RulesError::Invalid`] naming what is wrong, [`RulesError::HoldsToken`] when the text carries an issued
-    /// token — a rule travels to every machine and every member.
+    /// [`RulesError::Invalid`] naming what is wrong, [`RulesError::HoldsSecret`] when the text carries a
+    /// key — a rule travels to every machine and every member.
     pub fn validate(&self) -> Result<(), RulesError> {
         if self.title.is_empty() || self.title.contains('\n') {
             return Err(RulesError::Invalid(
@@ -227,10 +227,8 @@ impl Rule {
                 "enforced is a team rule's flag".to_owned(),
             ));
         }
-        if crate::token::holds_token(self.title.as_bytes())
-            || crate::token::holds_token(self.body.as_bytes())
-        {
-            return Err(RulesError::HoldsToken);
+        if let Some(kind) = crate::secrets::find_in([self.title.as_str(), self.body.as_str()]) {
+            return Err(RulesError::HoldsSecret(kind));
         }
         Ok(())
     }

@@ -1,6 +1,8 @@
 //! Why a memory could not be read or written. Every variant carries a stable camelCase code: the
 //! fixtures assert on it and the CLI quotes it, so the wording may change but the code may not.
 
+use crate::secrets::SecretKind;
+
 /// A memory that cannot be stored or projected.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MemoryError {
@@ -40,12 +42,17 @@ pub enum MemoryError {
         /// The record.
         id: String,
     },
-    /// The record holds an agent token of a cabinet: a memory is shared and kept in the store's
-    /// history for good, and a token in it would open the team to whoever reads it.
-    #[error("memory {id:?} holds an agent token; save it without the token and revoke the token")]
-    HoldsToken {
+    /// The record holds a key — a cabinet's agent token or a vendor's key: a memory is shared and
+    /// kept in the store's history for good, and a key in it would open the account to whoever
+    /// reads it.
+    #[error(
+        "memory {id:?} holds a secret ({kind}); write where the key lives (the name of the environment variable) instead of its value, and change the key if it has been exposed"
+    )]
+    HoldsSecret {
         /// The record.
         id: String,
+        /// Which kind of key; never its value.
+        kind: SecretKind,
     },
     /// A record could not be written as a journal line.
     #[error("memory {id:?} cannot be written to the journal: {reason}")]
@@ -92,7 +99,7 @@ impl MemoryError {
             Self::InvalidTitle { .. } => "invalidTitle",
             Self::InvalidDescription { .. } => "invalidDescription",
             Self::EmptyBody { .. } => "emptyBody",
-            Self::HoldsToken { .. } => "holdsToken",
+            Self::HoldsSecret { .. } => "holdsSecret",
             Self::Unserializable { .. } => "unserializable",
             Self::MissingFrontmatter { .. } => "missingFrontmatter",
             Self::MissingField { .. } => "missingField",

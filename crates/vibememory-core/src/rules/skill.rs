@@ -56,7 +56,7 @@ pub struct SkillManifest {
 ///
 /// # Errors
 ///
-/// [`RulesError::Invalid`] naming what an agent would refuse, [`RulesError::HoldsToken`] for a token in the file.
+/// [`RulesError::Invalid`] naming what an agent would refuse, [`RulesError::HoldsSecret`] for a key in the file.
 pub fn parse_skill(directory: &str, text: &str) -> Result<SkillManifest, RulesError> {
     if text.len() > MAX_FILE {
         return Err(RulesError::Invalid(format!(
@@ -64,8 +64,8 @@ pub fn parse_skill(directory: &str, text: &str) -> Result<SkillManifest, RulesEr
             text.len()
         )));
     }
-    if crate::token::holds_token(text.as_bytes()) {
-        return Err(RulesError::HoldsToken);
+    if let Some(kind) = crate::secrets::find(text) {
+        return Err(RulesError::HoldsSecret(kind));
     }
     let split = frontmatter::split(text)?;
     let name = split

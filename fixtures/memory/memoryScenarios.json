@@ -552,7 +552,7 @@
           "rejected": [
             {
               "name": "mcp-setup.md",
-              "code": "holdsToken"
+              "code": "holdsSecret"
             }
           ]
         }

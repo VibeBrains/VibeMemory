@@ -408,7 +408,7 @@ fn a_memory_team_writes_only_to_the_projects_the_cabinet_listed() {
         answer["error"]
             .as_str()
             .unwrap()
-            .contains("holds an agent token"),
+            .contains("holds a secret (VibeMemory agent token"),
         "{answer}"
     );
 
